@@ -1,0 +1,664 @@
+.App {
+  text-align: center;
+  padding-top: 70px;
+}
+
+/* ==================== NAVBAR CUSTOM STYLES ==================== */
+.navbar-custom {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+  padding: clamp(0.8rem, 2vw, 1.2rem) !important;
+  background: linear-gradient(135deg, #0d5f7a 0%, #1a7f99 50%, #117a8b 100%) !important;
+  border-bottom: 3px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.navbar-custom .container-fluid {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.navbar-collapse {
+  margin-left: auto;
+}
+
+.navbar-nav {
+  gap: 1rem !important;
+  display: flex !important;
+  flex-wrap: wrap;
+}
+
+.navbar-brand {
+  font-size: clamp(1.2rem, 4vw, 1.5rem) !important;
+  transition: all 0.3s ease;
+  color: #fff !important;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.navbar-brand:hover {
+  transform: scale(1.05);
+  opacity: 0.9;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+}
+
+.nav-link-custom {
+  position: relative;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  padding: 0.6rem 1rem !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  display: block;
+}
+
+.nav-link-custom::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #00d4ff, #00f9ff);
+  transition: width 0.3s ease;
+}
+
+.nav-link-custom:hover {
+  color: #fff !important;
+  opacity: 1;
+}
+
+.nav-link-custom:hover::after {
+  width: 100%;
+}
+
+.navbar-toggler {
+  border: 2px solid rgba(255, 255, 255, 0.3) !important;
+  padding: 0.4rem 0.75rem !important;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+  margin-left: auto;
+}
+
+.navbar-toggler:hover {
+  border-color: #00d4ff !important;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.navbar-toggler:focus {
+  box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.2) !important;
+  outline: none;
+}
+
+.navbar-toggler-icon {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(255, 255, 255, 0.8)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") !important;
+}
+
+.navbar-toggler.is-open {
+  border-color: #00d4ff !important;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ==================== DESKTOP NAVBAR (LG screens and up) ==================== */
+@media (min-width: 992px) {
+  .navbar-collapse {
+    display: flex !important;
+    flex-direction: row;
+    align-items: center;
+  }
+  
+  .navbar-nav {
+    flex-direction: row !important;
+    gap: 0.5rem !important;
+  }
+  
+  .nav-link-custom::after {
+    display: block;
+  }
+  
+  .nav-item {
+    border-bottom: none;
+  }
+}
+
+/* ==================== MOBILE NAVBAR ADJUSTMENTS ==================== */
+@media (max-width: 991px) {
+  .navbar-custom {
+    padding: 0.8rem 1rem !important;
+  }
+
+  .navbar-collapse {
+    flex-basis: 100%;
+    width: 100%;
+    margin-top: 0.85rem;
+    margin-left: 0;
+    background: rgba(13, 95, 122, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    padding: 0.6rem;
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(10px);
+  }
+
+  .navbar-nav {
+    gap: 0 !important;
+    flex-direction: column !important;
+    width: 100%;
+  }
+
+  .nav-item {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    width: 100%;
+  }
+
+  .nav-item:last-child {
+    border-bottom: none;
+  }
+
+  .nav-link-custom {
+    padding: 0.9rem 1rem !important;
+    margin: 0.15rem 0;
+    border-radius: 10px;
+    text-transform: none;
+  }
+
+  .nav-link-custom::after {
+    display: none;
+  }
+
+  .nav-link-custom:hover {
+    background: rgba(0, 212, 255, 0.15);
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 576px) {
+  .navbar-custom {
+    padding: 0.6rem 0.8rem !important;
+  }
+
+  .navbar-brand {
+    font-size: 1.1rem !important;
+    max-width: calc(100% - 72px);
+  }
+
+  .navbar-brand-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .navbar-logo-shell {
+    width: 48px !important;
+    height: 36px !important;
+  }
+
+  .navbar-collapse {
+    margin-top: 0.5rem !important;
+    padding: 0.45rem !important;
+  }
+
+  .nav-link-custom {
+    padding: 0.8rem 0.9rem !important;
+    font-size: 0.9rem;
+  }
+}
+
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(10px + 2vmin);
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hero-subtitle {
+  font-size: clamp(1rem, 3vw, 1.3rem);
+  margin-bottom: 1rem;
+  opacity: 0.95;
+  font-weight: 300;
+}
+
+.hero-description {
+  font-size: clamp(0.95rem, 2.5vw, 1.1rem);
+  margin-bottom: 2rem;
+  opacity: 0.9;
+}
+
+/* ==================== BUTTONS ==================== */
+.btn-custom {
+  padding: 12px 24px;
+  border-radius: 25px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  border: none;
+  font-size: 0.95rem;
+}
+
+.btn-primary-custom {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.btn-primary-custom:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);
+  color: white;
+  text-decoration: none;
+}
+
+.btn-secondary-custom {
+  background: white;
+  border: 2px solid white;
+  color: #667eea;
+}
+
+.btn-secondary-custom:hover {
+  background: transparent;
+  color: white;
+  transform: translateY(-3px);
+}
+
+/* ==================== FEATURES SECTION ==================== */
+.features-section {
+  padding: 60px 20px;
+  background: #f5f7fa;
+}
+
+.features-title {
+  text-align: center;
+  font-weight: 700;
+  color: #2c3e50;
+  margin-bottom: 50px;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 25px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.feature-card {
+  background: white;
+  border-radius: 12px;
+  padding: 30px 20px;
+  box-shadow: var(--shadow);
+  text-align: center;
+  transition: all 0.3s ease;
+  border: 1px solid #f0f0f0;
+}
+
+.feature-card:hover {
+  transform: translateY(-8px);
+  box-shadow: var(--shadow-hover);
+}
+
+.feature-icon {
+  font-size: 2.5rem;
+  color: #667eea;
+  margin-bottom: 1rem;
+  display: inline-block;
+}
+
+.feature-card h5 {
+  font-weight: 600;
+  color: #2c3e50;
+  margin-bottom: 0.8rem;
+}
+
+.feature-card p {
+  color: #666;
+  font-size: 0.95rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ==================== FOOTER ==================== */
+.footer-modern {
+  background: linear-gradient(135deg, #2c3e50 0%, #1a1f2e 100%);
+  color: white;
+  padding: 40px 20px 20px;
+  margin-top: auto;
+  text-align: center;
+}
+
+.footer-text {
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+/* ==================== ANIMATIONS ==================== */
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* ==================== RESPONSIVE DESIGN ==================== */
+@media (max-width: 768px) {
+  .navbar {
+    padding: 0.8rem 1rem !important;
+  }
+
+  .navbar-brand {
+    font-size: 1.3rem;
+  }
+
+  .hero-section {
+    padding: 50px 15px 60px;
+    margin-bottom: 30px;
+  }
+
+  .nav-link {
+    margin: 0;
+    padding: 0.5rem 0;
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .feature-card {
+    padding: 25px 15px;
+  }
+
+  .feature-icon {
+    font-size: 2rem;
+  }
+
+  .btn-custom {
+    padding: 10px 20px;
+    font-size: 0.9rem;
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .hero-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .navbar {
+    padding: 0.8rem 0.5rem !important;
+  }
+
+  .navbar-brand {
+    font-size: 1.2rem;
+  }
+
+  .hero-section {
+    padding: 40px 15px 50px;
+    margin-bottom: 20px;
+  }
+
+  .hero-title {
+    font-size: 1.8rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .hero-subtitle {
+    font-size: 1rem;
+    margin-bottom: 0.8rem;
+  }
+}
+
+/* ==================== BACKGROUND IMAGE ==================== */
+.bg-primary {
+  background-image: url('/bg1.png') !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-color: transparent !important;
+}
+
+/* ==================== HERO SECTION ==================== */
+.hero-section {
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.2);
+  z-index: 1;
+}
+
+.hero-section .container {
+  position: relative;
+  z-index: 2;
+}
+
+.btn-light:hover, .btn-outline-light:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* ==================== MOBILE RESPONSIVE IMPROVEMENTS ==================== */
+@media (max-width: 768px) {
+  .hero-section {
+    padding: 60px 15px !important;
+  }
+}
+
+@media (max-width: 576px) {
+  .hero-section {
+    padding: 40px 10px !important;
+  }
+  
+  .btn-light, .btn-outline-light {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+  
+  .d-flex {
+    flex-direction: column !important;
+  }
+}
+
+  .hero-description {
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .features-section {
+    padding: 40px 15px;
+  }
+
+  .features-title {
+    margin-bottom: 30px;
+  }
+
+  .feature-card {
+    padding: 20px 15px;
+    border-radius: 10px;
+  }
+
+  .feature-icon {
+    font-size: 2rem;
+    margin-bottom: 0.8rem;
+  }
+
+  .feature-card h5 {
+    font-size: 1rem;
+  }
+
+  .feature-card p {
+    font-size: 0.85rem;
+  }
+
+  .footer-modern {
+    padding: 30px 15px 15px;
+  }
+
+  .footer-text {
+    font-size: 0.85rem;
+  }
+
+  .hero-buttons {
+    gap: 8px;
+    padding: 0 5px;
+  }
+
+.btn-custom {
+    padding: 10px 16px;
+    font-size: 0.85rem;
+  }
+
+@media (max-width: 768px) {
+  .home-page .home-hero-section {
+    padding: 60px 18px !important;
+    background-size: cover !important;
+    background-position: center !important;
+  }
+
+  .home-page .home-hero-content {
+    max-width: 640px;
+  }
+
+  .home-page .home-hero-route {
+    font-size: 1rem !important;
+    line-height: 1.5;
+  }
+
+  .home-page .home-hero-description {
+    font-size: 0.95rem !important;
+    line-height: 1.55;
+    margin-bottom: 1.5rem !important;
+  }
+}
+
+@media (max-width: 576px) {
+  .home-page .home-hero-section {
+    padding: 42px 14px 48px !important;
+  }
+
+  .home-page .home-hero-content {
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+    padding-left: 0;
+    padding-right: 0;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .home-page .home-hero-title {
+    font-size: 2rem !important;
+    line-height: 1.1;
+    margin-bottom: 0.75rem !important;
+  }
+
+  .home-page .home-hero-route {
+    font-size: 0.95rem !important;
+    margin-bottom: 0.6rem !important;
+    max-width: 100%;
+  }
+
+  .home-page .home-hero-description {
+    font-size: 0.88rem !important;
+    margin-bottom: 1.25rem !important;
+    max-width: 280px;
+  }
+
+  .home-page .home-hero-actions {
+    flex-direction: column;
+    justify-content: center !important;
+    align-items: stretch !important;
+    gap: 0.75rem !important;
+    width: 100%;
+    max-width: 220px;
+    margin: 0 auto;
+    flex-wrap: nowrap !important;
+  }
+
+  .home-page .home-hero-button {
+    width: 100%;
+    padding: 11px 16px !important;
+    font-size: 0.95rem !important;
+    margin: 0 !important;
+  }
+}

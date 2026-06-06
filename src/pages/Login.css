@@ -1,0 +1,129 @@
+.login-page {
+  min-height: 100vh;
+}
+
+.login-card {
+  border: none;
+  border-radius: 24px;
+}
+
+@supports (min-height: 100dvh) {
+  .login-page {
+    min-height: 100dvh;
+  }
+}
+
+@media (max-width: 768px) {
+  .login-page {
+    padding: 84px 15px 15px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background-attachment: scroll !important;
+  }
+
+  .login-card {
+    max-width: 82% !important;
+    padding: 1rem 0.85rem !important;
+    border-radius: 18px;
+  }
+
+  .login-header {
+    margin-bottom: 1rem !important;
+  }
+
+  .login-logo-shell {
+    width: 84px !important;
+    height: 58px !important;
+    margin-bottom: 8px !important;
+  }
+
+  .login-logo {
+    height: 50px !important;
+  }
+
+  .login-title {
+    font-size: 1.12rem;
+  }
+
+  .login-subtitle,
+  .login-register-text {
+    font-size: 0.78rem !important;
+  }
+
+  .login-card .form-label {
+    font-size: 0.8rem;
+    margin-bottom: 0.3rem;
+  }
+
+  .login-card .form-control,
+  .login-card .btn {
+    font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 576px) {
+  .login-page {
+    padding: 78px 12px 12px !important;
+  }
+
+  .login-card {
+    max-width: 80% !important;
+    padding: 0.9rem 0.75rem !important;
+    border-radius: 16px;
+  }
+
+  .login-header {
+    margin-bottom: 0.85rem !important;
+  }
+
+  .login-logo-shell {
+    width: 76px !important;
+    height: 52px !important;
+    margin-bottom: 8px !important;
+  }
+
+  .login-logo {
+    height: 46px !important;
+  }
+
+  .login-title {
+    font-size: 1rem;
+  }
+
+  .login-subtitle,
+  .login-register-text {
+    font-size: 0.74rem !important;
+  }
+
+  .login-card .form-label {
+    font-size: 0.76rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .login-card .form-control {
+    min-height: 36px;
+    font-size: 0.82rem;
+    padding: 0.42rem 0.65rem;
+  }
+
+  .login-card .btn {
+    min-height: 38px;
+    font-size: 0.82rem;
+    padding: 0.42rem 0.65rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .login-page {
+    padding: 74px 10px 10px !important;
+  }
+
+  .login-card {
+    max-width: 84% !important;
+    padding: 0.8rem 0.7rem !important;
+  }
+
+  .login-title {
+    font-size: 0.94rem;
+  }
+}

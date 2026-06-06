@@ -1,0 +1,318 @@
+.manage-admins-container {
+  padding: 15px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.manage-admins-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.manage-admins-title {
+  margin: 0;
+  color: #333;
+  font-weight: 800;
+  font-size: 1.8rem;
+}
+
+.add-admin-btn {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+  font-size: 0.95rem;
+  box-shadow: 0 2px 8px rgba(25, 118, 210, 0.2);
+}
+
+.add-admin-btn:hover {
+  background: linear-gradient(135deg, #1565c0 0%, #0d47a1 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(25, 118, 210, 0.3);
+}
+
+.manage-admins-search-section {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.search-container {
+  flex: 1;
+}
+
+.search-input {
+  width: 100%;
+  max-width: 400px;
+  padding: 12px 15px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: border-color 0.3s ease;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #1976d2;
+  box-shadow: 0 0 8px rgba(25, 118, 210, 0.2);
+}
+
+.admins-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.admins-table thead {
+  background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+  color: white;
+}
+
+.admins-table th {
+  padding: 15px;
+  text-align: left;
+  font-weight: 700;
+  border: none;
+  font-size: 0.95rem;
+}
+
+.admins-table tbody tr {
+  border-bottom: 1px solid #e0e0e0;
+  animation: slideInUp 0.4s ease-out forwards;
+  opacity: 0;
+  transition: background-color 0.2s ease;
+}
+
+.admins-table tbody tr:nth-child(1) { animation-delay: 0.05s; }
+.admins-table tbody tr:nth-child(2) { animation-delay: 0.1s; }
+.admins-table tbody tr:nth-child(3) { animation-delay: 0.15s; }
+.admins-table tbody tr:nth-child(n+4) { animation-delay: 0.2s; }
+
+.admins-table tbody tr:hover {
+  background-color: #f9f9f9;
+}
+
+.admins-table td {
+  padding: 14px 15px;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.edit-btn, .delete-btn {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s ease;
+}
+
+.edit-btn {
+  background-color: #ffc107;
+  color: #333;
+}
+
+.edit-btn:hover {
+  background-color: #e0a800;
+  transform: translateY(-2px);
+}
+
+.delete-btn {
+  background-color: #dc3545;
+  color: white;
+}
+
+.delete-btn:hover {
+  background-color: #c82333;
+  transform: translateY(-2px);
+}
+
+/* Slide in animation */
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scrollable table wrapper for mobile */
+.admins-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 6px;
+}
+
+/* MOBILE RESPONSIVE DESIGN */
+@media (max-width: 768px) {
+  .manage-admins-container {
+    padding: 10px;
+    position: relative;
+  }
+
+  .manage-admins-header {
+    display: block;
+    margin-bottom: 0;
+  }
+
+  .manage-admins-title {
+    font-size: 1.1rem;
+    text-align: left;
+    margin: 0 0 15px 0;
+  }
+
+  .manage-admins-search-section {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+    align-items: flex-start;
+  }
+
+  .search-container {
+    flex: 1;
+    flex-basis: 100%;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+
+  .search-input {
+    width: 100%;
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+
+  .add-admin-btn {
+    padding: 8px 14px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  /* Scrollable table on mobile */
+  .admins-table {
+    width: 100%;
+    min-width: 800px;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 6px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  }
+
+  .admins-table thead {
+    background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+    color: white;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .admins-table th {
+    padding: 10px 8px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+
+  .admins-table tbody tr {
+    border-bottom: 1px solid #e0e0e0;
+    animation: slideInUp 0.4s ease-out forwards;
+    opacity: 0;
+  }
+
+  .admins-table tbody tr:nth-child(1) { animation-delay: 0.05s; }
+  .admins-table tbody tr:nth-child(2) { animation-delay: 0.1s; }
+  .admins-table tbody tr:nth-child(3) { animation-delay: 0.15s; }
+  .admins-table tbody tr:nth-child(n+4) { animation-delay: 0.2s; }
+
+  .admins-table td {
+    padding: 8px 6px;
+    font-size: 0.7rem;
+    color: #333;
+    white-space: nowrap;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 3px;
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .edit-btn, .delete-btn {
+    padding: 5px 8px;
+    border: none;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.6rem;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .manage-admins-container {
+    padding: 8px;
+  }
+
+  .manage-admins-title {
+    font-size: 1.1rem;
+  }
+
+  .admins-table {
+    min-width: 750px;
+  }
+
+  .admins-table th {
+    padding: 10px 6px;
+    font-size: 0.7rem;
+  }
+
+  .admins-table td {
+    padding: 8px 6px;
+    font-size: 0.7rem;
+  }
+
+  .edit-btn, .delete-btn {
+    padding: 5px 8px;
+    font-size: 0.6rem;
+  }
+
+  .loading-state, .empty-state {
+    padding: 20px 10px;
+    font-size: 0.9rem;
+  }
+
+  .save-btn, .cancel-btn {
+    padding: 10px 15px;
+    font-size: 0.85rem;
+  }
+}
