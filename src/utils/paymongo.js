@@ -1,13 +1,18 @@
-const API_BASE_URL =
-  process.env.REACT_APP_API_URL !== undefined
-    ? process.env.REACT_APP_API_URL
-    : process.env.NODE_ENV === "production"
-    ? ""
-    : "http://localhost:5001";
+function getApiBaseUrl() {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "http://localhost:5001";
+    }
+    return "";
+  }
 
-export { API_BASE_URL };
-export const isPayMongoEnabled = () =>
-  process.env.REACT_APP_PAYMONGO_ENABLED === "true";
+  return "http://localhost:5001";
+}
+
+export { getApiBaseUrl };
+
+export const isPayMongoEnabled = () => true;
 
 export const isPayMongoGcash = (paymentMethod) =>
   isPayMongoEnabled() && paymentMethod === "gcash";
@@ -18,7 +23,11 @@ export async function checkPayMongoReady() {
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/health`);
+    const response = await fetch(`${getApiBaseUrl()}/health`);
+    if (!response.ok) {
+      return false;
+    }
+
     const payload = await response.json();
     return Boolean(payload.ok && payload.paymongoConfigured);
   } catch {
@@ -26,12 +35,21 @@ export async function checkPayMongoReady() {
   }
 }
 
+export function isProductionDeployment() {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    return host !== "localhost" && host !== "127.0.0.1";
+  }
+
+  return process.env.NODE_ENV === "production";
+}
+
 export async function createQrPhCheckout({
   paymentId,
   amount,
   bookingId,
 }) {
-  const response = await fetch(`${API_BASE_URL}/api/payments/qrph`, {
+  const response = await fetch(`${getApiBaseUrl()}/api/payments/qrph`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -53,7 +71,7 @@ export async function createQrPhCheckout({
 
 export async function getPayMongoPaymentStatus(paymentIntentId) {
   const response = await fetch(
-    `${API_BASE_URL}/api/payments/status/${paymentIntentId}`
+    `${getApiBaseUrl()}/api/payments/status/${paymentIntentId}`
   );
   const payload = await response.json();
   if (!response.ok) {
@@ -68,12 +86,12 @@ export function getQrPhImageUrl(paymentIntentId, cacheBust = "") {
   }
 
   const suffix = cacheBust ? `?t=${cacheBust}` : "";
-  return `${API_BASE_URL}/api/payments/qrph/${paymentIntentId}/image${suffix}`;
+  return `${getApiBaseUrl()}/api/payments/qrph/${paymentIntentId}/image${suffix}`;
 }
 
 export async function refreshQrPhCheckout(paymentIntentId) {
   const response = await fetch(
-    `${API_BASE_URL}/api/payments/qrph/${paymentIntentId}/refresh`,
+    `${getApiBaseUrl()}/api/payments/qrph/${paymentIntentId}/refresh`,
     { method: "POST" }
   );
   const payload = await response.json();

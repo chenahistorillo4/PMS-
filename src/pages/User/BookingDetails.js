@@ -8,6 +8,7 @@ import {
   isPayMongoEnabled,
   isPayMongoGcash,
   checkPayMongoReady,
+  isProductionDeployment,
 } from "../../utils/paymongo";
 
 // Generate a unique reference code
@@ -388,7 +389,9 @@ function BookingDetails(props) {
       if (usesPayMongoGcash) {
         if (!payMongoReady) {
           alert(
-            "Online GCash payment is not ready yet. Start the payment server (npm run server) and add your PAYMONGO_SECRET_KEY in server/.env, then refresh this page."
+            isProductionDeployment()
+              ? "Online payment is not ready. Make sure PAYMONGO_SECRET_KEY is set in server/.env on the server, then redeploy."
+              : "Online GCash payment is not ready yet. Start the payment server (npm run server) and add your PAYMONGO_SECRET_KEY in server/.env, then refresh this page."
           );
           setLoading(false);
           return;
@@ -996,7 +999,9 @@ function BookingDetails(props) {
                           marginBottom: "10px",
                           lineHeight: "1.5"
                         }}>
-                          Payment server is not ready. Run `npm run server` and set PAYMONGO_SECRET_KEY in server/.env, then refresh.
+                          {isProductionDeployment()
+                            ? "Online payment is not ready. Add PAYMONGO_SECRET_KEY to server/.env and redeploy."
+                            : "Payment server is not ready. Run `npm run server` and set PAYMONGO_SECRET_KEY in server/.env, then refresh."}
                         </p>
                       )}
                       <p style={{
