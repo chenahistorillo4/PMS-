@@ -1,5 +1,10 @@
 {
   "version": 2,
+  "functions": {
+    "api/**/*.js": {
+      "includeFiles": "server/**"
+    }
+  },
   "rewrites": [
     { "source": "/health", "destination": "/api/health" },
     { "source": "/webhooks/paymongo", "destination": "/api/webhooks/paymongo" },

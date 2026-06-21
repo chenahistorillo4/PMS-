@@ -1,3 +1,5 @@
+require("./loadEnv");
+
 const admin = require("firebase-admin");
 
 let initialized = false;

@@ -1,6 +1,4 @@
-require("../../../server/loadEnv");
-
-const { getQrPhImageFromIntent } = require("../../../server/paymongo");
+const { getQrPhImageFromIntent } = require("../../../../server/paymongo");
 
 module.exports = async (req, res) => {
   if (req.method !== "GET") {

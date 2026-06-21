@@ -1,6 +1,4 @@
-require("../../../server/loadEnv");
-
-const { refreshQrPhCheckout } = require("../../../server/paymongo");
+const { refreshQrPhCheckout } = require("../../../../server/paymongo");
 
 module.exports = async (req, res) => {
   if (req.method !== "POST") {

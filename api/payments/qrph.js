@@ -1,6 +1,5 @@
-require("../server/loadEnv");
-
-const { createQrPhCheckout } = require("../server/paymongo");
+const { parseJsonBody } = require("../_lib/parseBody");
+const { createQrPhCheckout } = require("../../server/paymongo");
 
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
@@ -8,9 +7,9 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { paymentId, amount, bookingId } = req.body || {};
+    const { paymentId, amount, bookingId } = parseJsonBody(req);
 
-    if (!paymentId || !amount) {
+    if (!paymentId || amount === undefined || amount === null) {
       return res.status(400).json({
         error: "paymentId and amount are required",
       });

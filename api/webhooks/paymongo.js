@@ -1,5 +1,4 @@
-require("../../server/loadEnv");
-
+const { parseJsonBody } = require("../_lib/parseBody");
 const { chargeSource } = require("../../server/paymongo");
 const {
   markPaymentCompletedByIntentId,
@@ -20,8 +19,7 @@ module.exports = async (req, res) => {
       return res.status(401).json({ error: "Invalid webhook signature" });
     }
 
-    const event =
-      typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const event = parseJsonBody(req);
     const eventType = event?.data?.attributes?.type;
     const resource = event?.data?.attributes?.data;
 

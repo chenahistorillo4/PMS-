@@ -1,3 +1,5 @@
+require("./loadEnv");
+
 const PAYMONGO_API = "https://api.paymongo.com/v1";
 
 function getAuthHeader() {

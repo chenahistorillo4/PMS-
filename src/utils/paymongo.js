@@ -10,6 +10,24 @@ function getApiBaseUrl() {
   return "http://localhost:5001";
 }
 
+async function parseJsonResponse(response) {
+  const text = await response.text();
+
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      text.startsWith("A server error")
+        ? "Payment server error on deployment. Push the latest code and confirm server/.env is deployed."
+        : text.slice(0, 160)
+    );
+  }
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -47,7 +65,7 @@ export async function checkPayMongoReady() {
       return false;
     }
 
-    const payload = await response.json();
+    const payload = await parseJsonResponse(response);
     return Boolean(payload.ok && payload.paymongoConfigured);
   } catch {
     return false;
@@ -80,7 +98,7 @@ export async function createQrPhCheckout({
     }),
   });
 
-  const payload = await response.json();
+  const payload = await parseJsonResponse(response);
   if (!response.ok) {
     throw new Error(payload.error || "Failed to generate QR Ph payment");
   }
@@ -92,7 +110,7 @@ export async function getPayMongoPaymentStatus(paymentIntentId) {
   const response = await fetchWithTimeout(
     `${getApiBaseUrl()}/api/payments/status/${paymentIntentId}`
   );
-  const payload = await response.json();
+  const payload = await parseJsonResponse(response);
   if (!response.ok) {
     throw new Error(payload.error || "Failed to check payment status");
   }
@@ -113,7 +131,7 @@ export async function refreshQrPhCheckout(paymentIntentId) {
     `${getApiBaseUrl()}/api/payments/qrph/${paymentIntentId}/refresh`,
     { method: "POST" }
   );
-  const payload = await response.json();
+  const payload = await parseJsonResponse(response);
   if (!response.ok) {
     throw new Error(payload.error || "Failed to refresh QR code");
   }

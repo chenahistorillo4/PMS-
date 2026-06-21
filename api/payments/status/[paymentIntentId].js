@@ -1,6 +1,4 @@
-require("../../server/loadEnv");
-
-const { getPaymentIntent } = require("../../server/paymongo");
+const { getPaymentIntent } = require("../../../server/paymongo");
 
 module.exports = async (req, res) => {
   if (req.method !== "GET") {
