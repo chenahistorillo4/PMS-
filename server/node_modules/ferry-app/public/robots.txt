@@ -32,4 +32,4 @@ Disallow: /redirect
 Disallow: /api/
 Disallow: /webhooks/
 
-Sitemap: /sitemap.xml
+Sitemap: https://ferry-app-minsu.vercel.app/sitemap.xml

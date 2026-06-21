@@ -10,7 +10,7 @@ function resolveSiteUrl() {
     return `https://${process.env.VERCEL_URL.replace(/\/$/, "")}`;
   }
 
-  return "https://your-app.vercel.app";
+  return "https://ferry-app-minsu.vercel.app";
 }
 
 const PUBLIC_ROUTES = [
