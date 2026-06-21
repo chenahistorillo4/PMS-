@@ -29,7 +29,8 @@ Disallow: /payment-return
 Disallow: /payment-redirect
 Disallow: /booking-details
 Disallow: /redirect
+Allow: /api/sitemap
 Disallow: /api/
 Disallow: /webhooks/
 
-Sitemap: https://ferry-app-minsu.vercel.app/sitemap.xml
+Sitemap: https://ferry-app-minsu.vercel.app/api/sitemap

@@ -11,9 +11,16 @@
       "includeFiles": "server/loadEnv.js"
     }
   },
+  "redirects": [
+    {
+      "source": "/sitemap.xml",
+      "destination": "/api/sitemap",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     { "source": "/health", "destination": "/api/health" },
     { "source": "/webhooks/paymongo", "destination": "/api/webhooks/paymongo" },
-    { "source": "/((?!api/|sitemap\\.xml|robots\\.txt|.*\\..*).*)", "destination": "/index.html" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
