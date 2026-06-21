@@ -33,4 +33,4 @@ Disallow: /api/payments
 Disallow: /api/webhooks
 Disallow: /webhooks/
 
-Sitemap: https://ferry-app-minsu.vercel.app/api/sitemap
+Sitemap: https://ferry-app-minsu.vercel.app/api/sitemap.xml
