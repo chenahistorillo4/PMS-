@@ -6,6 +6,7 @@
     }
   },
   "rewrites": [
+    { "source": "/sitemap.xml", "destination": "/api/sitemap" },
     { "source": "/health", "destination": "/api/health" },
     { "source": "/webhooks/paymongo", "destination": "/api/webhooks/paymongo" },
     {
