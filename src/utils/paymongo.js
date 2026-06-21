@@ -1,13 +1,13 @@
 function getApiBaseUrl() {
-  if (typeof window !== "undefined") {
+  if (typeof window !== 'undefined') {
     const host = window.location.hostname;
-    if (host === "localhost" || host === "127.0.0.1") {
-      return "http://localhost:5001";
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'http://localhost:5001';
     }
-    return "";
+    return '';
   }
 
-  return "http://localhost:5001";
+  return 'http://localhost:5001';
 }
 
 async function parseJsonResponse(response) {
@@ -21,8 +21,8 @@ async function parseJsonResponse(response) {
     return JSON.parse(text);
   } catch {
     throw new Error(
-      text.startsWith("A server error")
-        ? "Payment server error on deployment. Push the latest code and confirm server/.env is deployed."
+      text.startsWith('A server error')
+        ? 'Payment server error on deployment. Push the latest code and confirm server/.env is deployed.'
         : text.slice(0, 160)
     );
   }
@@ -38,8 +38,8 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
       signal: controller.signal,
     });
   } catch (error) {
-    if (error.name === "AbortError") {
-      throw new Error("Payment request timed out. Please try again.");
+    if (error.name === 'AbortError') {
+      throw new Error('Payment request timed out. Please try again.');
     }
     throw error;
   } finally {
@@ -51,8 +51,7 @@ export { getApiBaseUrl };
 
 export const isPayMongoEnabled = () => true;
 
-export const isPayMongoGcash = (paymentMethod) =>
-  isPayMongoEnabled() && paymentMethod === "gcash";
+export const isPayMongoGcash = (paymentMethod) => isPayMongoEnabled() && paymentMethod === 'gcash';
 
 export async function checkPayMongoReady() {
   if (!isPayMongoEnabled()) {
@@ -73,23 +72,19 @@ export async function checkPayMongoReady() {
 }
 
 export function isProductionDeployment() {
-  if (typeof window !== "undefined") {
+  if (typeof window !== 'undefined') {
     const host = window.location.hostname;
-    return host !== "localhost" && host !== "127.0.0.1";
+    return host !== 'localhost' && host !== '127.0.0.1';
   }
 
-  return process.env.NODE_ENV === "production";
+  return process.env.NODE_ENV === 'production';
 }
 
-export async function createQrPhCheckout({
-  paymentId,
-  amount,
-  bookingId,
-}) {
+export async function createQrPhCheckout({ paymentId, amount, bookingId }) {
   const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/payments/qrph`, {
-    method: "POST",
+    method: 'POST',
     headers: {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       paymentId,
@@ -100,7 +95,7 @@ export async function createQrPhCheckout({
 
   const payload = await parseJsonResponse(response);
   if (!response.ok) {
-    throw new Error(payload.error || "Failed to generate QR Ph payment");
+    throw new Error(payload.error || 'Failed to generate QR Ph payment');
   }
 
   return payload;
@@ -112,28 +107,28 @@ export async function getPayMongoPaymentStatus(paymentIntentId) {
   );
   const payload = await parseJsonResponse(response);
   if (!response.ok) {
-    throw new Error(payload.error || "Failed to check payment status");
+    throw new Error(payload.error || 'Failed to check payment status');
   }
   return payload;
 }
 
-export function getQrPhImageUrl(paymentIntentId, cacheBust = "") {
+export function getQrPhImageUrl(paymentIntentId, cacheBust = '') {
   if (!paymentIntentId) {
-    return "";
+    return '';
   }
 
-  const suffix = cacheBust ? `?t=${cacheBust}` : "";
+  const suffix = cacheBust ? `?t=${cacheBust}` : '';
   return `${getApiBaseUrl()}/api/payments/qrph/${paymentIntentId}/image${suffix}`;
 }
 
 export async function refreshQrPhCheckout(paymentIntentId) {
   const response = await fetchWithTimeout(
     `${getApiBaseUrl()}/api/payments/qrph/${paymentIntentId}/refresh`,
-    { method: "POST" }
+    { method: 'POST' }
   );
   const payload = await parseJsonResponse(response);
   if (!response.ok) {
-    throw new Error(payload.error || "Failed to refresh QR code");
+    throw new Error(payload.error || 'Failed to refresh QR code');
   }
   return payload;
 }

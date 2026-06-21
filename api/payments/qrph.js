@@ -1,9 +1,9 @@
-const { parseJsonBody } = require("../_lib/parseBody");
-const { createQrPhCheckout } = require("../../server/paymongo");
+const { parseJsonBody } = require('../_lib/parseBody');
+const { createQrPhCheckout } = require('../../server/paymongo');
 
 module.exports = async (req, res) => {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
@@ -11,7 +11,7 @@ module.exports = async (req, res) => {
 
     if (!paymentId || amount === undefined || amount === null) {
       return res.status(400).json({
-        error: "paymentId and amount are required",
+        error: 'paymentId and amount are required',
       });
     }
 
@@ -20,13 +20,13 @@ module.exports = async (req, res) => {
       description: `PMS Ferry booking ${bookingId || paymentId}`,
       metadata: {
         paymentId,
-        bookingId: bookingId || "",
+        bookingId: bookingId || '',
       },
     });
 
     return res.status(200).json(checkout);
   } catch (error) {
-    console.error("QR Ph checkout error:", error);
+    console.error('QR Ph checkout error:', error);
     return res.status(500).json({ error: error.message });
   }
 };

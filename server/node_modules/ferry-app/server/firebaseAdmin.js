@@ -1,6 +1,6 @@
-require("./loadEnv");
+require('./loadEnv');
 
-const admin = require("firebase-admin");
+const admin = require('firebase-admin');
 
 let initialized = false;
 
@@ -28,8 +28,8 @@ async function markPaymentCompletedByIntentId(paymongoPaymentIntentId) {
   const app = initFirebaseAdmin();
   const db = app.firestore();
   const paymentsQuery = await db
-    .collection("payments")
-    .where("paymongoPaymentIntentId", "==", paymongoPaymentIntentId)
+    .collection('payments')
+    .where('paymongoPaymentIntentId', '==', paymongoPaymentIntentId)
     .limit(1)
     .get();
 
@@ -41,14 +41,14 @@ async function markPaymentCompletedByIntentId(paymongoPaymentIntentId) {
   const paymentData = paymentDoc.data();
 
   await paymentDoc.ref.update({
-    status: "completed",
-    paymongoStatus: "paid",
+    status: 'completed',
+    paymongoStatus: 'paid',
     confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
   if (paymentData.bookingId) {
-    await db.collection("bookings").doc(paymentData.bookingId).update({
-      status: "confirmed",
+    await db.collection('bookings').doc(paymentData.bookingId).update({
+      status: 'confirmed',
     });
   }
 }
@@ -57,8 +57,8 @@ async function markPaymentFailedByIntentId(paymongoPaymentIntentId) {
   const app = initFirebaseAdmin();
   const db = app.firestore();
   const paymentsQuery = await db
-    .collection("payments")
-    .where("paymongoPaymentIntentId", "==", paymongoPaymentIntentId)
+    .collection('payments')
+    .where('paymongoPaymentIntentId', '==', paymongoPaymentIntentId)
     .limit(1)
     .get();
 
@@ -67,8 +67,8 @@ async function markPaymentFailedByIntentId(paymongoPaymentIntentId) {
   }
 
   await paymentsQuery.docs[0].ref.update({
-    status: "failed",
-    paymongoStatus: "failed",
+    status: 'failed',
+    paymongoStatus: 'failed',
   });
 }
 
@@ -76,8 +76,8 @@ async function markPaymentCompletedBySourceId(paymongoSourceId) {
   const app = initFirebaseAdmin();
   const db = app.firestore();
   const paymentsQuery = await db
-    .collection("payments")
-    .where("paymongoSourceId", "==", paymongoSourceId)
+    .collection('payments')
+    .where('paymongoSourceId', '==', paymongoSourceId)
     .limit(1)
     .get();
 
@@ -89,14 +89,14 @@ async function markPaymentCompletedBySourceId(paymongoSourceId) {
   const paymentData = paymentDoc.data();
 
   await paymentDoc.ref.update({
-    status: "completed",
-    paymongoStatus: "paid",
+    status: 'completed',
+    paymongoStatus: 'paid',
     confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
   if (paymentData.bookingId) {
-    await db.collection("bookings").doc(paymentData.bookingId).update({
-      status: "confirmed",
+    await db.collection('bookings').doc(paymentData.bookingId).update({
+      status: 'confirmed',
     });
   }
 }
@@ -105,8 +105,8 @@ async function markPaymentFailedBySourceId(paymongoSourceId) {
   const app = initFirebaseAdmin();
   const db = app.firestore();
   const paymentsQuery = await db
-    .collection("payments")
-    .where("paymongoSourceId", "==", paymongoSourceId)
+    .collection('payments')
+    .where('paymongoSourceId', '==', paymongoSourceId)
     .limit(1)
     .get();
 
@@ -115,8 +115,8 @@ async function markPaymentFailedBySourceId(paymongoSourceId) {
   }
 
   await paymentsQuery.docs[0].ref.update({
-    status: "failed",
-    paymongoStatus: "failed",
+    status: 'failed',
+    paymongoStatus: 'failed',
   });
 }
 

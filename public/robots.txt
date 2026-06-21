@@ -1,3 +1,35 @@
 # https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow:
+Allow: /
+Allow: /home
+Allow: /about
+Allow: /booking
+Allow: /schedule
+Allow: /login
+Allow: /register
+
+Disallow: /admin-dashboard
+Disallow: /admin-profile
+Disallow: /booking-management
+Disallow: /schedule-management
+Disallow: /payment-management
+Disallow: /discount-management
+Disallow: /admin-notifications
+Disallow: /superadmin-dashboard
+Disallow: /create-account
+Disallow: /manage-admins
+Disallow: /manage-qr-scanners
+Disallow: /qr-scanner
+Disallow: /manage
+Disallow: /manage-booking
+Disallow: /profile
+Disallow: /notifications
+Disallow: /payment-qr
+Disallow: /payment-return
+Disallow: /payment-redirect
+Disallow: /booking-details
+Disallow: /redirect
+Disallow: /api/
+Disallow: /webhooks/
+
+Sitemap: /sitemap.xml

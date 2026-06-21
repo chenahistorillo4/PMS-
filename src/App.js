@@ -34,6 +34,7 @@ import { Navigate } from "react-router-dom";
 
 // Components
 import Navbar from "./components/Navbar";
+import SeoManager from "./components/SeoManager";
 
 const HIDDEN_NAVBAR_ROUTES = [
   "/admin-dashboard",
@@ -71,6 +72,7 @@ function AppWrapper() {
 
   return (
     <>
+      <SeoManager />
       {/* Show Navbar only if NOT in admin/superadmin routes */}
       {!HIDDEN_NAVBAR_ROUTES.includes(location.pathname) && <Navbar user={user} />}
 
