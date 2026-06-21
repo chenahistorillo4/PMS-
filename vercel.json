@@ -11,17 +11,9 @@
       "includeFiles": "server/loadEnv.js"
     }
   },
-  "redirects": [
-    {
-      "source": "/sitemap.xml",
-      "destination": "/sitemap/sitemap.xml",
-      "permanent": false
-    }
-  ],
-  "routes": [
-    { "src": "/health", "dest": "/api/health" },
-    { "src": "/webhooks/paymongo", "dest": "/api/webhooks/paymongo" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
+  "rewrites": [
+    { "source": "/health", "destination": "/api/health" },
+    { "source": "/webhooks/paymongo", "destination": "/api/webhooks/paymongo" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
