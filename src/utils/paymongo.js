@@ -10,6 +10,25 @@ function getApiBaseUrl() {
   return "http://localhost:5001";
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Payment request timed out. Please try again.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export { getApiBaseUrl };
 
 export const isPayMongoEnabled = () => true;
@@ -23,7 +42,7 @@ export async function checkPayMongoReady() {
   }
 
   try {
-    const response = await fetch(`${getApiBaseUrl()}/health`);
+    const response = await fetchWithTimeout(`${getApiBaseUrl()}/health`, {}, 10000);
     if (!response.ok) {
       return false;
     }
@@ -49,7 +68,7 @@ export async function createQrPhCheckout({
   amount,
   bookingId,
 }) {
-  const response = await fetch(`${getApiBaseUrl()}/api/payments/qrph`, {
+  const response = await fetchWithTimeout(`${getApiBaseUrl()}/api/payments/qrph`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -70,7 +89,7 @@ export async function createQrPhCheckout({
 }
 
 export async function getPayMongoPaymentStatus(paymentIntentId) {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${getApiBaseUrl()}/api/payments/status/${paymentIntentId}`
   );
   const payload = await response.json();
@@ -90,7 +109,7 @@ export function getQrPhImageUrl(paymentIntentId, cacheBust = "") {
 }
 
 export async function refreshQrPhCheckout(paymentIntentId) {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${getApiBaseUrl()}/api/payments/qrph/${paymentIntentId}/refresh`,
     { method: "POST" }
   );

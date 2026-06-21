@@ -1,7 +1,4 @@
-const path = require("path");
-require("dotenv").config({
-  path: path.join(__dirname, "../server/.env"),
-});
+require("../server/loadEnv");
 
 module.exports = (_req, res) => {
   res.setHeader("Cache-Control", "no-store");

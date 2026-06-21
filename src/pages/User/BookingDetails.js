@@ -416,18 +416,20 @@ function BookingDetails(props) {
         });
 
         setBookingId(docRef.id);
-        setLoading(false);
 
-        if (isModal && onCloseModal) {
-          onCloseModal();
+        const paymentUrl = `/payment-qr?paymentId=${paymentRef.id}`;
+        const navigationState = {
+          paymentIntentId: checkout.paymentIntentId,
+          qrImageUrl: checkout.qrImageUrl,
+        };
+
+        if (isModal) {
+          window.location.assign(paymentUrl);
+          return;
         }
 
-        navigate(`/payment-qr?paymentId=${paymentRef.id}`, {
-          state: {
-            paymentIntentId: checkout.paymentIntentId,
-            qrImageUrl: checkout.qrImageUrl,
-          },
-        });
+        setLoading(false);
+        navigate(paymentUrl, { state: navigationState });
         return;
       }
       
@@ -445,9 +447,10 @@ function BookingDetails(props) {
         navigate('/manage', { state: { userId, bookingId: docRef.id } });
       }
     } catch (error) {
-      setLoading(false);
       console.error('[ERROR] Booking error:', error);
       alert("Error booking trip: " + (error.message || error));
+    } finally {
+      setLoading(false);
     }
   };
 
