@@ -40,6 +40,8 @@ ${urls}
 </urlset>
 `;
 
-const outputPath = path.join(__dirname, "..", "public", "sitemap.xml");
+const outputDir = path.join(__dirname, "..", "public", "sitemap");
+const outputPath = path.join(outputDir, "sitemap.xml");
+fs.mkdirSync(outputDir, { recursive: true });
 fs.writeFileSync(outputPath, sitemap, "utf8");
-console.log(`Generated sitemap.xml for ${siteUrl}`);
+console.log(`Generated sitemap/sitemap.xml for ${siteUrl}`);

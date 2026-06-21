@@ -14,13 +14,14 @@
   "redirects": [
     {
       "source": "/sitemap.xml",
-      "destination": "/api/sitemap",
+      "destination": "/sitemap/sitemap.xml",
       "permanent": false
     }
   ],
-  "rewrites": [
-    { "source": "/health", "destination": "/api/health" },
-    { "source": "/webhooks/paymongo", "destination": "/api/webhooks/paymongo" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  "routes": [
+    { "src": "/health", "dest": "/api/health" },
+    { "src": "/webhooks/paymongo", "dest": "/api/webhooks/paymongo" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
