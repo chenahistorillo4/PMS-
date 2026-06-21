@@ -10,6 +10,8 @@ import Register from "./pages/Register";
 import Booking from "./pages/User/Booking";
 import BookingDetails from "./pages/User/BookingDetails";
 import PaymentRedirect from "./pages/User/PaymentRedirect";
+import PaymentReturn from "./pages/User/PaymentReturn";
+import PaymentQrPh from "./pages/User/PaymentQrPh";
 import Schedule from "./pages/User/Schedule";
 import ManageBooking from "./pages/User/ManageBooking";
 import About from "./pages/User/About"; 
@@ -81,6 +83,8 @@ function AppWrapper() {
         <Route path="/booking" element={<Booking />} />
         <Route path="/booking-details" element={<BookingDetails />} />
         <Route path="/payment-redirect" element={<PaymentRedirect />} />
+        <Route path="/payment-return" element={<PaymentReturn />} />
+        <Route path="/payment-qr" element={<PaymentQrPh />} />
         <Route path="/schedule" element={<Schedule />} />
         <Route path="/manage" element={<ManageBooking />} />
         <Route path="/manage-booking" element={<ManageBooking />} />

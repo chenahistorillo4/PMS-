@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "../../firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, collection, addDoc, onSnapshot, query, where, updateDoc, deleteDoc, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { formatTime12Hour } from "../../utils/timeFormatter";
@@ -15,6 +16,7 @@ function ScheduleManagement() {
   const [currentPageUpcoming, setCurrentPageUpcoming] = useState(1);
   const [currentPageHistory, setCurrentPageHistory] = useState(1);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [creatingTestTrip, setCreatingTestTrip] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [newTrip, setNewTrip] = useState({
     name: "",
@@ -29,26 +31,38 @@ function ScheduleManagement() {
     boatImage: ""
   });
 
-  // Fetch admin info
+  // Fetch admin info (wait for auth to be ready)
   useEffect(() => {
-    const fetchAdminData = async () => {
-      const user = auth.currentUser;
-      if (user) {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setAdminData(null);
+        return;
+      }
+
+      try {
         const docRef = doc(db, "admins", user.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           setAdminData(docSnap.data());
+        } else {
+          setAdminData(null);
+          console.error("Admin document not found for uid:", user.uid);
         }
+      } catch (error) {
+        console.error("Error fetching admin data:", error);
+        setAdminData(null);
       }
-    };
-    fetchAdminData();
+    });
 
-    // Handle window resize for mobile detection
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 768);
     };
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+
+    return () => {
+      unsubscribeAuth();
+      window.removeEventListener("resize", handleResize);
+    };
   }, []);
 
   // Real-time listener for trips of this boat
@@ -224,6 +238,65 @@ const handleDeleteTrip = async (id) => {
     alert("Trip deleted successfully and notifications sent!");
   } catch (error) {
     alert("Error deleting trip: " + error.message);
+  }
+};
+
+const handleCreateTestTrip = async (price) => {
+  if (!adminData) {
+    alert("Admin profile is still loading. Please wait a moment and try again.");
+    return;
+  }
+
+  let assignedBoat = adminData.assignedBoat;
+  let assignedRoute = adminData.assignedRoute || "Test Route";
+
+  if (!assignedBoat) {
+    try {
+      const boatsSnap = await getDocs(collection(db, "boats"));
+      if (!boatsSnap.empty) {
+        assignedBoat = boatsSnap.docs[0].data().name;
+        assignedRoute = boatsSnap.docs[0].data().route || assignedRoute;
+      }
+    } catch (error) {
+      console.error("Error fetching boats:", error);
+    }
+  }
+
+  if (!assignedBoat) {
+    alert(
+      "Your admin account has no assigned boat. Ask the superadmin to set assignedBoat on your admin profile, or add a boat first."
+    );
+    return;
+  }
+
+  const today = new Date();
+  const dateString = today.toISOString().split("T")[0];
+  const label = price === 0 ? "P0" : "P1";
+
+  setCreatingTestTrip(true);
+  try {
+    await addDoc(collection(db, "schedules"), {
+      name: `TEST Trip ${label} (Payment Testing)`,
+      date: dateString,
+      departure: "09:00",
+      arrival: "10:00",
+      capacity: 50,
+      routeDirection: assignedRoute,
+      price,
+      cargoPerKilo: 0,
+      status: "Upcoming",
+      boatImage: "",
+      boat: assignedBoat,
+      route: assignedRoute,
+      isTestTrip: true,
+      createdAt: new Date(),
+    });
+    alert(`Test trip (${price === 0 ? "₱0" : "₱1"}) created for ${assignedBoat}.`);
+  } catch (error) {
+    console.error("Create test trip error:", error);
+    alert("Error creating test trip: " + error.message);
+  } finally {
+    setCreatingTestTrip(false);
   }
 };
 
@@ -809,6 +882,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
             margin: "0"
           }}>Trip Schedule</h2>
           {!showForm && (
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button 
               onClick={() => setShowForm(true)}
               style={{
@@ -834,6 +908,43 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
             >
               + Add Trip
             </button>
+            <button
+              type="button"
+              onClick={() => handleCreateTestTrip(1)}
+              disabled={creatingTestTrip}
+              style={{
+                background: creatingTestTrip ? "#a5d6a7" : "#4caf50",
+                color: "white",
+                border: "none",
+                padding: isMobile ? "6px 12px" : "10px 16px",
+                borderRadius: "8px",
+                fontWeight: 700,
+                cursor: creatingTestTrip ? "not-allowed" : "pointer",
+                fontSize: isMobile ? "0.75rem" : "0.85rem",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {creatingTestTrip ? "Creating..." : "+ Test P1 Trip"}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleCreateTestTrip(0)}
+              disabled={creatingTestTrip}
+              style={{
+                background: creatingTestTrip ? "#ffcc80" : "#ff9800",
+                color: "white",
+                border: "none",
+                padding: isMobile ? "6px 12px" : "10px 16px",
+                borderRadius: "8px",
+                fontWeight: 700,
+                cursor: creatingTestTrip ? "not-allowed" : "pointer",
+                fontSize: isMobile ? "0.75rem" : "0.85rem",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {creatingTestTrip ? "Creating..." : "+ Test P0 Trip"}
+            </button>
+            </div>
           )}
         </div>
         <div style={{

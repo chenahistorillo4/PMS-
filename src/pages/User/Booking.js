@@ -393,17 +393,20 @@ function Booking({ userId, userType }) {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: trip.price ? "1fr 1fr 1fr" : "1fr 1fr",
+                        gridTemplateColumns:
+                          trip.price === 0 || trip.price
+                            ? "1fr 1fr 1fr"
+                            : "1fr 1fr",
                         gap: isMobile ? "8px" : "11px",
                         paddingTop: isMobile ? "8px" : "11px",
                         borderTop: "1px solid #e8e8e8",
                         marginBottom: isMobile ? "10px" : "15px"
                       }}
                     >
-                      {trip.price && (
+                      {(trip.price === 0 || trip.price) && (
                         <div>
                           <div style={{ fontWeight: 700, color: "#1e88e5", fontSize: isMobile ? "0.5rem" : "0.65rem", marginBottom: "2px", textTransform: "uppercase", letterSpacing: "0.4px" }}>Price</div>
-                          <div style={{ color: "#1e88e5", fontSize: isMobile ? "0.82rem" : "1.15rem", fontWeight: 800 }}>PHP {trip.price}</div>
+                          <div style={{ color: "#1e88e5", fontSize: isMobile ? "0.82rem" : "1.15rem", fontWeight: 800 }}>₱{Number(trip.price).toFixed(2)}</div>
                         </div>
                       )}
                       <div>

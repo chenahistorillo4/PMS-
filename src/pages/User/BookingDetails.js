@@ -1,8 +1,14 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { db, auth } from "../../firebase";
-import { collection, addDoc, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, doc, getDoc, updateDoc } from "firebase/firestore";
 import { formatTime12Hour } from "../../utils/timeFormatter";
+import {
+  createQrPhCheckout,
+  isPayMongoEnabled,
+  isPayMongoGcash,
+  checkPayMongoReady,
+} from "../../utils/paymongo";
 
 // Generate a unique reference code
 const generateReferenceCode = () => {
@@ -47,7 +53,13 @@ function BookingDetails(props) {
   const [paymentProofPreview, setPaymentProofPreview] = useState(null);
   const [boatDiscounts, setBoatDiscounts] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [payMongoReady, setPayMongoReady] = useState(false);
   const paymentAutoSelectedRef = useRef(false);
+  const usesPayMongoGcash = isPayMongoGcash(form.payment);
+
+  useEffect(() => {
+    checkPayMongoReady().then(setPayMongoReady);
+  }, []);
 
   // Handle window resize
   useEffect(() => {
@@ -276,8 +288,8 @@ function BookingDetails(props) {
       }
     }
 
-    // Validate proof of payment is required
-    if (!paymentProofBase64) {
+    // Manual proof is only required for non-PayMongo payments
+    if (!usesPayMongoGcash && !paymentProofBase64) {
       alert("Please upload your proof of payment screenshot.");
       return;
     }
@@ -364,13 +376,57 @@ function BookingDetails(props) {
         paymentAccountId: selectedPaymentAccount?.id || null,
         paymentAccountNumber: selectedPaymentAccount?.accountNumber || null,
         status: "pending",
-        proofOfPaymentBase64: paymentProofBase64, // Include proof immediately
-        proofOfPaymentFileName: paymentProof?.name || null,
+        paymentProvider: usesPayMongoGcash ? "paymongo" : "manual",
+        proofOfPaymentBase64: usesPayMongoGcash ? null : paymentProofBase64,
+        proofOfPaymentFileName: usesPayMongoGcash ? null : (paymentProof?.name || null),
         createdAt: new Date()
       };
       
       const paymentRef = await addDoc(collection(db, "payments"), paymentData);
       console.log('[SUCCESS] Payment record created! ID:', paymentRef.id);
+
+      if (usesPayMongoGcash) {
+        if (!payMongoReady) {
+          alert(
+            "Online GCash payment is not ready yet. Start the payment server (npm run server) and add your PAYMONGO_SECRET_KEY in server/.env, then refresh this page."
+          );
+          setLoading(false);
+          return;
+        }
+
+        if (finalPrice <= 0) {
+          alert("Online payment requires a total amount greater than ₱0.00.");
+          setLoading(false);
+          return;
+        }
+
+        const checkout = await createQrPhCheckout({
+          paymentId: paymentRef.id,
+          amount: finalPrice,
+          bookingId: docRef.id,
+        });
+
+        await updateDoc(doc(db, "payments", paymentRef.id), {
+          paymongoPaymentIntentId: checkout.paymentIntentId || null,
+          paymongoFlow: "qrph",
+          paymongoStatus: checkout.status,
+        });
+
+        setBookingId(docRef.id);
+        setLoading(false);
+
+        if (isModal && onCloseModal) {
+          onCloseModal();
+        }
+
+        navigate(`/payment-qr?paymentId=${paymentRef.id}`, {
+          state: {
+            paymentIntentId: checkout.paymentIntentId,
+            qrImageUrl: checkout.qrImageUrl,
+          },
+        });
+        return;
+      }
       
       console.log('[SUCCESS] Booking successful! Your proof of payment has been submitted.');
       setBookingId(docRef.id);
@@ -879,7 +935,13 @@ function BookingDetails(props) {
                       checked={form.payment === method.accountType}
                       style={{ cursor: "pointer", width: "18px", height: "18px" }}
                     />
-                    {method.accountType === "gcash" ? "GCash" : method.accountType === "paymaya" ? "PayMaya" : method.accountType.charAt(0).toUpperCase() + method.accountType.slice(1)}
+                    {method.accountType === "gcash"
+                      ? isPayMongoEnabled()
+                        ? "GCash (QR Ph Scan)"
+                        : "GCash"
+                      : method.accountType === "paymaya"
+                      ? "PayMaya"
+                      : method.accountType.charAt(0).toUpperCase() + method.accountType.slice(1)}
                   </label>
                 ))}
               </div>
@@ -889,8 +951,8 @@ function BookingDetails(props) {
           {/* Payment Instructions Section - Show when payment method selected BEFORE booking */}
           {form.payment && !bookingId && (
             <div style={{
-              background: "#fff9e6",
-              border: "2px solid #ffc107",
+              background: usesPayMongoGcash ? "#e8f5e9" : "#fff9e6",
+              border: usesPayMongoGcash ? "2px solid #4caf50" : "2px solid #ffc107",
               borderRadius: "8px",
               padding: "clamp(20px, 5vw, 30px)",
               marginBottom: "30px",
@@ -903,9 +965,9 @@ function BookingDetails(props) {
                   color: "#1a1a1a",
                   marginBottom: "20px",
                   paddingBottom: "12px",
-                  borderBottom: "2px solid #ffc107"
+                  borderBottom: usesPayMongoGcash ? "2px solid #4caf50" : "2px solid #ffc107"
                 }}>
-                   Payment Instructions
+                   {usesPayMongoGcash ? "Pay with QR Ph (GCash / Bank Apps)" : "Payment Instructions"}
                 </h3>
                 
                 <div style={{
@@ -913,8 +975,42 @@ function BookingDetails(props) {
                   padding: isMobile ? "clamp(12px, 2vw, 15px)" : "clamp(15px, 3vw, 20px)",
                   borderRadius: "8px",
                   marginBottom: "20px",
-                  border: "1px solid #ffc107"
+                  border: usesPayMongoGcash ? "1px solid #4caf50" : "1px solid #ffc107"
                 }}>
+                  {usesPayMongoGcash ? (
+                    <>
+                      <p style={{
+                        fontSize: isMobile ? "clamp(0.7rem, 0.85vw, 0.78rem)" : "clamp(0.85rem, 1vw, 0.9rem)",
+                        color: "#666",
+                        marginBottom: "15px",
+                        lineHeight: "1.6"
+                      }}>
+                        You will pay <strong>₱{Number(finalPrice).toFixed(2)}</strong> via <strong>QR Ph</strong>.
+                        After confirming, a QR code will appear — scan it using the GCash app or any participating bank/e-wallet app.
+                      </p>
+                      {!payMongoReady && (
+                        <p style={{
+                          fontSize: isMobile ? "clamp(0.65rem, 0.8vw, 0.72rem)" : "clamp(0.75rem, 0.9vw, 0.85rem)",
+                          color: "#c62828",
+                          fontWeight: 600,
+                          marginBottom: "10px",
+                          lineHeight: "1.5"
+                        }}>
+                          Payment server is not ready. Run `npm run server` and set PAYMONGO_SECRET_KEY in server/.env, then refresh.
+                        </p>
+                      )}
+                      <p style={{
+                        fontSize: isMobile ? "clamp(0.65rem, 0.8vw, 0.72rem)" : "clamp(0.75rem, 0.9vw, 0.85rem)",
+                        color: "#2e7d32",
+                        fontWeight: 600,
+                        marginBottom: "0",
+                        lineHeight: "1.5"
+                      }}>
+                        No manual transfer or proof upload needed. QR code expires in 30 minutes.
+                      </p>
+                    </>
+                  ) : (
+                    <>
                   <p style={{
                     fontSize: isMobile ? "clamp(0.7rem, 0.85vw, 0.78rem)" : "clamp(0.85rem, 1vw, 0.9rem)",
                     color: "#666",
@@ -958,12 +1054,14 @@ function BookingDetails(props) {
                   }}>
                     [NOTE] {bookingId ? `Please include your Booking ID ${bookingId} as reference so we can match your payment.` : "Your Booking ID will be generated after you confirm the booking. Please include it as reference when transferring."}
                   </p>
+                    </>
+                  )}
                 </div>
               </div>
             )}
 
-          {/* Proof of Payment Upload Section - Show when payment method selected BEFORE booking */}
-          {form.payment && !bookingId && (
+          {/* Proof of Payment Upload Section - manual payments only */}
+          {form.payment && !bookingId && !usesPayMongoGcash && (
             <div style={{
               background: "white",
               border: "2px solid #4caf50",
@@ -1115,7 +1213,11 @@ function BookingDetails(props) {
                   }
                 }}
               >
-                {loading ? 'Processing...' : 'Confirm Booking'}
+                {loading
+                  ? "Processing..."
+                  : usesPayMongoGcash
+                  ? "Confirm & Show QR Code"
+                  : "Confirm Booking"}
               </button>
             </div>
           )}
