@@ -625,7 +625,8 @@ function SuperadminDashboard() {
                       {selectedCard === "admins" && (
                         <>
                           <span style={{ color: "#666" }}>Name: {item.name}</span><br/>
-                          <span style={{ color: "#666" }}>Email: {item.email}</span>
+                          <span style={{ color: "#666" }}>Email: {item.email}</span><br/>
+                          <span style={{ color: "#666" }}>Phone: {item.phone || "Not set"}</span>
                         </>
                       )}
                       {selectedCard === "scanners" && (

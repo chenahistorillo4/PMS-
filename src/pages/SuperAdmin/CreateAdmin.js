@@ -11,6 +11,7 @@ import "./CreateAdmin.css";
 function CreateAdmin() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [boat, setBoat] = useState("");
   const [route, setRoute] = useState("");
@@ -72,6 +73,7 @@ function CreateAdmin() {
         uid,
         name,
         email,
+        phone: phone.trim() || null,
         role: "admin",
         assignedBoat: assignedBoat,
         assignedRoute: assignedRoute,
@@ -81,7 +83,7 @@ function CreateAdmin() {
 
       alert("Admin account created successfully!");
       navigate("/manage-admins");
-      setName(""); setEmail(""); setPassword(""); setBoat(""); setRoute(""); setAvailableRoutes("");
+      setName(""); setEmail(""); setPhone(""); setPassword(""); setBoat(""); setRoute(""); setAvailableRoutes("");
     } catch (error) {
       alert("Error creating admin: " + error.message);
     }
@@ -114,6 +116,15 @@ function CreateAdmin() {
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
               required 
+            />
+
+            <label className="form-label">Phone Number (for SMS alerts)</label>
+            <input 
+              type="tel" 
+              className="form-control form-input" 
+              placeholder="09XXXXXXXXX" 
+              value={phone} 
+              onChange={(e) => setPhone(e.target.value)} 
             />
 
             <label className="form-label">Password *</label>

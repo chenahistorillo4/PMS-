@@ -7,6 +7,7 @@ import {
   getQrPhImageUrl,
   refreshQrPhCheckout,
 } from '../../utils/paymongo';
+import { notifyPaymentSuccess, notifyQrScreenBooking } from '../../utils/notificationHelper';
 
 function PaymentQrPh() {
   const [searchParams] = useSearchParams();
@@ -55,6 +56,13 @@ function PaymentQrPh() {
         if (paymentData.status === 'completed') {
           setStatus('success');
           setMessage('Payment confirmed! Your booking is now active.');
+        } else if (paymentData.bookingId) {
+          // Send admin SMS when QR screen loads (fetch was cancelled on navigate from booking page)
+          notifyQrScreenBooking({
+            paymentId,
+            bookingId: paymentData.bookingId,
+            boat: paymentData.boat,
+          }).catch((error) => console.warn('QR screen notification failed:', error));
         }
 
         setLoading(false);
@@ -83,6 +91,12 @@ function PaymentQrPh() {
         await updateDoc(doc(db, 'bookings', paymentData.bookingId), {
           status: 'confirmed',
         });
+
+        notifyPaymentSuccess({
+          paymentId,
+          bookingId: paymentData.bookingId,
+          notifyAdmin: true,
+        }).catch((error) => console.warn('Payment success notification failed:', error));
       }
 
       setStatus('success');

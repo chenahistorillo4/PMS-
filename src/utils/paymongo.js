@@ -1,13 +1,6 @@
 function getApiBaseUrl() {
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname;
-    if (host === 'localhost' || host === '127.0.0.1') {
-      return 'http://localhost:5001';
-    }
-    return '';
-  }
-
-  return 'http://localhost:5001';
+  // Same-origin /api routes (CRA proxy in dev, Vercel functions in production).
+  return '';
 }
 
 async function parseJsonResponse(response) {

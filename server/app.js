@@ -29,7 +29,23 @@ function getAllowedOrigins() {
     origins.push(`https://${process.env.VERCEL_BRANCH_URL}`);
   }
 
+  if (process.env.APP_URL) {
+    origins.push(process.env.APP_URL.replace(/\/$/, ''));
+  }
+
   return [...new Set(origins)];
+}
+
+function isLocalDevOrigin(origin) {
+  try {
+    const { hostname } = new URL(origin);
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return true;
+    }
+    return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname);
+  } catch {
+    return false;
+  }
 }
 
 function createApp() {
@@ -43,6 +59,11 @@ function createApp() {
           callback(null, true);
           return;
         }
+        if (process.env.NODE_ENV !== 'production' && isLocalDevOrigin(origin)) {
+          callback(null, true);
+          return;
+        }
+        console.warn('CORS blocked origin:', origin);
         callback(new Error('Not allowed by CORS'));
       },
     })
@@ -99,9 +120,13 @@ function createApp() {
   app.use(express.json());
 
   app.get('/health', (_req, res) => {
+    const { isMailConfigured } = require('./emailService');
+    const { isSmsConfigured } = require('./smsService');
     res.json({
       ok: true,
       paymongoConfigured: Boolean(process.env.PAYMONGO_SECRET_KEY),
+      mailConfigured: isMailConfigured(),
+      smsConfigured: isSmsConfigured(),
     });
   });
 
@@ -209,6 +234,28 @@ function createApp() {
       console.error('QR Ph refresh error:', error);
       return res.status(500).json({ error: error.message });
     }
+  });
+
+  app.post('/api/notifications/email', async (req, res) => {
+    const handler = require('./notificationRoute');
+    return handler(req, res);
+  });
+
+  app.post('/api/notifications/send', async (req, res) => {
+    const handler = require('./notificationRoute');
+    return handler(req, res);
+  });
+
+  app.get('/api/notifications/status', (_req, res) => {
+    const { isMailConfigured } = require('./emailService');
+    const { isSmsConfigured } = require('./smsService');
+    res.json({
+      ok: true,
+      mailConfigured: isMailConfigured(),
+      smsConfigured: isSmsConfigured(),
+      hasSemaphoreKey: Boolean(process.env.SEMAPHORE_API_KEY),
+      senderName: process.env.SEMAPHORE_SENDER_NAME || 'DentalPal',
+    });
   });
 
   return app;

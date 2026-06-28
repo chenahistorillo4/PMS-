@@ -13,6 +13,7 @@ function CreateAccount() {
   const [accountType, setAccountType] = useState(typeParam || "admin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [boat, setBoat] = useState("");
   const [route, setRoute] = useState("");
@@ -47,6 +48,7 @@ function CreateAccount() {
   const resetForm = () => {
     setName("");
     setEmail("");
+    setPhone("");
     setPassword("");
     setBoat("");
     setRoute("");
@@ -94,6 +96,7 @@ function CreateAccount() {
           uid,
           name,
           email,
+          phone: phone.trim() || null,
           role: "admin",
           assignedBoat: assignedBoat,
           assignedRoute: assignedRoute,
@@ -325,6 +328,41 @@ function CreateAccount() {
               onBlur={(e) => e.target.style.borderColor = "#ddd"}
             />
           </div>
+
+          {accountType === "admin" && (
+          <div style={{ marginBottom: isMobile ? "16px" : "20px" }}>
+            <label style={{
+              display: "block",
+              marginBottom: "8px",
+              fontWeight: "600",
+              color: "#333",
+              fontSize: isMobile ? "0.85rem" : "0.95rem"
+            }}>
+              Phone Number (for SMS alerts)
+            </label>
+            <input
+              type="tel"
+              className="form-control"
+              placeholder="09XXXXXXXXX"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              style={{
+                padding: "12px",
+                borderRadius: "6px",
+                border: "1px solid #ddd",
+                fontSize: isMobile ? "16px" : "1rem",
+                transition: "all 0.3s ease",
+                width: "100%",
+                boxSizing: "border-box"
+              }}
+              onFocus={(e) => e.target.style.borderColor = "#1976d2"}
+              onBlur={(e) => e.target.style.borderColor = "#ddd"}
+            />
+            <small style={{ display: "block", marginTop: "6px", color: "#666", fontSize: "0.85rem" }}>
+              Admin receives SMS for new bookings, refunds, and trip alerts
+            </small>
+          </div>
+          )}
 
           {/* Password Field */}
           <div style={{ marginBottom: isMobile ? "20px" : "25px" }}>

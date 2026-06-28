@@ -18,6 +18,7 @@ function ManageAdmins() {
   const [newAdminData, setNewAdminData] = useState({
     name: "",
     email: "",
+    phone: "",
     password: "",
     boat: "",
     route: "",
@@ -90,6 +91,7 @@ function ManageAdmins() {
         uid,
         name: newAdminData.name,
         email: newAdminData.email,
+        phone: newAdminData.phone.trim() || null,
         role: "admin",
         assignedBoat: newAdminData.boat,
         assignedRoute: newAdminData.route,
@@ -99,7 +101,7 @@ function ManageAdmins() {
 
       alert("Admin account created successfully!");
       setShowCreateModal(false);
-      setNewAdminData({ name: "", email: "", password: "", boat: "", route: "", availableRoutes: "" });
+      setNewAdminData({ name: "", email: "", phone: "", password: "", boat: "", route: "", availableRoutes: "" });
       
       // Refresh admins list
       const querySnapshot = await getDocs(collection(db, "admins"));
@@ -196,6 +198,7 @@ function ManageAdmins() {
             <tr>
               <th>Name</th>
               <th>Email</th>
+              <th>Phone</th>
               <th>Boat</th>
               <th>Route</th>
               <th>Available Routes</th>
@@ -220,6 +223,15 @@ function ManageAdmins() {
                         type="email"
                         value={formData.email}
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        style={{ width: "100%", padding: "6px", borderRadius: "4px", border: "1px solid #ddd" }}
+                      />
+                    </td>
+                    <td data-label="Phone">
+                      <input 
+                        type="tel"
+                        value={formData.phone || ""}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        placeholder="09XXXXXXXXX"
                         style={{ width: "100%", padding: "6px", borderRadius: "4px", border: "1px solid #ddd" }}
                       />
                     </td>
@@ -270,6 +282,7 @@ function ManageAdmins() {
                   <>
                     <td data-label="Name">{admin.name}</td>
                     <td data-label="Email">{admin.email}</td>
+                    <td data-label="Phone">{admin.phone || "—"}</td>
                     <td data-label="Boat">{admin.assignedBoat}</td>
                     <td data-label="Route">{admin.assignedRoute}</td>
                     <td data-label="Available Routes">{admin.availableRoutes ? admin.availableRoutes.join(", ") : ""}</td>
@@ -396,6 +409,40 @@ function ManageAdmins() {
                     onFocus={(e) => e.target.style.borderColor = "#1976d2"}
                     onBlur={(e) => e.target.style.borderColor = "#ddd"}
                   />
+                </div>
+
+                {/* Phone Field */}
+                <div style={{ marginBottom: isMobile ? "10px" : "20px" }}>
+                  <label style={{
+                    display: "block",
+                    marginBottom: isMobile ? "3px" : "8px",
+                    fontWeight: "600",
+                    color: "#333",
+                    fontSize: isMobile ? "0.6rem" : "0.95rem"
+                  }}>
+                    Phone Number (for SMS alerts)
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="09XXXXXXXXX"
+                    value={newAdminData.phone}
+                    onChange={(e) => setNewAdminData({ ...newAdminData, phone: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: isMobile ? "4px 5px" : "12px",
+                      borderRadius: "6px",
+                      border: "1px solid #ddd",
+                      fontSize: isMobile ? "11px" : "1rem",
+                      boxSizing: "border-box",
+                      transition: "all 0.3s ease",
+                      height: isMobile ? "22px" : "auto"
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = "#1976d2"}
+                    onBlur={(e) => e.target.style.borderColor = "#ddd"}
+                  />
+                  <small style={{ display: "block", marginTop: isMobile ? "2px" : "6px", color: "#666", fontSize: isMobile ? "0.55rem" : "0.9rem" }}>
+                    Used for booking, refund, and trip cancellation SMS notifications
+                  </small>
                 </div>
 
                 {/* Password Field */}

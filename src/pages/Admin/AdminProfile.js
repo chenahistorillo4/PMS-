@@ -11,6 +11,7 @@ function AdminProfile() {
   const [profile, setProfile] = useState({
     name: "",
     email: "",
+    phone: "",
     assignedBoat: "",
     assignedRoute: "",
     availableRoutes: [],
@@ -94,6 +95,7 @@ function AdminProfile() {
         await updateDoc(adminRef, {
           name: profile.name,
           email: profile.email,
+          phone: profile.phone?.trim() || null,
           availableRoutes: profile.availableRoutes
         });
         alert("Profile updated successfully!");
@@ -719,6 +721,66 @@ function AdminProfile() {
                     {profile.email}
                   </p>
                 </>
+              )}
+            </div>
+
+            {/* Phone Number */}
+            <div style={{
+              padding: isMobile ? "11px 0" : "0",
+              borderBottom: isMobile ? "1px solid #e8e8e8" : "none",
+              backgroundColor: isMobile ? "#f9f9f9" : "transparent",
+              marginLeft: isMobile ? "-8px" : "0",
+              marginRight: isMobile ? "-8px" : "0",
+              paddingLeft: isMobile ? "8px" : "0",
+              paddingRight: isMobile ? "8px" : "0"
+            }}>
+              <label style={{
+                display: "block",
+                fontSize: isMobile ? "0.8rem" : "0.85rem",
+                fontWeight: "700",
+                color: "#999",
+                marginBottom: isMobile ? "5px" : "8px",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px"
+              }}>
+                Phone Number (SMS alerts)
+              </label>
+              {isEditing ? (
+                <>
+                  <input
+                    type="tel"
+                    value={profile.phone || ""}
+                    onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+                    placeholder="09XXXXXXXXX"
+                    style={{
+                      width: "100%",
+                      padding: "14px 15px",
+                      border: "2px solid #ddd",
+                      borderRadius: "8px",
+                      fontSize: "1rem",
+                      transition: "border-color 0.3s ease",
+                      boxSizing: "border-box"
+                    }}
+                    onFocus={(e) => e.target.style.borderColor = "#3b7ecc"}
+                    onBlur={(e) => e.target.style.borderColor = "#ddd"}
+                  />
+                  <p style={{
+                    fontSize: isMobile ? "0.75rem" : "0.8rem",
+                    color: "#999",
+                    margin: "4px 0 0 0"
+                  }}>
+                    Used for booking, refund, and trip cancellation SMS
+                  </p>
+                </>
+              ) : (
+                <p style={{
+                  fontSize: isMobile ? "0.95rem" : "1.1rem",
+                  fontWeight: "600",
+                  color: profile.phone ? "#1a1a1a" : "#999",
+                  margin: isMobile ? "0 0 3px 0" : "0"
+                }}>
+                  {profile.phone || "Not set"}
+                </p>
               )}
             </div>
 

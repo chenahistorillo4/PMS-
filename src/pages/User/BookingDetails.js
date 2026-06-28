@@ -323,10 +323,12 @@ function BookingDetails(props) {
 
       // Fetch user's name from Firestore users collection
       let bookedByName = auth.currentUser?.email || 'Guest';
+      let userPhone = null;
       try {
         const userDoc = await getDoc(doc(db, 'users', userId));
         if (userDoc.exists()) {
           const userData = userDoc.data();
+          userPhone = userData.phone || null;
           // Try different field names for the user's name
           bookedByName =
             userData.name ||
@@ -366,6 +368,7 @@ function BookingDetails(props) {
         payment: form.payment,
         userId: userId || null,
         userEmail: auth.currentUser?.email || null,
+        userPhone: userPhone || null,
         bookedByName: bookedByName,
         idProofBase64: form.bookingType === 'cargo_only' ? null : form.idProofBase64 || null,
         idProofFileName: form.bookingType === 'cargo_only' ? null : form.idProof?.name || null,
@@ -385,6 +388,7 @@ function BookingDetails(props) {
         bookingId: docRef.id,
         userId: userId || null,
         userEmail: auth.currentUser?.email || null,
+        userPhone: userPhone || null,
         customerName: form.customerName,
         boat: trip.boat,
         trip: trip.name,
