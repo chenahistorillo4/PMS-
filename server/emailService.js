@@ -255,12 +255,21 @@ async function dispatchEmailNotification({ type, to, adminEmails, payload = {} }
       });
 
     case 'admin_new_booking':
+      if (admins.length === 0) {
+        return { skipped: true, reason: 'missing_admin_email' };
+      }
       return sendAdminNewBooking({ to: admins, booking: payload.booking });
 
     case 'admin_refund_request':
+      if (admins.length === 0) {
+        return { skipped: true, reason: 'missing_admin_email' };
+      }
       return sendAdminRefundRequest({ to: admins, refund: payload.refund });
 
     case 'admin_trip_alert':
+      if (admins.length === 0) {
+        return { skipped: true, reason: 'missing_admin_email' };
+      }
       return sendAdminTripAlert({
         to: admins,
         title: payload.title,
@@ -269,6 +278,9 @@ async function dispatchEmailNotification({ type, to, adminEmails, payload = {} }
       });
 
     case 'admin_system_error':
+      if (admins.length === 0) {
+        return { skipped: true, reason: 'missing_admin_email' };
+      }
       return sendAdminSystemError({
         to: admins,
         errorMessage: payload.errorMessage,

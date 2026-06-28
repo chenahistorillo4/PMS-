@@ -68,9 +68,13 @@ export async function sendNotification({
     const data = await response.json();
     if (data?.result?.sms?.error) {
       console.warn('SMS channel failed:', data.result.sms.error);
+    } else if (data?.result?.sms?.skipped) {
+      console.warn('SMS skipped:', data.result.sms.reason || 'unknown');
     }
     if (data?.result?.email?.error) {
       console.warn('Email channel failed:', data.result.email.error);
+    } else if (data?.result?.email?.skipped) {
+      console.warn('Email skipped:', data.result.email.reason || 'unknown');
     }
 
     return data;

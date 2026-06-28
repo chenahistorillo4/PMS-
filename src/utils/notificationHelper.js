@@ -163,48 +163,6 @@ export const notifyNewBooking = async (booking, boat) => {
   });
 };
 
-/** Temporary testing: notify admin when QR payment screen is shown (once per payment). */
-export const notifyQrScreenBooking = async ({ paymentId, bookingId, boat }) => {
-  if (!paymentId || !bookingId) return null;
-
-  try {
-    const paymentRef = doc(db, 'payments', paymentId);
-    const paymentSnap = await getDoc(paymentRef);
-    if (!paymentSnap.exists() || paymentSnap.data().qrScreenNotified) {
-      return null;
-    }
-
-    const bookingSnap = await getDoc(doc(db, 'bookings', bookingId));
-    if (!bookingSnap.exists()) return null;
-
-    const booking = pickBookingFields({
-      id: bookingSnap.id,
-      ...bookingSnap.data(),
-      status: bookingSnap.data().status || 'pending',
-    });
-
-    const result = await notifyNewBooking(booking, boat || booking.boat);
-
-    if (result?.ok !== false && !result?.result?.sms?.error) {
-      await updateDoc(paymentRef, {
-        qrScreenNotified: true,
-        qrScreenNotifiedAt: new Date(),
-      });
-    }
-
-    if (result?.result?.sms?.skipped || result?.result?.sms?.error) {
-      console.warn('QR screen SMS issue:', result.result.sms);
-    }
-    if (result?.ok === false) {
-      console.warn('QR screen notification failed:', result.error, result.hint || '');
-    }
-    return result;
-  } catch (error) {
-    console.warn('QR screen notification error:', error.message);
-    return { ok: false, error: error.message };
-  }
-};
-
 export const notifyBookingConfirmed = async (booking, userEmail, userPhone) => {
   if (!userEmail && !userPhone) return null;
 
@@ -240,15 +198,10 @@ export const notifyPaymentSuccess = async ({
     const bookingSnap = await getDoc(doc(db, 'bookings', bookingId));
     if (!bookingSnap.exists()) return null;
 
-    const booking = {
+    const booking = pickBookingFields({
       id: bookingSnap.id,
       ...bookingSnap.data(),
       status: 'confirmed',
-    };
-
-    await updateDoc(paymentRef, {
-      confirmationNotified: true,
-      confirmationNotifiedAt: new Date(),
     });
 
     const tasks = [
@@ -263,8 +216,17 @@ export const notifyPaymentSuccess = async ({
       tasks.push(notifyNewBooking(booking, booking.boat || paymentData.boat));
     }
 
-    await Promise.all(tasks);
-    return { ok: true };
+    const results = await Promise.all(tasks);
+    const failed = results.filter((result) => result?.ok === false);
+
+    if (failed.length === 0) {
+      await updateDoc(paymentRef, {
+        confirmationNotified: true,
+        confirmationNotifiedAt: new Date(),
+      });
+    }
+
+    return failed.length === 0 ? { ok: true, result: results } : { ok: false, result: results };
   } catch (error) {
     console.warn('Payment success notification failed:', error.message);
     return { ok: false, error: error.message };

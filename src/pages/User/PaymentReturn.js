@@ -41,6 +41,13 @@ function PaymentReturn() {
         if (paymentData.status === 'completed') {
           setStatus('success');
           setMessage('Payment confirmed! Your booking is now active.');
+          if (paymentData.bookingId) {
+            notifyPaymentSuccess({
+              paymentId,
+              bookingId: paymentData.bookingId,
+              notifyAdmin: true,
+            }).catch((error) => console.warn('Payment success notification failed:', error));
+          }
           return;
         }
 
