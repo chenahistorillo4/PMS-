@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { db, auth } from "../../firebase";
+import { db } from "../../firebase";
 import { doc, updateDoc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
@@ -49,7 +49,7 @@ function DiscountManagement() {
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [authReady, user?.uid, reloadKey]);
+  }, [authReady, user, reloadKey]);
 
   // Fetch discount data for admin's assigned boat
   useEffect(() => {

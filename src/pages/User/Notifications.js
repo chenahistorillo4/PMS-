@@ -50,7 +50,7 @@ function UserNotifications() {
     });
 
     return () => unsubscribe();
-  }, [authReady, user?.uid, reloadKey, navigate]);
+  }, [authReady, user, reloadKey, navigate]);
 
   const markAsRead = async (notificationId) => {
     try {

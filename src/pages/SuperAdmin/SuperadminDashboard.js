@@ -95,10 +95,8 @@ function SuperadminDashboard() {
     }
   };
 
-  const getFilteredBookings = () => filterBookingsByPeriod(bookings, reportPeriod || "weekly");
-
   const filteredReportBookings = useMemo(
-    () => getFilteredBookings(),
+    () => filterBookingsByPeriod(bookings, reportPeriod || "weekly"),
     [bookings, reportPeriod]
   );
   const reportSummary = useMemo(

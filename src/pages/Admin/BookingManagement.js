@@ -123,7 +123,7 @@ function BookingManagement() {
       setLoading(false);
     };
     fetchData();
-  }, [authReady, user?.uid, reloadKey]);
+  }, [authReady, user, reloadKey]);
 
   // Auto-update bookings to "departed" if departure time has passed
   const updateDepartedBookings = async (bookingsList) => {

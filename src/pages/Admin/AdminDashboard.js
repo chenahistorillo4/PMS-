@@ -73,7 +73,7 @@ function AdminDashboard() {
     };
 
     fetchAdminData();
-  }, [authReady, user?.uid, reloadKey]);
+  }, [authReady, user, reloadKey]);
 
   useEffect(() => {
     const fetchBookings = async () => {
@@ -200,7 +200,7 @@ function AdminDashboard() {
     }
   }), [adminData?.assignedBoat, isMobile]);
 
-  const getFilteredBookings = () => {
+  const filteredReportBookings = useMemo(() => {
     let filtered = bookings;
     if (reportPeriod) {
       filtered = filterBookingsByPeriod(filtered, reportPeriod);
@@ -216,7 +216,7 @@ function AdminDashboard() {
       );
     }
     return filtered;
-  };
+  }, [bookings, reportPeriod, filterDate, filterRoute]);
 
   const routeOptions = useMemo(() => {
     const fromBookings = getUniqueRoutesFromBookings(bookings);
@@ -224,7 +224,6 @@ function AdminDashboard() {
     return [...new Set([...fromAdmin, ...fromBookings])].sort();
   }, [bookings, adminData?.availableRoutes]);
 
-  const filteredReportBookings = useMemo(() => getFilteredBookings(), [bookings, reportPeriod, filterDate, filterRoute]);
   const reportSummary = useMemo(() => summarizeBookings(filteredReportBookings), [filteredReportBookings]);
   const reportFilterLabel = useMemo(
     () => buildReportFilterLabel({ reportPeriod, filterDate, filterRoute }),
@@ -241,7 +240,6 @@ function AdminDashboard() {
   // Export report as JSON
   const exportAsJSON = () => {
     try {
-      const filteredBookings = filteredReportBookings;
       const summary = reportSummary;
       const reportDate = getReportLabel();
       
@@ -306,7 +304,6 @@ function AdminDashboard() {
   // Save as PDF report
   const saveAsPDF = () => {
     try {
-      const filteredBookings = filteredReportBookings;
       const summary = reportSummary;
       const reportDate = getReportLabel();
       let reportFileName = `admin-report-${reportDate}`;

@@ -154,7 +154,7 @@ function PaymentManagement() {
       }
     };
     fetchAdminData();
-  }, [authReady, user?.uid, reloadKey]);
+  }, [authReady, user, reloadKey]);
 
   const handleAddAccount = async (e) => {
     e.preventDefault();

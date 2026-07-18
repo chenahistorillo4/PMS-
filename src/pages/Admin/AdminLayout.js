@@ -62,7 +62,7 @@ function AdminLayout({ children, active }) {
     };
 
     fetchAdminData();
-  }, [authReady, user?.uid, reloadKey]);
+  }, [authReady, user, reloadKey]);
 
 
 

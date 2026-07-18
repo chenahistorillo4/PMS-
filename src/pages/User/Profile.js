@@ -56,8 +56,17 @@ function Profile() {
   }, []);
 
   useEffect(() => {
-    if (!authReady) return;
-    fetchProfileData(user);
+    if (!authReady || !user) return;
+
+    const loadProfile = async () => {
+      const docRef = doc(db, "users", user.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setProfile(docSnap.data());
+      }
+    };
+
+    loadProfile();
 
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 768);
@@ -65,7 +74,7 @@ function Profile() {
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [authReady, user?.uid, reloadKey]);
+  }, [authReady, user, reloadKey]);
 
   const handleEditToggle = () => {
     setIsEditingProfile(true);
