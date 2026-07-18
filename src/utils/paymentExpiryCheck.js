@@ -5,7 +5,7 @@ export async function checkPaymentExpiry(paymentId) {
 
   try {
     const response = await fetch(
-      `/api/payments/check-expiry?paymentId=${encodeURIComponent(paymentId)}`
+      `/api/payments/qrph?paymentId=${encodeURIComponent(paymentId)}`
     );
 
     if (!response.ok) {

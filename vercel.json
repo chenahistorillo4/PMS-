@@ -37,6 +37,7 @@
   "rewrites": [
     { "source": "/health", "destination": "/api/health" },
     { "source": "/webhooks/paymongo", "destination": "/api/webhooks/paymongo" },
+    { "source": "/api/notifications/email", "destination": "/api/notifications/send" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
