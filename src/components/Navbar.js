@@ -1,9 +1,12 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { useUserUnreadNotificationCount } from "../hooks/useUnreadNotificationCount";
+import { NavNotificationBadge } from "./NotificationBadge";
 
 function Navbar({ user }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const unreadNotificationCount = useUserUnreadNotificationCount(user?.uid);
 
   useEffect(() => {
     const handleResize = () => {
@@ -45,7 +48,7 @@ function Navbar({ user }) {
             >
               <img
                 src="/logoo.png"
-                alt="PMS Ferry Logo"
+                alt="PMS Port Logo"
                 style={{
                   height: "35px",
                   objectFit: "contain",
@@ -83,7 +86,20 @@ function Navbar({ user }) {
                   </li>
 
                   <li className="nav-item">
-                    <Link className="nav-link nav-link-custom" to="/notifications" onClick={handleNavClick}>Notifications</Link>
+                    <Link className="nav-link nav-link-custom position-relative d-inline-flex align-items-center gap-2" to="/notifications" onClick={handleNavClick}>
+                      Notifications
+                      {unreadNotificationCount > 0 && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            background: "#f44336",
+                          }}
+                        />
+                      )}
+                    </Link>
                   </li>
 
                   <li className="nav-item">
@@ -204,7 +220,8 @@ function Navbar({ user }) {
             alignItems: "center",
             justifyContent: "center",
             padding: "8px",
-            transition: "all 0.3s ease"
+            transition: "all 0.3s ease",
+            position: "relative"
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = "scale(1.1)";
@@ -218,6 +235,7 @@ function Navbar({ user }) {
             <line x1="3" y1="12" x2="21" y2="12"></line>
             <line x1="3" y1="18" x2="21" y2="18"></line>
           </svg>
+          <NavNotificationBadge count={unreadNotificationCount} />
         </button>
       </div>
 
@@ -437,7 +455,8 @@ function Navbar({ user }) {
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
                   <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
                 </svg>
-                Notifications
+                <span style={{ flex: 1 }}>Notifications</span>
+                <NavNotificationBadge count={unreadNotificationCount} inline />
               </Link>
 
               <Link

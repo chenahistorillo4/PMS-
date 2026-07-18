@@ -43,7 +43,7 @@ async function sendMail({ to, subject, html, text }) {
   }
 
   const transport = getTransporter();
-  const fromName = process.env.GMAIL_FROM_NAME || 'PMS Ferry';
+  const fromName = process.env.GMAIL_FROM_NAME || 'PMS Port';
 
   const info = await transport.sendMail({
     from: `"${fromName}" <${process.env.GMAIL_USER}>`,

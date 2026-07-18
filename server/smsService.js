@@ -2,11 +2,7 @@ const APP_URL = process.env.APP_URL || 'https://ferry-app-minsu.vercel.app';
 const SEMAPHORE_API_URL = 'https://api.semaphore.co/api/v4/messages';
 
 function getSmsBrandName() {
-  return (
-    process.env.SMS_BRAND_NAME ||
-    process.env.GMAIL_FROM_NAME ||
-    'PMS Ferry'
-  ).trim();
+  return (process.env.SMS_BRAND_NAME || process.env.GMAIL_FROM_NAME || 'PMS Port').trim();
 }
 
 function isSmsConfigured() {
@@ -50,9 +46,7 @@ async function sendSms({ to, text }) {
     return { skipped: true, reason: 'sms_not_configured' };
   }
 
-  const recipients = (Array.isArray(to) ? to : [to])
-    .map(formatSemaphoreNumber)
-    .filter(Boolean);
+  const recipients = (Array.isArray(to) ? to : [to]).map(formatSemaphoreNumber).filter(Boolean);
 
   if (recipients.length === 0) {
     return { skipped: true, reason: 'missing_recipient' };
@@ -109,7 +103,9 @@ async function sendSms({ to, text }) {
 
   if (failed.length > 0) {
     throw new Error(
-      failed.map((entry) => `${entry.recipient || 'unknown'}: ${entry.message || 'Failed'}`).join('; ')
+      failed
+        .map((entry) => `${entry.recipient || 'unknown'}: ${entry.message || 'Failed'}`)
+        .join('; ')
     );
   }
 
@@ -148,25 +144,54 @@ function buildSmsText(type, payload = {}) {
 
   switch (type) {
     case 'passenger_trip_cancellation':
-      return `${brand}: Hi ${customerName}, your trip ${tripLine(tripDetails)} was cancelled due to heavy rain or unsafe conditions. Open Notifications in the app to request a refund or reschedule. ${APP_URL}/notifications`;
+      return `${brand}: Hi ${customerName}, your trip ${tripLine(
+        tripDetails
+      )} was cancelled due to heavy rain or unsafe conditions. Open Notifications in the app to request a refund or reschedule. ${APP_URL}/notifications`;
 
     case 'passenger_booking_confirmation':
-      return `${brand}: Booking confirmed. Ref: ${booking.referenceCode || 'N/A'}. Trip: ${booking.tripName || 'Ferry'} on ${booking.date || ''} at ${booking.departure || ''}. View booking: ${APP_URL}/manage`;
+      return `${brand}: Booking confirmed. Ref: ${booking.referenceCode || 'N/A'}. Trip: ${
+        booking.tripName || 'Ferry'
+      } on ${booking.date || ''} at ${booking.departure || ''}. View booking: ${APP_URL}/manage`;
 
     case 'passenger_boarding_reminder':
-      return `${brand}: Reminder - your ferry trip is tomorrow. Ref: ${booking.referenceCode || 'N/A'}. ${booking.tripName || 'Trip'} on ${booking.date || ''} at ${booking.departure || ''}. Arrive early with your QR pass. ${APP_URL}/manage`;
+      return `${brand}: Reminder - your ferry trip is tomorrow. Ref: ${
+        booking.referenceCode || 'N/A'
+      }. ${booking.tripName || 'Trip'} on ${booking.date || ''} at ${
+        booking.departure || ''
+      }. Arrive early with your QR pass. ${APP_URL}/manage`;
+
+    case 'passenger_payment_pending_reminder':
+      return `${brand}: Payment pending for ref ${booking.referenceCode || 'N/A'}. Your booking is confirmed only after payment. QR valid 30 mins or booking auto-cancels. Pay now: ${payload.paymentUrl || APP_URL}`;
+
+    case 'passenger_payment_expired':
+      return `${brand}: Booking ref ${booking.referenceCode || 'N/A'} was cancelled because payment was not received within 30 minutes. Book again: ${APP_URL}/schedule`;
+
+    case 'passenger_refund_status':
+      return `${brand}: Refund ${payload.status === 'approved' ? 'approved' : 'declined'} for ${refund.tripName || 'your trip'}. Amount PHP ${Number(refund.amount || 0).toFixed(2)}.`;
 
     case 'admin_new_booking':
-      return `${brand} Admin: New booking from ${booking.customerName || 'passenger'}. Ref ${booking.referenceCode || 'N/A'}. Trip ${booking.tripName || ''} on ${booking.date || ''}. Amount PHP ${Number(booking.finalPrice || 0).toFixed(2)}.`;
+      return `${brand} Admin: New booking from ${booking.customerName || 'passenger'}. Ref ${
+        booking.referenceCode || 'N/A'
+      }. Trip ${booking.tripName || ''} on ${booking.date || ''}. Amount PHP ${Number(
+        booking.finalPrice || 0
+      ).toFixed(2)}.`;
 
     case 'admin_refund_request':
-      return `${brand} Admin: Refund request from ${refund.userEmail || 'passenger'} for ${refund.tripName || 'trip'}. Amount PHP ${Number(refund.amount || 0).toFixed(2)}. Reason: ${refund.reason || 'Trip cancelled'}.`;
+      return `${brand} Admin: Refund request from ${refund.userEmail || 'passenger'} for ${
+        refund.tripName || 'trip'
+      }. Amount PHP ${Number(refund.amount || 0).toFixed(2)}. Reason: ${
+        refund.reason || 'Trip cancelled'
+      }.`;
 
     case 'admin_trip_alert':
-      return `${brand} Admin: ${payload.title || 'Trip alert'}. ${payload.message || ''} ${tripLine(tripDetails)}`;
+      return `${brand} Admin: ${payload.title || 'Trip alert'}. ${payload.message || ''} ${tripLine(
+        tripDetails
+      )}`;
 
     case 'admin_system_error':
-      return `${brand} Admin: System error${payload.context ? ` (${payload.context})` : ''}. ${payload.errorMessage || 'Unknown error'}`;
+      return `${brand} Admin: System error${payload.context ? ` (${payload.context})` : ''}. ${
+        payload.errorMessage || 'Unknown error'
+      }`;
 
     default:
       throw new Error(`Unknown SMS notification type: ${type}`);

@@ -5,7 +5,7 @@ const INFO_CARDS = [
     id: "1",
     title: "Who We Are",
     description:
-      "PMS Ferry is a modern ferry reservation and ticketing system designed for the routes Pinamalayan - Marinduque - Sibale.",
+      "PMS Port is a modern ferry reservation and ticketing system designed for the routes Pinamalayan - Marinduque - Sibale.",
     image: "/pic5.jpg",
     alt: "Who We Are"
   },
@@ -88,7 +88,7 @@ function About() {
             lineHeight: 1.15
           }}
         >
-          About PMS Ferry
+          About PMS Port
         </h1>
         <p
           style={{
@@ -230,7 +230,7 @@ function About() {
               color: "#2c3e50"
             }}
           >
-            Why Choose PMS Ferry?
+            Why Choose PMS Port?
           </h2>
 
           <div
@@ -385,7 +385,7 @@ function About() {
           opacity: 0.9
         }}
       >
-        <p>© {new Date().getFullYear()} PMS Ferry. All rights reserved.</p>
+        <p>© {new Date().getFullYear()} PMS Port. All rights reserved.</p>
       </div>
     </div>
   );

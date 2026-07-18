@@ -52,6 +52,7 @@ export const createUserNotifications = async (
         title,
         message,
         tripDetails,
+        tripId,
         bookingId: bookingDoc.id,
         bookingAmount: bookingData.finalPrice || 0,
         recipientType: 'user',
@@ -244,5 +245,18 @@ export const notifyRefundRequest = async (refund, boat) => {
     adminEmails,
     adminPhones,
     payload: { refund },
+  });
+};
+
+export const notifyPassengerRefundStatus = async ({ refund, status, userEmail, userPhone, customerName }) => {
+  return sendNotification({
+    type: 'passenger_refund_status',
+    to: userEmail || refund.userEmail,
+    toPhone: userPhone,
+    payload: {
+      customerName,
+      refund,
+      status,
+    },
   });
 };

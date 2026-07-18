@@ -3,9 +3,11 @@ import { QRCodeCanvas } from "qrcode.react";
 import { auth, db } from "../../firebase";
 import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import { useNavigate } from "react-router-dom";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 
 function ManageBooking() {
+  const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [paymentStatuses, setPaymentStatuses] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -133,6 +135,7 @@ function ManageBooking() {
             const payment = doc.data();
             if (payment.bookingId) {
               paymentMap[payment.bookingId] = {
+                paymentId: doc.id,
                 status: payment.status?.toLowerCase?.() || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
               };
@@ -156,18 +159,60 @@ function ManageBooking() {
     return () => unsubscribe();
   }, []);
 
-  const getStatusColor = (status) => {
-    const statusLower = status?.toLowerCase() || "";
-    if (statusLower === "confirmed") return "#4caf50";
-    if (statusLower === "pending") return "#ff9800";
-    if (statusLower === "cancelled") return "#f44336";
-    return "#999";
-  };
+  const getBookingDisplayState = (booking, paymentInfo = {}) => {
+    const bookingStatus = booking.status?.toLowerCase?.() || "";
+    const paymentStatus = paymentInfo.status?.toLowerCase?.() || "";
 
-  const getPaymentDisplayStatus = (status) => {
-    const statusLower = status?.toLowerCase?.() || "";
-    if (statusLower === "completed" || statusLower === "confirmed") return "confirmed";
-    return "pending";
+    if (bookingStatus === "cancelled") {
+      return {
+        label: "Cancelled",
+        color: "#f44336",
+        paymentLabel: "Not Paid",
+        paymentColor: "#f44336",
+        canShowQr: false,
+        actionLabel: "Cancelled",
+        actionDisabled: true,
+      };
+    }
+
+    if (
+      paymentStatus === "completed" ||
+      paymentStatus === "confirmed" ||
+      bookingStatus === "confirmed" ||
+      bookingStatus === "departed"
+    ) {
+      return {
+        label: bookingStatus === "departed" ? "Departed" : "Confirmed",
+        color: bookingStatus === "departed" ? "#9c27b0" : "#4caf50",
+        paymentLabel: "Paid",
+        paymentColor: "#4caf50",
+        canShowQr: bookingStatus === "confirmed",
+        actionLabel: "View QR Code",
+        actionDisabled: false,
+      };
+    }
+
+    if (paymentStatus === "pending" && paymentInfo.proofOfPaymentBase64) {
+      return {
+        label: "Not Paid",
+        color: "#ff9800",
+        paymentLabel: "Pending Approval",
+        paymentColor: "#ff9800",
+        canShowQr: false,
+        actionLabel: "Waiting for Approval",
+        actionDisabled: true,
+      };
+    }
+
+    return {
+      label: "Not Paid",
+      color: "#f44336",
+      paymentLabel: "Not Paid",
+      paymentColor: "#f44336",
+      canShowQr: false,
+      actionLabel: paymentInfo.paymentId ? "Complete Payment" : "Not Paid",
+      actionDisabled: !paymentInfo.paymentId,
+    };
   };
 
   const copyToClipboard = async (text) => {
@@ -254,21 +299,23 @@ function ManageBooking() {
           {bookings.map((booking) => (
             <div key={booking.id} style={{ display: "flex", flexDirection: "column", gap: "0" }}>
               {(() => {
-                const paymentDisplayStatus = getPaymentDisplayStatus(paymentStatuses[booking.id]?.status);
-                const canShowQr = paymentDisplayStatus === "confirmed";
+                const paymentInfo = paymentStatuses[booking.id] || {};
+                const displayState = getBookingDisplayState(booking, paymentInfo);
                 const passengerText = booking.customerName || booking.name || "Guest";
                 const routeText = booking.routeDirection || booking.tripName || "Ferry Route";
                 const isDetailsExpanded = expandedDetails[booking.id];
-                const proofImage = paymentStatuses[booking.id]?.proofOfPaymentBase64;
+                const proofImage = paymentInfo.proofOfPaymentBase64;
 
                 return (
                   <>
               {/* Main Booking Card */}
               <div
                 style={{
-                  background: "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,251,255,0.98) 100%)",
+                  background: displayState.label === "Not Paid"
+                    ? "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,248,248,0.98) 100%)"
+                    : "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(247,251,255,0.98) 100%)",
                   borderRadius: "18px",
-                  border: "1px solid #dbe7f2",
+                  border: displayState.label === "Not Paid" ? "1px solid #ffcdd2" : "1px solid #dbe7f2",
                   padding: isMobile ? "10px" : "16px",
                   display: "grid",
                   gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) 220px",
@@ -288,7 +335,7 @@ function ManageBooking() {
                   e.currentTarget.style.borderColor = "#dbe7f2";
                 }}
               >
-                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "4px", background: `linear-gradient(90deg, ${getStatusColor(booking.status)} 0%, #64b5f6 100%)` }} />
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "4px", background: `linear-gradient(90deg, ${displayState.color} 0%, #64b5f6 100%)` }} />
                 {/* Left Content */}
                 <div style={{ flex: 1 }}>
                   {/* Status Badge */}
@@ -299,12 +346,12 @@ function ManageBooking() {
                       borderRadius: "999px",
                       fontSize: isMobile ? "0.58rem" : "0.74rem",
                       fontWeight: 700,
-                      backgroundColor: getStatusColor(booking.status),
+                      backgroundColor: displayState.color,
                       color: "white",
                       textTransform: "uppercase",
                       letterSpacing: "0.5px"
                     }}>
-                      {booking.status || "Confirmed"}
+                      {displayState.label}
                     </span>
                     <span style={{ fontSize: isMobile ? "0.64rem" : "0.76rem", color: "#7b8da1", fontWeight: 700 }}>
                       {booking.date}
@@ -421,7 +468,7 @@ function ManageBooking() {
                       Payment: {booking.payment || "N/A"}
                     </div>
                     <div style={{ fontSize: isMobile ? "0.68rem" : "0.82rem", color: "#5f7287", fontWeight: 600 }}>
-                      Payment Status: <span style={{ color: getStatusColor(paymentDisplayStatus), fontWeight: 700, textTransform: "capitalize" }}>{paymentDisplayStatus}</span>
+                      Payment Status: <span style={{ color: displayState.paymentColor, fontWeight: 700 }}>{displayState.paymentLabel}</span>
                     </div>
                   </div>
 
@@ -429,42 +476,56 @@ function ManageBooking() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (canShowQr) {
+                      if (displayState.canShowQr) {
                         setQrModal({ 
                           isOpen: true, 
                           bookingId: booking.id,
                           referenceCode: booking.referenceCode || booking.id
                         });
+                        return;
+                      }
+                      if (paymentInfo.paymentId && displayState.actionLabel === "Complete Payment") {
+                        navigate(`/payment-qr?paymentId=${paymentInfo.paymentId}`);
                       }
                     }}
                     style={{
                       padding: isMobile ? "9px 12px" : "10px 14px",
-                      background: canShowQr ? "#2196f3" : "#cbd5e1",
+                      background: displayState.canShowQr
+                        ? "#2196f3"
+                        : displayState.actionLabel === "Complete Payment"
+                          ? "#f44336"
+                          : "#cbd5e1",
                       color: "white",
                       border: "none",
                       borderRadius: "10px",
                       fontWeight: 700,
                       fontSize: isMobile ? "0.72rem" : "0.85rem",
-                      cursor: canShowQr ? "pointer" : "default",
+                      cursor: displayState.actionDisabled ? "default" : "pointer",
                       transition: "all 0.3s ease",
                       letterSpacing: "0.2px",
                       width: "100%"
                     }}
                     onMouseEnter={(e) => {
-                      if (canShowQr) {
+                      if (!displayState.actionDisabled && displayState.canShowQr) {
                         e.target.style.background = "#1976d2";
+                      }
+                      if (!displayState.actionDisabled && displayState.actionLabel === "Complete Payment") {
+                        e.target.style.background = "#d32f2f";
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (canShowQr) {
+                      if (!displayState.actionDisabled && displayState.canShowQr) {
                         e.target.style.background = "#2196f3";
+                      }
+                      if (!displayState.actionDisabled && displayState.actionLabel === "Complete Payment") {
+                        e.target.style.background = "#f44336";
                       }
                     }}
                   >
-                    {canShowQr ? "View QR Code" : "Waiting for Approval"}
+                    {displayState.actionLabel}
                   </button>
 
-                  {booking.status?.toLowerCase() === "pending" && proofImage && (
+                  {displayState.paymentLabel === "Pending Approval" && proofImage && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

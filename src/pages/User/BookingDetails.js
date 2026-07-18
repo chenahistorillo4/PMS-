@@ -19,6 +19,7 @@ import {
   checkPayMongoReady,
   isProductionDeployment,
 } from '../../utils/paymongo';
+import { PAYMENT_PENDING_NOTICE, PAYMENT_QR_VALID_MINUTES } from '../../constants/paymentNotice';
 
 // Generate a unique reference code
 const generateReferenceCode = () => {
@@ -345,6 +346,7 @@ function BookingDetails(props) {
 
       // Booking data with Base64 encoded image
       const referenceCode = generateReferenceCode();
+      const paymentExpiresAt = new Date(Date.now() + PAYMENT_QR_VALID_MINUTES * 60 * 1000);
 
       const bookingData = {
         tripId: trip.id,
@@ -375,6 +377,7 @@ function BookingDetails(props) {
         status: 'pending',
         referenceCode: referenceCode,
         qrCodeValue: referenceCode,
+        paymentExpiresAt,
         createdAt: new Date(),
       };
 
@@ -400,6 +403,7 @@ function BookingDetails(props) {
         paymentProvider: usesPayMongoGcash ? 'paymongo' : 'manual',
         proofOfPaymentBase64: usesPayMongoGcash ? null : paymentProofBase64,
         proofOfPaymentFileName: usesPayMongoGcash ? null : paymentProof?.name || null,
+        paymentExpiresAt,
         createdAt: new Date(),
       };
 
@@ -1302,13 +1306,17 @@ function BookingDetails(props) {
                         fontSize: isMobile
                           ? 'clamp(0.65rem, 0.8vw, 0.72rem)'
                           : 'clamp(0.75rem, 0.9vw, 0.85rem)',
-                        color: '#2e7d32',
+                        color: '#5d4037',
                         fontWeight: 600,
-                        marginBottom: '0',
+                        marginBottom: '8px',
                         lineHeight: '1.5',
+                        background: '#fff8e1',
+                        padding: '10px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid #ffe082',
                       }}
                     >
-                      No manual transfer or proof upload needed. QR code expires in 30 minutes.
+                      {PAYMENT_PENDING_NOTICE}
                     </p>
                   </>
                 ) : (

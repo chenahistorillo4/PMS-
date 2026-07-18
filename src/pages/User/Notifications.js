@@ -3,6 +3,9 @@ import { auth, db } from "../../firebase";
 import { collection, query, where, onSnapshot, updateDoc, doc, addDoc } from "firebase/firestore";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { useNavigate } from "react-router-dom";
+import { notifyRefundRequest } from "../../utils/notificationHelper";
+import { isNotificationUnread } from "../../hooks/useUnreadNotificationCount";
+import { getNotificationCardStyles, NotificationDot } from "../../components/NotificationBadge";
 
 function UserNotifications() {
   const [notifications, setNotifications] = useState([]);
@@ -56,6 +59,14 @@ function UserNotifications() {
     }
   };
 
+  const handleNotificationClick = (notif) => {
+    if (isNotificationUnread(notif)) {
+      markAsRead(notif.id);
+    }
+  };
+
+  const unreadCount = notifications.filter((notif) => isNotificationUnread(notif)).length;
+
   const handleRefundRequest = async (notif) => {
     try {
       setProcessingAction({ ...processingAction, [notif.id]: true });
@@ -64,18 +75,25 @@ function UserNotifications() {
       if (!user) return;
 
       // Create refund request in Firestore
-      await addDoc(collection(db, "refund_requests"), {
+      const refundData = {
         userId: user.uid,
         bookingId: notif.bookingId,
-        tripId: notif.tripDetails?.id,
+        tripId: notif.tripId || notif.tripDetails?.id,
         tripName: notif.tripDetails?.name,
+        boat: notif.tripDetails?.boat || null,
         amount: notif.bookingAmount || 0,
         reason: "Trip Cancelled",
         status: "pending",
         notificationId: notif.id,
         createdAt: new Date(),
-        userEmail: user.email
-      });
+        userEmail: user.email,
+      };
+
+      await addDoc(collection(db, "refund_requests"), refundData);
+
+      notifyRefundRequest(refundData, refundData.boat).catch((error) =>
+        console.warn("Refund admin notification failed:", error)
+      );
 
       // Update notification to track the action
       await updateDoc(doc(db, "notifications", notif.id), {
@@ -168,9 +186,26 @@ function UserNotifications() {
           fontSize: isMobile ? "1.2rem" : "2.2rem",
           fontWeight: 800,
           marginBottom: isMobile ? "6px" : "10px",
-          color: "#1a1a1a"
+          color: "#1a1a1a",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "10px",
+          flexWrap: "wrap",
         }}>
           Notifications
+          {unreadCount > 0 && (
+            <span style={{
+              fontSize: isMobile ? "0.7rem" : "0.8rem",
+              fontWeight: 700,
+              color: "#f44336",
+              background: "#ffebee",
+              padding: "4px 10px",
+              borderRadius: "999px",
+            }}>
+              {unreadCount} new
+            </span>
+          )}
         </h1>
         <p style={{
           textAlign: "center",
@@ -204,79 +239,68 @@ function UserNotifications() {
               </p>
             </div>
           ) : (
-            notifications.map((notif) => (
+            notifications.map((notif) => {
+              const isUnread = isNotificationUnread(notif);
+              const cardStyles = getNotificationCardStyles(!isUnread, isMobile);
+
+              return (
               <div
                 key={notif.id}
-                style={{
-                  background: notif.isRead ? "white" : "#f0f7ff",
-                  padding: isMobile ? "12px 15px" : "18px 20px",
-                  borderRadius: "12px",
-                  border: `1px solid ${notif.isRead ? "#e0e0e0" : "#2196f3"}`,
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-                  cursor: "pointer",
-                  transition: "all 0.2s ease",
-                  position: "relative"
-                }}
-                onClick={() => !notif.isRead && markAsRead(notif.id)}
+                style={cardStyles.card}
+                onClick={() => handleNotificationClick(notif)}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
-                  e.currentTarget.style.transform = "translateY(-2px)";
+                  if (isUnread) {
+                    e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
+                  e.currentTarget.style.boxShadow = isUnread ? "0 2px 8px rgba(0,0,0,0.06)" : "none";
                   e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
-                {!notif.isRead && (
-                  <div style={{
-                    position: "absolute",
-                    top: "12px",
-                    right: "12px",
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: "#2196f3"
-                  }}/>
+                {isUnread && (
+                  <NotificationDot
+                    size={10}
+                    style={{
+                      position: "absolute",
+                      top: "12px",
+                      right: "12px",
+                      boxShadow: "0 0 0 2px #ffffff",
+                    }}
+                  />
                 )}
                 
-                <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", opacity: isUnread ? 1 : 0.88 }}>
                   <div style={{
                     fontSize: "1.5rem",
                     minWidth: "30px",
                     textAlign: "center",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center"
+                    justifyContent: "center",
+                    filter: isUnread ? "none" : "grayscale(1)",
+                    opacity: isUnread ? 1 : 0.65,
                   }}>
                     {getNotificationIcon(notif.type)}
                   </div>
                   
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <h4 style={{
-                      margin: "0 0 5px 0",
-                      fontSize: isMobile ? "0.9rem" : "1.05rem",
-                      fontWeight: 700,
-                      color: "#1a1a1a"
-                    }}>
+                    <h4 style={cardStyles.title}>
                       {notif.title}
                     </h4>
                     
-                    <p style={{
-                      margin: "0 0 8px 0",
-                      fontSize: isMobile ? "0.75rem" : "0.9rem",
-                      color: "#555",
-                      lineHeight: "1.4"
-                    }}>
+                    <p style={cardStyles.message}>
                       {notif.message}
                     </p>
 
                     {notif.tripDetails && (
                       <div style={{
-                        background: "rgba(0,0,0,0.03)",
+                        background: isUnread ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.02)",
                         padding: "10px 12px",
                         borderRadius: "8px",
                         fontSize: isMobile ? "0.7rem" : "0.85rem",
-                        color: "#666",
+                        color: isUnread ? "#666" : "#9e9e9e",
                         marginBottom: "8px",
                         border: "1px solid rgba(0,0,0,0.05)"
                       }}>
@@ -288,11 +312,13 @@ function UserNotifications() {
                     )}
 
                     <div style={{
-                      fontSize: isMobile ? "0.7rem" : "0.8rem",
-                      color: "#999",
+                      ...cardStyles.timestamp,
                       marginBottom: notif.type === "trip_cancelled" ? "12px" : "0"
                     }}>
                       {new Date(notif.createdAt).toLocaleString()}
+                      {!isUnread && (
+                        <span style={{ marginLeft: "8px", fontStyle: "italic" }}>· Viewed</span>
+                      )}
                     </div>
 
                     {notif.type === "trip_cancelled" && (
@@ -303,7 +329,10 @@ function UserNotifications() {
                         flexWrap: "wrap"
                       }}>
                         <button
-                          onClick={() => handleRefundRequest(notif)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRefundRequest(notif);
+                          }}
                           disabled={processingAction[notif.id]}
                           style={{
                             flex: isMobile ? "1 1 calc(50% - 4px)" : "0 1 auto",
@@ -323,7 +352,10 @@ function UserNotifications() {
                           {processingAction[notif.id] ? "Processing..." : "Request Refund"}
                         </button>
                         <button
-                          onClick={() => handleBookAnother(notif)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleBookAnother(notif);
+                          }}
                           disabled={processingAction[notif.id]}
                           style={{
                             flex: isMobile ? "1 1 calc(50% - 4px)" : "0 1 auto",
@@ -347,7 +379,8 @@ function UserNotifications() {
                   </div>
                 </div>
               </div>
-            ))
+            );
+            })
           )}
         </div>
       </div>

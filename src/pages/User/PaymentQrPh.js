@@ -8,6 +8,7 @@ import {
   refreshQrPhCheckout,
 } from '../../utils/paymongo';
 import { notifyPaymentSuccess } from '../../utils/notificationHelper';
+import { PAYMENT_PENDING_NOTICE, PAYMENT_QR_VALID_MINUTES } from '../../constants/paymentNotice';
 
 function PaymentQrPh() {
   const [searchParams] = useSearchParams();
@@ -203,6 +204,21 @@ function PaymentQrPh() {
                 <div
                   style={{
                     textAlign: 'left',
+                    background: '#fff8e1',
+                    border: '1px solid #ffe082',
+                    borderRadius: '8px',
+                    padding: '12px 14px',
+                    marginBottom: '16px',
+                    fontSize: '0.9rem',
+                    color: '#5d4037',
+                  }}
+                >
+                  <strong>Important:</strong> {PAYMENT_PENDING_NOTICE}
+                </div>
+
+                <div
+                  style={{
+                    textAlign: 'left',
                     background: '#f5f9ff',
                     border: '1px solid #dbeafe',
                     borderRadius: '8px',
@@ -292,7 +308,7 @@ function PaymentQrPh() {
                 </div>
 
                 <p style={{ color: '#ef6c00', fontSize: '0.85rem', marginBottom: 0 }}>
-                  QR code expires in 30 minutes. This page updates automatically after payment.
+                  QR code expires in {PAYMENT_QR_VALID_MINUTES} minutes. This page updates automatically after payment.
                 </p>
               </>
             )}

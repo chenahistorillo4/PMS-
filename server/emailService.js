@@ -1,6 +1,6 @@
 const { sendMail, isMailConfigured } = require('./mail');
 
-const APP_NAME = 'PMS Ferry';
+const APP_NAME = 'PMS Port';
 const APP_URL = process.env.APP_URL || 'https://ferry-app-minsu.vercel.app';
 
 function escapeHtml(value) {
@@ -124,6 +124,76 @@ async function sendPassengerBoardingReminder({ to, customerName, booking }) {
     to,
     subject: `${APP_NAME} – Boarding Reminder for ${booking?.date || 'your trip'}`,
     text: `Boarding reminder. Reference: ${booking?.referenceCode || 'N/A'}. Trip on ${booking?.date || 'soon'}.`,
+    html,
+  });
+}
+
+async function sendPassengerPaymentPendingReminder({ to, customerName, booking, paymentUrl }) {
+  const notice =
+    'Your booking will only be confirmed once payment is received. QR codes are valid for 30 minutes. If payment is not completed within this time, your booking will be automatically cancelled.';
+
+  const html = layout(
+    'Complete Your Payment',
+    `
+      <p>Hello ${escapeHtml(customerName || 'Passenger')},</p>
+      <p>Your booking <strong>${escapeHtml(booking?.referenceCode || 'N/A')}</strong> is waiting for payment.</p>
+      <p>${escapeHtml(notice)}</p>
+      ${tripDetailsBlock({
+        name: booking?.tripName,
+        boat: booking?.boat,
+        date: booking?.date,
+        departure: booking?.departure,
+        arrival: booking?.arrival,
+      })}
+      <p><strong>Amount due:</strong> ₱${escapeHtml(Number(booking?.finalPrice || booking?.amount || 0).toFixed(2))}</p>
+      <p><a href="${paymentUrl || APP_URL}" style="display:inline-block;background:#1565c0;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">Complete Payment</a></p>
+    `
+  );
+
+  return sendMail({
+    to,
+    subject: `${APP_NAME} – Complete Your Payment (${booking?.referenceCode || 'Booking'})`,
+    text: `${notice} Complete payment: ${paymentUrl || APP_URL}`,
+    html,
+  });
+}
+
+async function sendPassengerPaymentExpired({ to, customerName, booking }) {
+  const html = layout(
+    'Booking Cancelled – Payment Not Received',
+    `
+      <p>Hello ${escapeHtml(customerName || 'Passenger')},</p>
+      <p>Your booking <strong>${escapeHtml(booking?.referenceCode || 'N/A')}</strong> was automatically cancelled because payment was not completed within 30 minutes.</p>
+      <p>You may book again from the schedule page if seats are still available.</p>
+      <p><a href="${APP_URL}/schedule" style="display:inline-block;background:#1565c0;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">View Schedule</a></p>
+    `
+  );
+
+  return sendMail({
+    to,
+    subject: `${APP_NAME} – Booking Cancelled (Payment Expired)`,
+    text: `Booking ${booking?.referenceCode || 'N/A'} was cancelled because payment was not received in time.`,
+    html,
+  });
+}
+
+async function sendPassengerRefundStatus({ to, customerName, refund, status }) {
+  const approved = status === 'approved';
+  const html = layout(
+    approved ? 'Refund Approved' : 'Refund Update',
+    `
+      <p>Hello ${escapeHtml(customerName || 'Passenger')},</p>
+      <p>Your refund request for <strong>${escapeHtml(refund?.tripName || 'your trip')}</strong> has been <strong>${approved ? 'approved' : 'declined'}</strong>.</p>
+      <p><strong>Amount:</strong> ₱${escapeHtml(Number(refund?.amount || 0).toFixed(2))}</p>
+      ${refund?.adminNote ? `<p><strong>Note:</strong> ${escapeHtml(refund.adminNote)}</p>` : ''}
+      <p><a href="${APP_URL}/notifications" style="display:inline-block;background:#1565c0;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">View Notifications</a></p>
+    `
+  );
+
+  return sendMail({
+    to,
+    subject: `${APP_NAME} – Refund ${approved ? 'Approved' : 'Update'}`,
+    text: `Refund ${approved ? 'approved' : 'declined'} for ${refund?.tripName || 'trip'}. Amount PHP ${Number(refund?.amount || 0).toFixed(2)}.`,
     html,
   });
 }
@@ -252,6 +322,29 @@ async function dispatchEmailNotification({ type, to, adminEmails, payload = {} }
         to,
         customerName: payload.customerName,
         booking: payload.booking,
+      });
+
+    case 'passenger_payment_pending_reminder':
+      return sendPassengerPaymentPendingReminder({
+        to,
+        customerName: payload.customerName,
+        booking: payload.booking,
+        paymentUrl: payload.paymentUrl,
+      });
+
+    case 'passenger_payment_expired':
+      return sendPassengerPaymentExpired({
+        to,
+        customerName: payload.customerName,
+        booking: payload.booking,
+      });
+
+    case 'passenger_refund_status':
+      return sendPassengerRefundStatus({
+        to,
+        customerName: payload.customerName,
+        refund: payload.refund,
+        status: payload.status,
       });
 
     case 'admin_new_booking':

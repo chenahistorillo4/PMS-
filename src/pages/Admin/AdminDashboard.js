@@ -1,9 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { auth, db } from "../../firebase";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
+import {
+  filterBookingsByPeriod,
+  getPeriodRange,
+  summarizeBookings,
+  buildReportFilterLabel,
+  getUniqueRoutesFromBookings,
+  getBookingRouteLabel,
+  computeDashboardMetrics,
+  isConfirmedBooking,
+  getBookingAmount,
+} from "../../utils/reportHelpers";
+import ReportPreview from "../../components/ReportPreview";
 
 // Chart.js imports
 import { Bar } from "react-chartjs-2";
@@ -24,13 +36,18 @@ function AdminDashboard() {
   const [bookings, setBookings] = useState([]);
   const [filterDate, setFilterDate] = useState("");
   const [filterRoute, setFilterRoute] = useState("");
-  const [metrics, setMetrics] = useState({
-    revenueToday: 0,
-    revenueWeek: 0,
-    revenueMonth: 0,
-    passengersToday: 0,
-    activeTrips: 0
-  });
+  const [reportPeriod, setReportPeriod] = useState("");
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [isTablet, setIsTablet] = useState(window.innerWidth <= 1024);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+      setIsTablet(window.innerWidth <= 1024);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     const fetchAdminData = async () => {
@@ -56,59 +73,30 @@ function AdminDashboard() {
       const snap = await getDocs(q);
 
       // Convert Firestore Timestamp to YYYY-MM-DD string
-      const bookingsData = snap.docs.map(doc => {
-        const data = doc.data();
-        if (data.date && data.date.toDate) {
-          data.date = data.date.toDate().toISOString().split("T")[0];
+      const bookingsData = snap.docs.map((bookingDoc) => {
+        const data = bookingDoc.data();
+        const normalized = { id: bookingDoc.id, ...data };
+        if (normalized.date && normalized.date.toDate) {
+          normalized.date = normalized.date.toDate().toISOString().split("T")[0];
         }
-        return data;
+        return normalized;
       });
 
       setBookings(bookingsData);
-
-      // Compute metrics
-      const today = new Date();
-      const todayStr = today.toISOString().split("T")[0];
-
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
-      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-
-      const revenueToday = bookingsData
-        .filter(b => b.date === todayStr)
-        .reduce((sum, b) => sum + (b.finalPrice || 0), 0);
-
-      const revenueWeek = bookingsData
-        .filter(b => new Date(b.date) >= startOfWeek)
-        .reduce((sum, b) => sum + (b.finalPrice || 0), 0);
-
-      const revenueMonth = bookingsData
-        .filter(b => new Date(b.date) >= startOfMonth)
-        .reduce((sum, b) => sum + (b.finalPrice || 0), 0);
-
-      const passengersToday = bookingsData.filter(b => b.date === todayStr).length;
-      const activeTrips = new Set(
-        bookingsData.filter(b => b.date === todayStr).map(b => b.tripId)
-      ).size;
-
-      setMetrics({
-        revenueToday,
-        revenueWeek,
-        revenueMonth,
-        passengersToday,
-        activeTrips
-      });
     };
     fetchBookings();
   }, [adminData]);
 
-  // Group bookings by route for chart
+  const metrics = useMemo(() => computeDashboardMetrics(bookings), [bookings]);
+
+  // Group confirmed bookings by route for chart
   const groupedByRoute = bookings.reduce((acc, b) => {
-    const route = b.route || "Unknown Route";
+    if (!isConfirmedBooking(b)) return acc;
+    const route = getBookingRouteLabel(b);
     if (!acc[route]) {
       acc[route] = { revenue: 0, bookings: 0 };
     }
-    acc[route].revenue += b.paymentAmount || 0;
+    acc[route].revenue += getBookingAmount(b);
     acc[route].bookings += 1;
     return acc;
   }, {});
@@ -141,23 +129,27 @@ function AdminDashboard() {
     ]
   };
 
-  const chartOptions = {
+  const chartOptions = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
       legend: {
         display: true,
-        position: "top"
+        position: isMobile ? "bottom" : "top",
+        labels: {
+          boxWidth: isMobile ? 10 : 12,
+          font: { size: isMobile ? 10 : 12 },
+        },
       },
       title: {
         display: true,
         text: `Performance by Route - ${adminData?.assignedBoat || "Boat"}`,
         font: {
-          size: 14,
+          size: isMobile ? 11 : 14,
           weight: "bold"
         },
         padding: {
-          bottom: 20
+          bottom: isMobile ? 12 : 20
         }
       }
     },
@@ -165,8 +157,11 @@ function AdminDashboard() {
       y: {
         beginAtZero: true,
         title: {
-          display: true,
+          display: !isMobile,
           text: "Amount (₱) / Count"
+        },
+        ticks: {
+          font: { size: isMobile ? 10 : 12 },
         },
         grid: {
           drawBorder: false,
@@ -175,45 +170,78 @@ function AdminDashboard() {
       },
       x: {
         title: {
-          display: true,
+          display: !isMobile,
           text: "Routes"
+        },
+        ticks: {
+          font: { size: isMobile ? 9 : 12 },
+          maxRotation: isMobile ? 45 : 0,
+          minRotation: isMobile ? 45 : 0,
         },
         grid: {
           display: false
         }
       }
     }
+  }), [adminData?.assignedBoat, isMobile]);
+
+  const getFilteredBookings = () => {
+    let filtered = bookings;
+    if (reportPeriod) {
+      filtered = filterBookingsByPeriod(filtered, reportPeriod);
+    } else if (filterDate) {
+      filtered = filtered.filter((b) => b.date === filterDate);
+    }
+    if (filterRoute) {
+      filtered = filtered.filter(
+        (b) =>
+          b.route === filterRoute ||
+          b.tripName === filterRoute ||
+          b.routeDirection === filterRoute
+      );
+    }
+    return filtered;
+  };
+
+  const routeOptions = useMemo(() => {
+    const fromBookings = getUniqueRoutesFromBookings(bookings);
+    const fromAdmin = adminData?.availableRoutes || [];
+    return [...new Set([...fromAdmin, ...fromBookings])].sort();
+  }, [bookings, adminData?.availableRoutes]);
+
+  const filteredReportBookings = useMemo(() => getFilteredBookings(), [bookings, reportPeriod, filterDate, filterRoute]);
+  const reportSummary = useMemo(() => summarizeBookings(filteredReportBookings), [filteredReportBookings]);
+  const reportFilterLabel = useMemo(
+    () => buildReportFilterLabel({ reportPeriod, filterDate, filterRoute }),
+    [reportPeriod, filterDate, filterRoute]
+  );
+
+  const getReportLabel = () => {
+    if (reportPeriod === "weekly") return "weekly";
+    if (reportPeriod === "monthly") return "monthly";
+    if (filterDate) return filterDate;
+    return new Date().toISOString().split("T")[0];
   };
 
   // Export report as JSON
   const exportAsJSON = () => {
     try {
-      // Filter bookings based on selected filters
-      let filteredBookings = bookings;
-      if (filterDate) {
-        filteredBookings = filteredBookings.filter(b => b.date === filterDate);
-      }
-      if (filterRoute) {
-        filteredBookings = filteredBookings.filter(b => b.route === filterRoute);
-      }
-
-      const reportDate = filterDate || new Date().toISOString().split("T")[0];
+      const filteredBookings = filteredReportBookings;
+      const summary = reportSummary;
+      const reportDate = getReportLabel();
       
       // Build dynamic filename
       let filename = `admin-report-${reportDate}`;
       if (filterRoute) filename += `-${filterRoute}`;
       filename += ".json";
 
-      // Calculate filtered revenue and statistics
-      const filteredRevenue = filteredBookings.reduce((sum, b) => sum + (b.paymentAmount || 0), 0);
-      const completedBookings = filteredBookings.filter(b => b.status === "Completed").length;
-      const pendingBookings = filteredBookings.filter(b => b.status === "Pending").length;
-
       const reportData = {
         reportMetadata: {
           generatedAt: new Date().toISOString(),
-          reportType: "Admin Performance Report",
-          systemName: "Ferry Port Management System"
+          reportType: reportPeriod
+            ? `${reportPeriod.charAt(0).toUpperCase()}${reportPeriod.slice(1)} Admin Report`
+            : "Admin Performance Report",
+          systemName: "PMS Port Management System"
         },
         adminInformation: {
           name: adminData?.name || "Unknown",
@@ -221,16 +249,19 @@ function AdminDashboard() {
           assignedRoutes: adminData?.availableRoutes || []
         },
         reportFilters: {
+          period: reportPeriod || null,
+          periodLabel: reportPeriod ? getPeriodRange(reportPeriod)?.label : null,
           date: filterDate || null,
           route: filterRoute || null,
-          hasFilters: !!(filterDate || filterRoute)
+          hasFilters: !!(reportPeriod || filterDate || filterRoute)
         },
         summary: {
-          totalBookings: filteredBookings.length,
-          completedBookings: completedBookings,
-          pendingBookings: pendingBookings,
-          totalRevenue: filteredRevenue,
-          averageRevenuePerBooking: filteredBookings.length > 0 ? (filteredRevenue / filteredBookings.length).toFixed(2) : 0
+          totalBookings: summary.totalBookings,
+          completedBookings: summary.completedBookings,
+          pendingBookings: summary.pendingBookings,
+          cancelledBookings: summary.cancelledBookings,
+          totalRevenue: summary.totalRevenue,
+          averageRevenuePerBooking: summary.averageRevenuePerBooking
         },
         detailedMetrics: {
           revenueToday: metrics.revenueToday,
@@ -239,16 +270,7 @@ function AdminDashboard() {
           passengersToday: metrics.passengersToday,
           activeTrips: metrics.activeTrips
         },
-        bookingsList: filteredBookings.map(b => ({
-          referenceNumber: b.referenceNumber || "N/A",
-          passengerName: b.passengerName || "N/A",
-          route: b.route || "N/A",
-          bookingDate: b.bookingDate || "N/A",
-          paymentAmount: b.paymentAmount || 0,
-          status: b.status || "N/A",
-          ticketType: b.ticketType || "N/A",
-          contactNumber: b.contactNumber || "N/A"
-        }))
+        bookingsList: summary.bookingsList
       };
 
       const dataStr = JSON.stringify(reportData, null, 2);
@@ -269,16 +291,9 @@ function AdminDashboard() {
   // Save as PDF report
   const saveAsPDF = () => {
     try {
-      // Filter bookings based on selected filters
-      let filteredBookings = bookings;
-      if (filterDate) {
-        filteredBookings = filteredBookings.filter(b => b.date === filterDate);
-      }
-      if (filterRoute) {
-        filteredBookings = filteredBookings.filter(b => b.route === filterRoute);
-      }
-
-      const reportDate = filterDate || new Date().toISOString().split("T")[0];
+      const filteredBookings = filteredReportBookings;
+      const summary = reportSummary;
+      const reportDate = getReportLabel();
       let reportFileName = `admin-report-${reportDate}`;
       if (filterRoute) reportFileName += `-${filterRoute}`;
       reportFileName += ".pdf";
@@ -310,7 +325,7 @@ function AdminDashboard() {
       pdf.setFontSize(9);
       pdf.setTextColor(255, 255, 255);
       pdf.setFont(undefined, "normal");
-      pdf.text("Ferry Port Management System", marginLeft + 5, 25);
+      pdf.text("PMS Port Management System", marginLeft + 5, 25);
 
       yPosition = 35;
 
@@ -333,7 +348,7 @@ function AdminDashboard() {
       yPosition += 30;
 
       // Filter Information
-      if (filterDate || filterRoute) {
+      if (reportPeriod || filterDate || filterRoute) {
         pdf.setFillColor(255, 243, 205);
         pdf.rect(marginLeft, yPosition - 2, contentWidth, 16, "F");
         
@@ -345,18 +360,10 @@ function AdminDashboard() {
         pdf.setFontSize(9);
         pdf.setTextColor(51, 51, 51);
         pdf.setFont(undefined, "normal");
-        let filterText = [];
-        if (filterDate) filterText.push("Date: " + filterDate);
-        if (filterRoute) filterText.push("Route: " + filterRoute);
-        pdf.text(filterText.join(" | "), marginLeft + 3, yPosition + 8);
+        pdf.text(reportFilterLabel, marginLeft + 3, yPosition + 8);
 
         yPosition += 22;
       }
-
-      // Revenue Summary
-      const filteredRevenue = filteredBookings.reduce((sum, b) => sum + (b.paymentAmount || 0), 0);
-      const completedCount = filteredBookings.filter(b => b.status === "Completed").length;
-      const pendingCount = filteredBookings.filter(b => b.status === "Pending").length;
 
       pdf.setFontSize(11);
       pdf.setTextColor(74, 139, 212);
@@ -366,10 +373,11 @@ function AdminDashboard() {
       yPosition += 8;
 
       const summaryData = [
-        ["Total Bookings", String(filteredBookings.length)],
-        ["Total Revenue", "₱" + filteredRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })],
-        ["Completed", String(completedCount)],
-        ["Pending", String(pendingCount)]
+        ["Total Bookings", String(summary.totalBookings)],
+        ["Total Revenue", "₱" + Number(summary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })],
+        ["Confirmed", String(summary.completedBookings)],
+        ["Pending", String(summary.pendingBookings)],
+        ["Cancelled", String(summary.cancelledBookings)]
       ];
 
       pdf.setFontSize(9);
@@ -389,13 +397,13 @@ function AdminDashboard() {
       yPosition += 8;
 
       // Check if we need a new page
-      if (yPosition > pageHeight - 50 && filteredBookings.length > 0) {
+      if (yPosition > pageHeight - 50 && summary.bookingsList.length > 0) {
         pdf.addPage();
         yPosition = 20;
       }
 
       // Bookings Table
-      if (filteredBookings.length > 0) {
+      if (summary.bookingsList.length > 0) {
         pdf.setFontSize(11);
         pdf.setTextColor(74, 139, 212);
         pdf.setFont(undefined, "bold");
@@ -403,12 +411,12 @@ function AdminDashboard() {
         yPosition += 8;
 
         const columns = ["Ref #", "Passenger", "Route", "Date", "Amount", "Status"];
-        const rows = filteredBookings.map(b => [
+        const rows = summary.bookingsList.map((b) => [
           b.referenceNumber || "N/A",
           b.passengerName || "N/A",
           b.route || "N/A",
-          b.bookingDate ? new Date(b.bookingDate).toLocaleDateString("en-PH") : "N/A",
-          "₱" + (b.paymentAmount || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          b.bookingDate || "N/A",
+          "₱" + Number(b.paymentAmount || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
           b.status || "N/A"
         ]);
 
@@ -462,23 +470,16 @@ function AdminDashboard() {
   // Print report
   const printReport = () => {
     try {
-      // Filter bookings based on selected filters
-      let filteredBookings = bookings;
-      if (filterDate) {
-        filteredBookings = filteredBookings.filter(b => b.date === filterDate);
-      }
-      if (filterRoute) {
-        filteredBookings = filteredBookings.filter(b => b.route === filterRoute);
-      }
-
-      const filteredRevenue = filteredBookings.reduce((sum, b) => sum + (b.finalPrice || 0), 0);
+      const summary = reportSummary;
+      const filteredRevenue = summary.totalRevenue;
       
       let filterInfo = "";
-      if (filterDate || filterRoute) {
+      if (reportPeriod || filterDate || filterRoute) {
         filterInfo = `
           <div class="filter-info">
             <h3>Applied Filters:</h3>
             <ul>
+              ${reportPeriod ? `<li><strong>Period:</strong> ${getPeriodRange(reportPeriod)?.label || reportPeriod}</li>` : ""}
               ${filterDate ? `<li><strong>Date:</strong> ${filterDate}</li>` : ""}
               ${filterRoute ? `<li><strong>Route:</strong> ${filterRoute}</li>` : ""}
             </ul>
@@ -490,105 +491,34 @@ function AdminDashboard() {
       }
 
       const printWindow = window.open("", "", "height=600,width=800");
+      const bookingRows = summary.bookingsList
+        .map(
+          (booking) => `
+            <tr>
+              <td>${booking.referenceNumber}</td>
+              <td>${booking.passengerName}</td>
+              <td>${booking.route}</td>
+              <td>${booking.bookingDate}</td>
+              <td>₱${Number(booking.paymentAmount || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td>${booking.status}</td>
+            </tr>
+          `
+        )
+        .join("");
+
       printWindow.document.write(`
         <html>
           <head>
             <title>Admin Report</title>
             <style>
-              * { margin: 0; padding: 0; box-sizing: border-box; }
-              body { 
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-                margin: 40px; 
-                color: #333; 
-                line-height: 1.6;
-              }
-              h1 { 
-                color: #4a8bd4; 
-                border-bottom: 3px solid #4a8bd4; 
-                padding-bottom: 15px;
-                margin-bottom: 20px;
-                font-size: 2.2em;
-              }
-              h2 { 
-                color: #2c3e50;
-                margin-top: 30px;
-                margin-bottom: 15px;
-                font-size: 1.4em;
-                border-left: 4px solid #4a8bd4;
-                padding-left: 12px;
-              }
-              h3 { color: #555; margin-top: 15px; margin-bottom: 10px; }
-              p { margin: 10px 0; color: #666; }
-              .header-info { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 25px; }
-              .header-info p { margin: 8px 0; font-size: 0.95em; }
-              .stat-row { 
-                display: flex; 
-                justify-content: space-between; 
-                padding: 14px 0; 
-                border-bottom: 1px solid #e0e0e0;
-                align-items: center;
-              }
-              .stat-row:last-child { border-bottom: 2px solid #4a8bd4; }
-              .stat-label { font-weight: 600; color: #555; font-size: 0.95em; }
-              .stat-value { font-size: 1.3em; font-weight: 700; color: #4a8bd4; }
-              .info-box { 
-                background: linear-gradient(135deg, #e6f0f8 0%, #eef6fc 100%);
-                border-left: 4px solid #4a8bd4; 
-                padding: 15px; 
-                margin: 15px 0; 
-                border-radius: 6px;
-              }
-              .filter-info { 
-                background: linear-gradient(135deg, #fff3cd 0%, #fffaed 100%);
-                border-left: 4px solid #fb8c00; 
-                padding: 15px; 
-                margin: 15px 0 25px 0; 
-                border-radius: 6px;
-              }
-              .filter-info h3 { margin-top: 0; color: #333; }
-              .filter-info ul { margin: 10px 0; padding-left: 20px; }
-              .filter-info li { margin: 6px 0; color: #555; }
-              .summary-section {
-                background: #f0f7fb;
-                padding: 20px;
-                border-radius: 8px;
-                margin: 20px 0;
-                border: 2px solid #d0e8f2;
-              }
-              table {
-                width: 100%;
-                border-collapse: collapse;
-                margin: 15px 0;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-              }
-              th {
-                background: linear-gradient(135deg, #4a8bd4 0%, #3d6fa8 100%);
-                color: white;
-                padding: 12px;
-                text-align: left;
-                font-weight: 600;
-                font-size: 0.9em;
-              }
-              td {
-                border: 1px solid #e0e0e0;
-                padding: 10px 12px;
-                font-size: 0.9em;
-              }
-              tr:nth-child(even) { background: #f9f9f9; }
-              tr:hover { background: #f0f7fb; }
-              .footer { 
-                margin-top: 40px; 
-                padding-top: 20px;
-                border-top: 2px solid #e0e0e0;
-                text-align: center; 
-                color: #999; 
-                font-size: 0.85em;
-              }
-              .section-divider {
-                height: 2px;
-                background: linear-gradient(90deg, transparent, #e0e0e0, transparent);
-                margin: 30px 0;
-              }
+              body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+              h1 { color: #4a8bd4; border-bottom: 3px solid #4a8bd4; padding-bottom: 10px; }
+              h2 { color: #2c3e50; margin-top: 24px; }
+              .header-info, .summary-section, .filter-info { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 16px 0; }
+              .stat-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e0e0e0; }
+              table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+              th, td { border: 1px solid #e0e0e0; padding: 8px 10px; text-align: left; font-size: 0.9rem; }
+              th { background: #4a8bd4; color: white; }
             </style>
           </head>
           <body>
@@ -597,156 +527,96 @@ function AdminDashboard() {
               <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
               <p><strong>Admin:</strong> ${adminData?.name || "N/A"}</p>
               <p><strong>Boat:</strong> ${adminData?.assignedBoat || "N/A"}</p>
+              <p><strong>Filter:</strong> ${reportFilterLabel}</p>
             </div>
             ${filterInfo}
-            ${
-              filterDate || filterRoute
-                ? `
-                    <div class="section-divider"></div>
-                    <h2>Filtered Report Summary</h2>
-                    <div class="summary-section">
-                      <h3>Key Metrics</h3>
-                      <div class="stat-row">
-                        <span class="stat-label">Total Bookings</span>
-                        <span class="stat-value">${filteredBookings.length}</span>
-                      </div>
-                      <div class="stat-row">
-                        <span class="stat-label">Total Revenue</span>
-                        <span class="stat-value">₱${filteredBookings.reduce((sum, b) => sum + (b.paymentAmount || 0), 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </div>
-                      <div class="stat-row">
-                        <span class="stat-label">Completed Bookings</span>
-                        <span class="stat-value">${filteredBookings.filter(b => b.status === "Completed").length}</span>
-                      </div>
-                      <div class="stat-row">
-                        <span class="stat-label">Pending Bookings</span>
-                        <span class="stat-value">${filteredBookings.filter(b => b.status === "Pending").length}</span>
-                      </div>
-                    </div>
-                    
-                    ${
-                      filteredBookings.length > 0
-                        ? `
-                            <div class="section-divider"></div>
-                            <h2>Booking Details</h2>
-                            <table>
-                              <tr>
-                                <th>Reference #</th>
-                                <th>Passenger</th>
-                                <th>Route</th>
-                                <th>Date</th>
-                                <th>Amount</th>
-                                <th>Status</th>
-                              </tr>
-                              ${filteredBookings
-                                .map(
-                                  (booking) => `
-                                <tr>
-                                  <td>${booking.referenceNumber || "N/A"}</td>
-                                  <td>${booking.passengerName || "N/A"}</td>
-                                  <td>${booking.route || "N/A"}</td>
-                                  <td>${
-                                    booking.bookingDate
-                                      ? new Date(booking.bookingDate).toLocaleDateString("en-PH")
-                                      : "N/A"
-                                  }</td>
-                                  <td>₱${(booking.paymentAmount || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                  <td>${booking.status || "N/A"}</td>
-                                </tr>
-                              `
-                                )
-                                .join("")}
-                            </table>
-                          `
-                        : ""
-                    }
-                  `
-                : `
-                    <div class="section-divider"></div>
-                    <h2>Performance Overview</h2>
-                    <div class="summary-section">
-                      <h3>Key Metrics</h3>
-                      <div class="stat-row">
-                        <span class="stat-label">Total Bookings</span>
-                        <span class="stat-value">${bookings.length}</span>
-                      </div>
-                      <div class="stat-row">
-                        <span class="stat-label">Total Revenue</span>
-                        <span class="stat-value">₱${bookings
-                          .reduce((sum, b) => sum + (b.paymentAmount || 0), 0)
-                          .toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </div>
-                      <div class="stat-row">
-                        <span class="stat-label">Completed Bookings</span>
-                        <span class="stat-value">${bookings.filter((b) => b.status === "Completed").length}</span>
-                      </div>
-                      <div class="stat-row">
-                        <span class="stat-label">Pending Bookings</span>
-                        <span class="stat-value">${bookings.filter((b) => b.status === "Pending").length}</span>
-                      </div>
-                    </div>
-                  `
-            }
-            <div class="footer">
-              <p>This is an automatically generated report. For inquiries, please contact your administrator.</p>
-              <p>Report generated on ${new Date().toLocaleString("en-PH")}</p>
+            <h2>Report Summary</h2>
+            <div class="summary-section">
+              <div class="stat-row"><span>Total Bookings</span><strong>${summary.totalBookings}</strong></div>
+              <div class="stat-row"><span>Total Revenue</span><strong>₱${Number(summary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+              <div class="stat-row"><span>Confirmed</span><strong>${summary.completedBookings}</strong></div>
+              <div class="stat-row"><span>Pending</span><strong>${summary.pendingBookings}</strong></div>
+              <div class="stat-row"><span>Cancelled</span><strong>${summary.cancelledBookings}</strong></div>
             </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    printWindow.print();
+            ${
+              summary.bookingsList.length > 0
+                ? `
+                  <h2>Booking Details</h2>
+                  <table>
+                    <tr>
+                      <th>Reference #</th>
+                      <th>Passenger</th>
+                      <th>Route</th>
+                      <th>Date</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                    </tr>
+                    ${bookingRows}
+                  </table>
+                `
+                : "<p>No bookings match the selected filters.</p>"
+            }
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
     } catch (error) {
       console.error("Error printing report:", error);
     }
   };
 
   // Stat Card Component
-  const StatCard = ({ title, value, color }) => (
+  const StatCard = ({ title, value, color, subtitle }) => (
     <div style={{
       backgroundColor: "white",
       borderRadius: "12px",
-      padding: "20px",
+      padding: isMobile ? "16px 12px" : "20px",
       boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
       border: `2px solid ${color}`,
       borderTop: `4px solid ${color}`,
       transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-      cursor: "pointer",
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
       alignItems: "center",
-      minHeight: "130px"
-    }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.boxShadow = "0 8px 16px rgba(0, 0, 0, 0.12)";
-        e.currentTarget.style.transform = "translateY(-4px)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.06)";
-        e.currentTarget.style.transform = "translateY(0)";
-      }}
-    >
+      minHeight: isMobile ? "110px" : "130px",
+      width: "100%",
+      boxSizing: "border-box",
+    }}>
       <h4 style={{
-        margin: "0 0 12px 0",
+        margin: "0 0 8px 0",
         color: "#666",
-        fontSize: "0.9rem",
+        fontSize: isMobile ? "0.75rem" : "0.9rem",
         fontWeight: "600",
         textTransform: "uppercase",
         letterSpacing: "0.5px",
-        textAlign: "center"
+        textAlign: "center",
+        lineHeight: 1.3,
       }}>
         {title}
       </h4>
       <div style={{
-        fontSize: "2.4rem",
+        fontSize: isMobile ? "1.6rem" : "2.4rem",
         fontWeight: "900",
         color: color,
         margin: "0",
-        lineHeight: "1"
+        lineHeight: "1.1",
+        textAlign: "center",
+        wordBreak: "break-word",
       }}>
         {value}
       </div>
+      {subtitle ? (
+        <div style={{
+          marginTop: "8px",
+          fontSize: isMobile ? "0.72rem" : "0.82rem",
+          color: "#888",
+          textAlign: "center",
+        }}>
+          {subtitle}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -756,15 +626,16 @@ function AdminDashboard() {
         maxWidth: "1400px",
         width: "100%",
         margin: "0 auto",
-        padding: "30px 20px",
-        boxSizing: "border-box"
+        padding: isMobile ? "16px 12px" : "30px 20px",
+        boxSizing: "border-box",
+        overflowX: "hidden",
       }}>
         {/* Header */}
         <div style={{
-          marginBottom: "40px"
+          marginBottom: isMobile ? "24px" : "40px"
         }}>
           <h2 style={{
-            fontSize: "1.5rem",
+            fontSize: isMobile ? "1.2rem" : "1.5rem",
             fontWeight: "900",
             color: "#1a1a1a",
             margin: "0 0 8px 0",
@@ -773,10 +644,11 @@ function AdminDashboard() {
             Performance Overview
           </h2>
           <p style={{
-            fontSize: "1rem",
+            fontSize: isMobile ? "0.9rem" : "1rem",
             color: "#666",
             margin: "0",
-            fontWeight: "500"
+            fontWeight: "500",
+            lineHeight: 1.5,
           }}>
             Welcome back! Here's your performance overview for {adminData?.assignedBoat || "your boat"}.
           </p>
@@ -785,28 +657,33 @@ function AdminDashboard() {
         {/* Metrics Section */}
         <div style={{
           display: "grid",
-          gridTemplateColumns: window.innerWidth < 768 ? "1fr" : window.innerWidth < 1024 ? "repeat(2, 1fr)" : "repeat(4, 1fr)",
-          gap: "24px",
-          marginBottom: "40px"
+          gridTemplateColumns: isMobile ? "1fr" : isTablet ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
+          gap: isMobile ? "12px" : "24px",
+          marginBottom: isMobile ? "24px" : "40px",
+          width: "100%",
         }}>
           <StatCard
             title="Today's Revenue"
-            value={`₱${metrics.revenueToday.toLocaleString()}`}
+            value={`₱${metrics.revenueToday.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            subtitle="Confirmed bookings today"
             color="#4a8bd4"
           />
           <StatCard
             title="Week's Revenue"
-            value={`₱${metrics.revenueWeek.toLocaleString()}`}
+            value={`₱${metrics.revenueWeek.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            subtitle="Last 7 days"
             color="#43a047"
           />
           <StatCard
             title="Month's Revenue"
-            value={`₱${metrics.revenueMonth.toLocaleString()}`}
+            value={`₱${metrics.revenueMonth.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            subtitle="This month"
             color="#fb8c00"
           />
           <StatCard
             title="Total Bookings"
-            value={bookings.length}
+            value={metrics.totalBookings}
+            subtitle={`${metrics.confirmedBookings} confirmed`}
             color="#9c27b0"
           />
         </div>
@@ -815,12 +692,13 @@ function AdminDashboard() {
         <div style={{
           backgroundColor: "white",
           borderRadius: "12px",
-          padding: "32px",
+          padding: isMobile ? "16px" : "32px",
           boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
-          marginBottom: "40px"
+          marginBottom: isMobile ? "24px" : "40px",
+          overflow: "hidden",
         }}>
           <h2 style={{
-            fontSize: "1.3rem",
+            fontSize: isMobile ? "1.05rem" : "1.3rem",
             fontWeight: "900",
             color: "#1a1a1a",
             margin: "0 0 24px 0",
@@ -828,7 +706,7 @@ function AdminDashboard() {
           }}>
             Performance Analytics
           </h2>
-          <div style={{ position: "relative", height: "400px", marginBottom: "20px" }}>
+          <div style={{ position: "relative", height: isMobile ? "280px" : "400px", marginBottom: "20px" }}>
             <Bar data={chartData} options={chartOptions} />
           </div>
           <p style={{
@@ -846,11 +724,12 @@ function AdminDashboard() {
         <div style={{
           backgroundColor: "white",
           borderRadius: "12px",
-          padding: "32px",
-          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)"
+          padding: isMobile ? "16px" : "32px",
+          boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
+          overflow: "hidden",
         }}>
           <h2 style={{
-            fontSize: "1.3rem",
+            fontSize: isMobile ? "1.05rem" : "1.3rem",
             fontWeight: "900",
             color: "#1a1a1a",
             margin: "0 0 24px 0",
@@ -861,8 +740,8 @@ function AdminDashboard() {
 
           {/* Filter Section */}
           <div style={{
-            marginBottom: "32px",
-            padding: "28px",
+            marginBottom: isMobile ? "20px" : "32px",
+            padding: isMobile ? "16px" : "28px",
             backgroundColor: "linear-gradient(135deg, #f5f9fc 0%, #f0f7fb 100%)",
             background: "linear-gradient(135deg, #f5f9fc 0%, #f0f7fb 100%)",
             borderRadius: "14px",
@@ -873,18 +752,20 @@ function AdminDashboard() {
             <div style={{
               display: "flex",
               justifyContent: "space-between",
-              alignItems: "center",
+              alignItems: isMobile ? "flex-start" : "center",
+              flexDirection: isMobile ? "column" : "row",
+              gap: isMobile ? "10px" : "0",
               marginBottom: "20px"
             }}>
               <h3 style={{
-                fontSize: "1.15rem",
+                fontSize: isMobile ? "1rem" : "1.15rem",
                 fontWeight: "700",
                 color: "#1a1a1a",
                 margin: "0"
               }}>
                 Customize Your Report
               </h3>
-              {(filterDate || filterRoute) && (
+              {(reportPeriod || filterDate || filterRoute) && (
                 <div style={{
                   backgroundColor: "#4a8bd4",
                   color: "white",
@@ -893,15 +774,43 @@ function AdminDashboard() {
                   fontSize: "0.85rem",
                   fontWeight: "600"
                 }}>
-                  {[filterDate, filterRoute].filter(f => f).length} filter{[filterDate, filterRoute].filter(f => f).length !== 1 ? "s" : ""} active
+                  {[reportPeriod, filterDate, filterRoute].filter(f => f).length} filter{[reportPeriod, filterDate, filterRoute].filter(f => f).length !== 1 ? "s" : ""} active
                 </div>
               )}
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "20px" }}>
+              {[
+                { id: "", label: "All bookings" },
+                { id: "weekly", label: "Weekly report" },
+                { id: "monthly", label: "Monthly report" },
+              ].map((option) => (
+                <button
+                  key={option.id || "all"}
+                  type="button"
+                  onClick={() => {
+                    setReportPeriod(option.id);
+                    if (option.id) setFilterDate("");
+                  }}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "10px",
+                    border: reportPeriod === option.id ? "2px solid #4a8bd4" : "2px solid #d0dbe8",
+                    background: reportPeriod === option.id ? "#e6f0f8" : "white",
+                    color: "#2c3e50",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
 
             {/* Filters Grid */}
             <div style={{
               display: "grid",
-              gridTemplateColumns: window.innerWidth < 768 ? "1fr" : "repeat(2, 1fr)",
+              gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))",
               gap: "20px",
               marginBottom: "20px"
             }}>
@@ -917,7 +826,10 @@ function AdminDashboard() {
                 <input
                   type="date"
                   value={filterDate}
-                  onChange={(e) => setFilterDate(e.target.value)}
+                  onChange={(e) => {
+                    setFilterDate(e.target.value);
+                    if (e.target.value) setReportPeriod("");
+                  }}
                   style={{
                     padding: "12px 14px",
                     border: "2px solid #4a8bd4",
@@ -982,7 +894,7 @@ function AdminDashboard() {
                   }}
                 >
                   <option value="">All Routes</option>
-                  {(adminData?.availableRoutes || []).map((route) => (
+                  {routeOptions.map((route) => (
                     <option key={route} value={route}>
                       {route}
                     </option>
@@ -1009,9 +921,10 @@ function AdminDashboard() {
               justifyContent: "flex-start",
               flexWrap: "wrap"
             }}>
-              {(filterDate || filterRoute) && (
+              {(reportPeriod || filterDate || filterRoute) && (
                 <button
                   onClick={() => {
+                    setReportPeriod("");
                     setFilterDate("");
                     setFilterRoute("");
                   }}
@@ -1046,12 +959,20 @@ function AdminDashboard() {
                 color: "#666",
                 display: "flex",
                 alignItems: "center",
-                marginLeft: "auto"
+                marginLeft: isMobile ? "0" : "auto",
+                width: isMobile ? "100%" : "auto",
               }}>
                 Filters will apply to all exports below
               </div>
             </div>
           </div>
+
+          <ReportPreview
+            title="Filtered Report Preview"
+            filterLabel={reportFilterLabel}
+            summary={reportSummary}
+            emptyMessage="No bookings match the selected filters. Try Weekly/Monthly or choose a different date or route."
+          />
 
           {/* Export Options Header */}
           <h3 style={{
@@ -1061,7 +982,7 @@ function AdminDashboard() {
             margin: "32px 0 20px 0"
           }}>
             Export Your Data
-            {(filterDate || filterRoute) && (
+            {(reportPeriod || filterDate || filterRoute) && (
               <span style={{
                 fontSize: "0.85rem",
                 fontWeight: "400",
@@ -1075,7 +996,7 @@ function AdminDashboard() {
 
           <div style={{
             display: "grid",
-            gridTemplateColumns: window.innerWidth < 768 ? "1fr" : "repeat(3, 1fr)",
+            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))",
             gap: "20px"
           }}>
             <button

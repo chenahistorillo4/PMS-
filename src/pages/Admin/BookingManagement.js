@@ -93,6 +93,12 @@ function BookingManagement() {
               bookedByName: booking.bookedByName || userMap[booking.userId] || booking.userEmail || "Unknown"
             }));
 
+            // Only paid/confirmed bookings belong in admin records.
+            bookingsList = bookingsList.filter((booking) => {
+              const status = String(booking.status || "").toLowerCase();
+              return status === "confirmed" || status === "departed";
+            });
+
             // Sort by date descending (most recent first)
             bookingsList.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
             setBookings(bookingsList);
@@ -114,7 +120,7 @@ function BookingManagement() {
     const now = new Date();
     
     for (const booking of bookingsList) {
-      if ((booking.status === "pending" || booking.status === "confirmed") && booking.date && booking.departure) {
+      if (booking.status === "confirmed" && booking.date && booking.departure) {
         const [departureHour, departureMin] = booking.departure.split(':').map(Number);
         const departureDateTime = new Date(booking.date);
         departureDateTime.setHours(departureHour, departureMin, 0);
@@ -144,7 +150,11 @@ function BookingManagement() {
 
   // Get bookings for selected date and schedule
   const getSelectedDateBookings = () => {
-    let filtered = bookings.filter(b => b.date === selectedDate && (b.status === "pending" || b.status === "confirmed" || b.status === "departed"));
+    let filtered = bookings.filter(
+      (b) =>
+        b.date === selectedDate &&
+        (b.status === "confirmed" || b.status === "departed")
+    );
     
     // Filter by schedule if not "all"
     if (selectedSchedule !== "all") {
@@ -208,7 +218,7 @@ function BookingManagement() {
         fontWeight: "500",
         lineHeight: isMobile ? "1.4" : "1.5"
       }}>
-        Booking transactions overview for your assigned ferry boat
+        Booking transactions overview for your assigned ferry boat. Only paid and confirmed bookings appear here. Unpaid bookings stay in Payment Management until payment is completed.
       </p>
 
 

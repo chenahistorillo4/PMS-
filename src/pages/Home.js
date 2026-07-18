@@ -149,7 +149,7 @@ function Home({ user }) {
             transition: "font-size 0.3s ease"
           }}
         >
-          Why Choose PMS Ferry?
+          Why Choose PMS Port?
         </h2>
         <div className="row text-center">
           <div className="col-md-4">

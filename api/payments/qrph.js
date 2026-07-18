@@ -17,7 +17,7 @@ module.exports = async (req, res) => {
 
     const checkout = await createQrPhCheckout({
       amount,
-      description: `PMS Ferry booking ${bookingId || paymentId}`,
+      description: `PMS Port booking ${bookingId || paymentId}`,
       metadata: {
         paymentId,
         bookingId: bookingId || '',

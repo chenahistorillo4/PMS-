@@ -1,8 +1,8 @@
-const DEFAULT_SITE_NAME = "PMS Ferry";
+const DEFAULT_SITE_NAME = "PMS Port";
 const DEFAULT_DESCRIPTION =
-  "Book ferry tickets online for Pinamalayan, Marinduque, and Sibale routes. View schedules, pay with GCash, and manage bookings with PMS Ferry.";
+  "Book ferry tickets online for Pinamalayan, Marinduque, and Sibale routes. View schedules, pay with GCash, and manage bookings with PMS Port.";
 const DEFAULT_KEYWORDS =
-  "PMS Ferry, ferry booking, Pinamalayan, Marinduque, Sibale, boat ticket, ferry schedule, Philippines ferry";
+  "PMS Port, ferry booking, Pinamalayan, Marinduque, Sibale, boat ticket, ferry schedule, Philippines ferry";
 
 const PUBLIC_ROUTES = new Set([
   "/",
@@ -16,34 +16,34 @@ const PUBLIC_ROUTES = new Set([
 
 const ROUTE_SEO = {
   "/": {
-    title: "PMS Ferry | Online Ferry Booking – Pinamalayan, Marinduque, Sibale",
+    title: "PMS Port",
     description: DEFAULT_DESCRIPTION,
   },
   "/home": {
-    title: "PMS Ferry | Online Ferry Booking – Pinamalayan, Marinduque, Sibale",
+    title: "PMS Port",
     description: DEFAULT_DESCRIPTION,
   },
   "/about": {
-    title: "About PMS Ferry | Pinamalayan – Marinduque – Sibale Routes",
+    title: "About PMS Port | Pinamalayan – Marinduque – Sibale Routes",
     description:
-      "Learn about PMS Ferry, our mission, and how we provide reliable online ferry reservations for travelers in Oriental Mindoro and Marinduque.",
+      "Learn about PMS Port, our mission, and how we provide reliable online ferry reservations for travelers in Oriental Mindoro and Marinduque.",
   },
   "/login": {
-    title: "Login | PMS Ferry",
-    description: "Sign in to your PMS Ferry account to book tickets and manage reservations.",
+    title: "Login | PMS Port",
+    description: "Sign in to your PMS Port account to book tickets and manage reservations.",
   },
   "/register": {
-    title: "Create Account | PMS Ferry",
-    description: "Register for a PMS Ferry account to book ferry tickets online.",
+    title: "Create Account | PMS Port",
+    description: "Register for a PMS Port account to book ferry tickets online.",
   },
   "/booking": {
-    title: "Book Ferry Tickets | PMS Ferry",
+    title: "Book Ferry Tickets | PMS Port",
     description:
       "Search available ferry trips and book tickets online for Pinamalayan, Marinduque, and Sibale.",
   },
   "/schedule": {
-    title: "Ferry Schedule | PMS Ferry",
-    description: "View up-to-date PMS Ferry schedules and departure times.",
+    title: "Ferry Schedule | PMS Port",
+    description: "View up-to-date PMS Port schedules and departure times.",
   },
 };
 

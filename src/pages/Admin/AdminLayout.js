@@ -2,12 +2,19 @@ import { Link, useNavigate } from "react-router-dom";
 import { auth, db } from "../../firebase";
 import { useEffect, useState } from "react";
 import { doc, getDoc } from "firebase/firestore";
+import { useAdminUnreadNotificationCount } from "../../hooks/useUnreadNotificationCount";
+import { NavNotificationBadge } from "../../components/NotificationBadge";
 
 function AdminLayout({ children, active }) {
   const navigate = useNavigate();
   const [adminData, setAdminData] = useState(null);
+  const [adminId, setAdminId] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
+  const unreadNotificationCount = useAdminUnreadNotificationCount(
+    adminData?.assignedBoat,
+    adminId
+  );
 
   // Handle window resize
   useEffect(() => {
@@ -28,6 +35,7 @@ function AdminLayout({ children, active }) {
     const fetchAdminData = async () => {
       const user = auth.currentUser;
       if (user) {
+        setAdminId(user.uid);
         try {
           const docRef = doc(db, "admins", user.uid);
           const docSnap = await getDoc(docRef);
@@ -40,6 +48,9 @@ function AdminLayout({ children, active }) {
         } catch (error) {
           console.error("Error fetching admin data:", error);
         }
+      } else {
+        setAdminId(null);
+        setAdminData(null);
       }
     };
     fetchAdminData();
@@ -299,7 +310,8 @@ function AdminLayout({ children, active }) {
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
-                    gap: "12px"
+                    gap: "12px",
+                    position: "relative"
                   }}
                   onMouseEnter={(e) => {
                     if (active !== item.key) {
@@ -315,7 +327,10 @@ function AdminLayout({ children, active }) {
                   <span style={{ display: "flex", alignItems: "center", color: "currentColor", flexShrink: 0 }}>
                     {item.icon}
                   </span>
-                  {item.label}
+                  <span style={{ flex: 1 }}>{item.label}</span>
+                  {item.key === "notifications" && (
+                    <NavNotificationBadge count={unreadNotificationCount} inline />
+                  )}
                 </Link>
               ))}
             </div>
@@ -361,7 +376,8 @@ function AdminLayout({ children, active }) {
                 alignItems: "center",
                 justifyContent: "center",
                 minWidth: "36px",
-                minHeight: "36px"
+                minHeight: "36px",
+                position: "relative"
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = "rgba(59, 126, 204, 0.1)";
@@ -377,6 +393,7 @@ function AdminLayout({ children, active }) {
                 <line x1="3" y1="12" x2="21" y2="12"></line>
                 <line x1="3" y1="18" x2="21" y2="18"></line>
               </svg>
+              <NavNotificationBadge count={unreadNotificationCount} />
             </button>
           )}
           <h2 style={{ fontSize: isMobile ? "1.05rem" : "1.3rem", fontWeight: 800, color: "#2c5aa0", margin: 0, flex: 1 }}>

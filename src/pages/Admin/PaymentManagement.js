@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import AdminLayout from './AdminLayout';
 import { QRCodeCanvas } from 'qrcode.react';
-import { notifyPaymentSuccess } from '../../utils/notificationHelper';
+import { notifyPaymentSuccess, notifyPassengerRefundStatus } from '../../utils/notificationHelper';
 
 function PaymentManagement() {
   const getEmptyAccountForm = () => ({
@@ -27,6 +27,7 @@ function PaymentManagement() {
   const [adminData, setAdminData] = useState(null);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [refundRequests, setRefundRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [proofModal, setProofModal] = useState({
     isOpen: false,
@@ -103,6 +104,20 @@ function PaymentManagement() {
               .sort((a, b) => b.createdAt - a.createdAt);
             setPayments(paymentsList);
             console.log('Payments found:', paymentsList.length);
+
+            const refundsQuery = query(
+              collection(db, 'refund_requests'),
+              where('boat', '==', boatName)
+            );
+            const refundsSnap = await getDocs(refundsQuery);
+            const refundsList = refundsSnap.docs
+              .map((refundDoc) => ({ id: refundDoc.id, ...refundDoc.data() }))
+              .sort((a, b) => {
+                const aTime = a.createdAt?.toDate?.() || a.createdAt || 0;
+                const bTime = b.createdAt?.toDate?.() || b.createdAt || 0;
+                return bTime - aTime;
+              });
+            setRefundRequests(refundsList);
           } else {
             console.warn('⚠️ No admin data found for user:', user.uid);
           }
@@ -277,10 +292,14 @@ function PaymentManagement() {
   const handleRejectPayment = async (paymentId) => {
     if (window.confirm('Are you sure you want to reject this payment?')) {
       try {
+        const payment = payments.find((p) => p.id === paymentId);
         const paymentRef = doc(db, 'payments', paymentId);
         await updateDoc(paymentRef, { status: 'failed' });
 
-        // Update local state
+        if (payment?.bookingId) {
+          await updateDoc(doc(db, 'bookings', payment.bookingId), { status: 'cancelled' });
+        }
+
         setPayments(payments.map((p) => (p.id === paymentId ? { ...p, status: 'failed' } : p)));
         alert('Payment rejected!');
       } catch (error) {
@@ -290,8 +309,112 @@ function PaymentManagement() {
     }
   };
 
+  const handleRefundDecision = async (refundId, decision) => {
+    const refund = refundRequests.find((item) => item.id === refundId);
+    if (!refund) return;
+
+    const note =
+      decision === 'approved'
+        ? window.prompt('Optional note for the passenger (e.g. refund reference):', '') || ''
+        : window.prompt('Optional reason for declining the refund:', '') || '';
+
+    try {
+      await updateDoc(doc(db, 'refund_requests', refundId), {
+        status: decision,
+        adminNote: note,
+        processedAt: new Date(),
+        processedBy: adminData?.email || user?.email || 'admin',
+      });
+
+      await addDoc(collection(db, 'notifications'), {
+        userId: refund.userId,
+        type: 'refund_status',
+        title: decision === 'approved' ? 'Refund Approved' : 'Refund Declined',
+        message:
+          decision === 'approved'
+            ? `Your refund request for ${refund.tripName || 'your trip'} was approved.`
+            : `Your refund request for ${refund.tripName || 'your trip'} was declined.`,
+        recipientType: 'user',
+        isRead: false,
+        createdAt: new Date(),
+      });
+
+      notifyPassengerRefundStatus({
+        refund: { ...refund, adminNote: note },
+        status: decision,
+        userEmail: refund.userEmail,
+        customerName: refund.userEmail,
+      }).catch((error) => console.warn('Refund status notification failed:', error));
+
+      setRefundRequests((current) =>
+        current.map((item) =>
+          item.id === refundId
+            ? { ...item, status: decision, adminNote: note, processedAt: new Date() }
+            : item
+        )
+      );
+      alert(`Refund ${decision === 'approved' ? 'approved' : 'declined'} successfully.`);
+    } catch (error) {
+      console.error('Error processing refund:', error);
+      alert('Error processing refund: ' + error.message);
+    }
+  };
+
   return (
     <AdminLayout active="payment">
+      {refundRequests.filter((refund) => refund.status === 'pending').length > 0 && (
+        <div
+          style={{
+            background: '#fff8e1',
+            border: '1px solid #ffe082',
+            borderRadius: '10px',
+            padding: '16px',
+            marginBottom: '20px',
+          }}
+        >
+          <h3 style={{ margin: '0 0 12px', color: '#5d4037', fontSize: '1.05rem' }}>
+            Pending Refund Requests
+          </h3>
+          {refundRequests
+            .filter((refund) => refund.status === 'pending')
+            .map((refund) => (
+              <div
+                key={refund.id}
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '12px',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 0',
+                  borderTop: '1px solid #ffe082',
+                }}
+              >
+                <div style={{ minWidth: '220px' }}>
+                  <div style={{ fontWeight: 700 }}>{refund.tripName || 'Trip refund'}</div>
+                  <div style={{ color: '#666', fontSize: '0.9rem' }}>
+                    {refund.userEmail} · ₱{Number(refund.amount || 0).toFixed(2)}
+                  </div>
+                  <div style={{ color: '#666', fontSize: '0.85rem' }}>{refund.reason}</div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className="btn btn-success btn-sm"
+                    onClick={() => handleRefundDecision(refund.id, 'approved')}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    className="btn btn-outline-danger btn-sm"
+                    onClick={() => handleRefundDecision(refund.id, 'rejected')}
+                  >
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
       <h2
         style={{
           fontWeight: '800',

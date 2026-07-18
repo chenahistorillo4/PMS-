@@ -1,8 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../../firebase";
 import SuperadminLayout from "./SuperadminLayout";
 import jsPDF from "jspdf";
+import {
+  filterBookingsByPeriod,
+  getPeriodRange,
+  summarizeBookings,
+  buildReportFilterLabel,
+} from "../../utils/reportHelpers";
+import ReportPreview from "../../components/ReportPreview";
 
 function SuperadminDashboard() {
   const [stats, setStats] = useState({
@@ -17,6 +24,8 @@ function SuperadminDashboard() {
   const [selectedCard, setSelectedCard] = useState(null);
   const [detailedData, setDetailedData] = useState([]);
   const [detailedLoading, setDetailedLoading] = useState(false);
+  const [bookings, setBookings] = useState([]);
+  const [reportPeriod, setReportPeriod] = useState("weekly");
 
   useEffect(() => {
     const handleResize = () => {
@@ -32,6 +41,18 @@ function SuperadminDashboard() {
         const adminsSnapshot = await getDocs(collection(db, "admins"));
         const scannersSnapshot = await getDocs(collection(db, "qr_scanners"));
         const boatsSnapshot = await getDocs(collection(db, "boats"));
+        const bookingsSnapshot = await getDocs(collection(db, "bookings"));
+
+        setBookings(
+          bookingsSnapshot.docs.map((bookingDoc) => {
+            const data = bookingDoc.data();
+            const normalized = { id: bookingDoc.id, ...data };
+            if (normalized.date && normalized.date.toDate) {
+              normalized.date = normalized.date.toDate().toISOString().split("T")[0];
+            }
+            return normalized;
+          })
+        );
 
         setStats({
           totalAdmins: adminsSnapshot.size,
@@ -74,17 +95,38 @@ function SuperadminDashboard() {
     }
   };
 
+  const getFilteredBookings = () => filterBookingsByPeriod(bookings, reportPeriod || "weekly");
+
+  const filteredReportBookings = useMemo(
+    () => getFilteredBookings(),
+    [bookings, reportPeriod]
+  );
+  const reportSummary = useMemo(
+    () => summarizeBookings(filteredReportBookings),
+    [filteredReportBookings]
+  );
+  const reportFilterLabel = useMemo(
+    () => buildReportFilterLabel({ reportPeriod: reportPeriod || "weekly" }),
+    [reportPeriod]
+  );
+
+  const getReportSummary = () => reportSummary;
+
   // Export report as JSON
   const exportAsJSON = () => {
+    const summary = getReportSummary();
     const reportData = {
       generatedAt: new Date().toISOString(),
+      reportType: `${reportPeriod || "weekly"} system report`,
+      periodLabel: getPeriodRange(reportPeriod || "weekly")?.label,
       systemStatus: systemOperational ? "Operational" : "Error",
       statistics: {
         totalAdmins: stats.totalAdmins,
         totalScanners: stats.totalScanners,
         totalBoats: stats.totalBoats,
-        totalAccounts: stats.totalAdmins + stats.totalScanners
-      }
+        totalAccounts: stats.totalAdmins + stats.totalScanners,
+      },
+      bookingSummary: summary,
     };
 
     const dataStr = JSON.stringify(reportData, null, 2);
@@ -92,7 +134,7 @@ function SuperadminDashboard() {
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `system-report-${new Date().toISOString().split("T")[0]}.json`;
+    link.download = `system-${reportPeriod || "weekly"}-report-${new Date().toISOString().split("T")[0]}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -100,6 +142,7 @@ function SuperadminDashboard() {
   // Save as PDF report
   const saveAsPDF = () => {
     try {
+      const summary = getReportSummary();
       const reportDate = new Date().toISOString().split("T")[0];
       const pdf = new jsPDF({
         orientation: "portrait",
@@ -172,6 +215,28 @@ function SuperadminDashboard() {
       pdf.text("Total Accounts: " + (stats.totalAdmins + stats.totalScanners), marginLeft, yPosition);
       yPosition += 12;
 
+      pdf.setFontSize(12);
+      pdf.setTextColor(74, 139, 212);
+      pdf.setFont(undefined, "bold");
+      pdf.text(`${(reportPeriod || "weekly").toUpperCase()} Booking Summary`, marginLeft, yPosition);
+      yPosition += 8;
+
+      pdf.setFontSize(10);
+      pdf.setTextColor(51, 51, 51);
+      pdf.setFont(undefined, "normal");
+      pdf.text("Period: " + (getPeriodRange(reportPeriod || "weekly")?.label || reportPeriod), marginLeft, yPosition);
+      yPosition += 6;
+      pdf.text("Total Bookings: " + summary.totalBookings, marginLeft, yPosition);
+      yPosition += 6;
+      pdf.text("Confirmed Bookings: " + summary.completedBookings, marginLeft, yPosition);
+      yPosition += 6;
+      pdf.text("Pending Bookings: " + summary.pendingBookings, marginLeft, yPosition);
+      yPosition += 6;
+      pdf.text("Cancelled Bookings: " + summary.cancelledBookings, marginLeft, yPosition);
+      yPosition += 6;
+      pdf.text("Total Revenue: PHP " + Number(summary.totalRevenue || 0).toLocaleString(), marginLeft, yPosition);
+      yPosition += 12;
+
       // Check if we need a new page
       if (yPosition > pageHeight - 40) {
         pdf.addPage();
@@ -189,7 +254,7 @@ function SuperadminDashboard() {
       const url = URL.createObjectURL(pdfBlob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `system-report-${reportDate}.pdf`;
+      link.download = `system-${reportPeriod || "weekly"}-report-${reportDate}.pdf`;
       link.click();
       URL.revokeObjectURL(url);
       alert("PDF downloaded successfully!");
@@ -201,6 +266,7 @@ function SuperadminDashboard() {
 
   // Print report
   const printReport = () => {
+    const summary = getReportSummary();
     const printWindow = window.open("", "", "height=600,width=800");
     printWindow.document.write(`
       <html>
@@ -240,6 +306,32 @@ function SuperadminDashboard() {
           <div class="stat-row" style="border-bottom: 2px solid #4a8bd4; font-weight: 600;">
             <span class="stat-label">Total Accounts</span>
             <span class="stat-value">${stats.totalAdmins + stats.totalScanners}</span>
+          </div>
+
+          <h2>${(reportPeriod || "weekly").toUpperCase()} Booking Summary</h2>
+          <div class="stat-row">
+            <span class="stat-label">Period</span>
+            <span class="stat-value">${getPeriodRange(reportPeriod || "weekly")?.label || reportPeriod}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Total Bookings</span>
+            <span class="stat-value">${summary.totalBookings}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Confirmed</span>
+            <span class="stat-value">${summary.completedBookings}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Pending</span>
+            <span class="stat-value">${summary.pendingBookings}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Cancelled</span>
+            <span class="stat-value">${summary.cancelledBookings}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Total Revenue</span>
+            <span class="stat-value">PHP ${Number(summary.totalRevenue || 0).toLocaleString()}</span>
           </div>
           
           <div class="footer">
@@ -466,6 +558,37 @@ function SuperadminDashboard() {
           }}>
             Reports & Export
           </h2>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
+            {[
+              { id: "weekly", label: "Weekly report" },
+              { id: "monthly", label: "Monthly report" },
+            ].map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setReportPeriod(option.id)}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "10px",
+                  border: reportPeriod === option.id ? "2px solid #4a8bd4" : "2px solid #d0dbe8",
+                  background: reportPeriod === option.id ? "#e6f0f8" : "white",
+                  color: "#2c3e50",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <ReportPreview
+            title="Filtered Report Preview"
+            filterLabel={reportFilterLabel}
+            summary={reportSummary}
+            emptyMessage="No bookings match the selected weekly or monthly filter."
+          />
+
           <div style={{
             display: "grid",
             gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",

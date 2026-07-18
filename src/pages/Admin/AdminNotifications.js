@@ -4,6 +4,8 @@ import { auth, db } from "../../firebase";
 import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { formatTime12Hour } from "../../utils/timeFormatter";
+import { isNotificationUnread } from "../../hooks/useUnreadNotificationCount";
+import { getNotificationCardStyles, NotificationDot } from "../../components/NotificationBadge";
 
 function AdminNotifications() {
   const normalizeBoatName = (boatName) => (boatName || "").trim().toLowerCase();
@@ -97,6 +99,8 @@ function AdminNotifications() {
     }
   }, [adminData?.assignedBoat]);
 
+  const unreadCount = notifications.filter((notif) => isNotificationUnread(notif)).length;
+
   const markAsRead = async (notificationId) => {
     try {
       await updateDoc(doc(db, "notifications", notificationId), {
@@ -104,6 +108,12 @@ function AdminNotifications() {
       });
     } catch (error) {
       console.error("Error marking notification as read:", error);
+    }
+  };
+
+  const handleNotificationClick = (notif) => {
+    if (isNotificationUnread(notif)) {
+      markAsRead(notif.id);
     }
   };
 
@@ -256,8 +266,26 @@ function AdminNotifications() {
           color: "#1a1a1a",
           marginTop: "0",
           marginBottom: "0",
-          letterSpacing: "0.3px"
-        }}>Notifications</h2>
+          letterSpacing: "0.3px",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexWrap: "wrap"
+        }}>
+          Notifications
+          {unreadCount > 0 && (
+            <span style={{
+              fontSize: "0.75rem",
+              fontWeight: 700,
+              color: "#f44336",
+              background: "#ffebee",
+              padding: "4px 10px",
+              borderRadius: "999px",
+            }}>
+              {unreadCount} new
+            </span>
+          )}
+        </h2>
         <button
           onClick={() => setShowAnnounceForm(!showAnnounceForm)}
           style={{
@@ -428,79 +456,68 @@ function AdminNotifications() {
             <p style={{ fontSize: isMobile ? "0.85rem" : "1rem" }}>No notifications yet</p>
           </div>
         ) : (
-          notifications.map((notif) => (
+          notifications.map((notif) => {
+            const isUnread = isNotificationUnread(notif);
+            const cardStyles = getNotificationCardStyles(!isUnread, isMobile);
+
+            return (
             <div
               key={notif.id}
-              style={{
-                background: notif.isRead ? "white" : "#f0f7ff",
-                padding: isMobile ? "12px 15px" : "18px 20px",
-                borderRadius: "12px",
-                border: `1px solid ${notif.isRead ? "#e0e0e0" : "#2196f3"}`,
-                boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-                cursor: "pointer",
-                transition: "all 0.2s ease",
-                position: "relative"
-              }}
-              onClick={() => !notif.isRead && markAsRead(notif.id)}
+              style={cardStyles.card}
+              onClick={() => handleNotificationClick(notif)}
               onMouseEnter={(e) => {
-                e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
-                e.currentTarget.style.transform = "translateY(-2px)";
+                if (isUnread) {
+                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
+                e.currentTarget.style.boxShadow = isUnread ? "0 2px 8px rgba(0,0,0,0.06)" : "none";
                 e.currentTarget.style.transform = "translateY(0)";
               }}
             >
-              {!notif.isRead && (
-                <div style={{
-                  position: "absolute",
-                  top: "12px",
-                  right: "12px",
-                  width: "8px",
-                  height: "8px",
-                  borderRadius: "50%",
-                  background: "#2196f3"
-                }}/>
+              {isUnread && (
+                <NotificationDot
+                  size={10}
+                  style={{
+                    position: "absolute",
+                    top: "12px",
+                    right: "12px",
+                    boxShadow: "0 0 0 2px #ffffff",
+                  }}
+                />
               )}
               
-              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", opacity: isUnread ? 1 : 0.88 }}>
                 <div style={{
                   fontSize: "1.5rem",
                   minWidth: "30px",
                   textAlign: "center",
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center"
+                  justifyContent: "center",
+                  filter: isUnread ? "none" : "grayscale(1)",
+                  opacity: isUnread ? 1 : 0.65,
                 }}>
                   {getNotificationIcon(notif.type)}
                 </div>
                 
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <h4 style={{
-                    margin: "0 0 5px 0",
-                    fontSize: isMobile ? "0.9rem" : "1.05rem",
-                    fontWeight: 700,
-                    color: "#1a1a1a"
-                  }}>
+                  <h4 style={cardStyles.title}>
                     {notif.title}
                   </h4>
                   
-                  <p style={{
-                    margin: "0 0 8px 0",
-                    fontSize: isMobile ? "0.75rem" : "0.9rem",
-                    color: "#555",
-                    lineHeight: "1.4"
-                  }}>
+                  <p style={cardStyles.message}>
                     {notif.message}
                   </p>
 
                   {notif.tripDetails && (
                     <div style={{
-                      background: "rgba(0,0,0,0.03)",
+                      background: isUnread ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.02)",
                       padding: "10px 12px",
                       borderRadius: "8px",
                       fontSize: isMobile ? "0.7rem" : "0.85rem",
-                      color: "#666",
+                      color: isUnread ? "#666" : "#9e9e9e",
                       marginBottom: "8px",
                       border: "1px solid rgba(0,0,0,0.05)"
                     }}>
@@ -513,7 +530,7 @@ function AdminNotifications() {
                   {notif.type === "announcement" && typeof notif.audienceCount === "number" && (
                     <div style={{
                       fontSize: isMobile ? "0.72rem" : "0.84rem",
-                      color: "#2e7d32",
+                      color: isUnread ? "#2e7d32" : "#9e9e9e",
                       fontWeight: 600,
                       marginBottom: "8px"
                     }}>
@@ -521,16 +538,17 @@ function AdminNotifications() {
                     </div>
                   )}
 
-                  <div style={{
-                    fontSize: isMobile ? "0.7rem" : "0.8rem",
-                    color: "#999"
-                  }}>
+                  <div style={cardStyles.timestamp}>
                     {new Date(notif.createdAt).toLocaleString()}
+                    {!isUnread && (
+                      <span style={{ marginLeft: "8px", fontStyle: "italic" }}>· Viewed</span>
+                    )}
                   </div>
                 </div>
               </div>
             </div>
-          ))
+          );
+          })
         )}
       </div>
     </AdminLayout>
