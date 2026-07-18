@@ -6,6 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { useAuthReloadKey } from "../../hooks/useAuthUser";
+import { checkPaymentExpiry } from "../../utils/paymentExpiryCheck";
 
 function ManageBooking() {
   const navigate = useNavigate();
@@ -145,7 +146,41 @@ function ManageBooking() {
           });
         });
 
-        setPaymentStatuses(paymentMap);
+        await Promise.all(
+          Object.entries(paymentMap)
+            .filter(([, payment]) => payment.status === 'pending')
+            .map(([, payment]) => checkPaymentExpiry(payment.paymentId))
+        );
+
+        const refreshedPaymentSnapshots = await Promise.all(paymentQueries);
+        const refreshedPaymentMap = {};
+        refreshedPaymentSnapshots.forEach((snapshot) => {
+          snapshot.docs.forEach((paymentDoc) => {
+            const payment = paymentDoc.data();
+            if (payment.bookingId) {
+              refreshedPaymentMap[payment.bookingId] = {
+                paymentId: paymentDoc.id,
+                status: payment.status?.toLowerCase?.() || "",
+                proofOfPaymentBase64: payment.proofOfPaymentBase64 || null,
+              };
+            }
+          });
+        });
+        setPaymentStatuses(refreshedPaymentMap);
+
+        const refreshedBookingSnapshots = await Promise.all(bookingQueries);
+        refreshedBookingSnapshots.forEach((snapshot) => {
+          snapshot.docs.forEach((bookingDoc) => {
+            bookingMap.set(bookingDoc.id, formatBooking(bookingDoc));
+          });
+        });
+        setBookings(
+          Array.from(bookingMap.values()).sort((a, b) => {
+            const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+            const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+            return bTime - aTime;
+          })
+        );
       } catch (error) {
         console.error("Error fetching bookings:", error);
       } finally {

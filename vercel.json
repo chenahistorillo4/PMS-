@@ -24,7 +24,7 @@
     },
     {
       "path": "/api/cron/payment-expiry",
-      "schedule": "*/5 * * * *"
+      "schedule": "30 6 * * *"
     }
   ],
   "redirects": [

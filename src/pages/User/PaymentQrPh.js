@@ -9,6 +9,7 @@ import {
 } from '../../utils/paymongo';
 import { notifyPaymentSuccess } from '../../utils/notificationHelper';
 import { PAYMENT_PENDING_NOTICE, PAYMENT_QR_VALID_MINUTES } from '../../constants/paymentNotice';
+import { checkPaymentExpiry } from '../../utils/paymentExpiryCheck';
 
 function PaymentQrPh() {
   const [searchParams] = useSearchParams();
@@ -63,6 +64,16 @@ function PaymentQrPh() {
               bookingId: paymentData.bookingId,
               notifyAdmin: true,
             }).catch((error) => console.warn('Payment success notification failed:', error));
+          }
+        } else if (paymentData.status === 'failed') {
+          setStatus('error');
+          setMessage('This payment expired and the booking was cancelled. Please book again.');
+        } else {
+          await checkPaymentExpiry(paymentId);
+          const refreshedSnap = await getDoc(paymentRef);
+          if (refreshedSnap.exists() && refreshedSnap.data().status === 'failed') {
+            setStatus('error');
+            setMessage('This payment expired and the booking was cancelled. Please book again.');
           }
         }
 
@@ -125,6 +136,24 @@ function PaymentQrPh() {
             }).catch((error) => console.warn('Payment success notification failed:', error));
           }
           return;
+        }
+
+        if (paymentData.status === 'failed') {
+          setStatus('error');
+          setMessage('This payment expired and the booking was cancelled. Please book again.');
+          return;
+        }
+
+        await checkPaymentExpiry(paymentId);
+
+        const refreshedSnap = await getDoc(paymentRef);
+        if (refreshedSnap.exists()) {
+          const refreshedData = refreshedSnap.data();
+          if (refreshedData.status === 'failed') {
+            setStatus('error');
+            setMessage('This payment expired and the booking was cancelled. Please book again.');
+            return;
+          }
         }
 
         const result = await getPayMongoPaymentStatus(paymentIntentId);
