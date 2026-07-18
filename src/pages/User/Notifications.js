@@ -6,12 +6,15 @@ import { useNavigate } from "react-router-dom";
 import { notifyRefundRequest } from "../../utils/notificationHelper";
 import { isNotificationUnread } from "../../hooks/useUnreadNotificationCount";
 import { getNotificationCardStyles, NotificationDot } from "../../components/NotificationBadge";
+import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
 function UserNotifications() {
   const [notifications, setNotifications] = useState([]);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [processingAction, setProcessingAction] = useState({});
   const navigate = useNavigate();
+  const { user, authReady } = useAuthUser();
+  const reloadKey = useAuthReloadKey();
 
   useEffect(() => {
     const handleResize = () => {
@@ -23,10 +26,11 @@ function UserNotifications() {
 
   // Real-time listener for user notifications
   useEffect(() => {
-    const user = auth.currentUser;
+    if (!authReady) return;
+
     if (!user) {
       navigate("/login");
-      return;
+      return undefined;
     }
 
     const q = query(
@@ -41,13 +45,12 @@ function UserNotifications() {
         ...doc.data(),
         createdAt: doc.data().createdAt?.toDate?.() || new Date()
       }));
-      // Sort by date descending (latest first)
       notificationList.sort((a, b) => b.createdAt - a.createdAt);
       setNotifications(notificationList);
     });
 
     return () => unsubscribe();
-  }, [navigate]);
+  }, [authReady, user?.uid, reloadKey, navigate]);
 
   const markAsRead = async (notificationId) => {
     try {

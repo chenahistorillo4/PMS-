@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { auth, db } from "../../firebase";
+import { db } from "../../firebase";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import jsPDF from "jspdf";
@@ -16,6 +16,7 @@ import {
   getBookingAmount,
 } from "../../utils/reportHelpers";
 import ReportPreview from "../../components/ReportPreview";
+import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
 // Chart.js imports
 import { Bar } from "react-chartjs-2";
@@ -39,6 +40,8 @@ function AdminDashboard() {
   const [reportPeriod, setReportPeriod] = useState("");
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isTablet, setIsTablet] = useState(window.innerWidth <= 1024);
+  const { user, authReady } = useAuthUser();
+  const reloadKey = useAuthReloadKey();
 
   useEffect(() => {
     const handleResize = () => {
@@ -50,22 +53,34 @@ function AdminDashboard() {
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
+
     const fetchAdminData = async () => {
-      const user = auth.currentUser;
-      if (user) {
-        const docRef = doc(db, "admins", user.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setAdminData(docSnap.data());
-        }
+      if (!user) {
+        setAdminData(null);
+        setBookings([]);
+        return;
+      }
+
+      const docRef = doc(db, "admins", user.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setAdminData(docSnap.data());
+      } else {
+        setAdminData(null);
+        setBookings([]);
       }
     };
+
     fetchAdminData();
-  }, []);
+  }, [authReady, user?.uid, reloadKey]);
 
   useEffect(() => {
     const fetchBookings = async () => {
-      if (!adminData) return;
+      if (!adminData?.assignedBoat) {
+        setBookings([]);
+        return;
+      }
       const q = query(
         collection(db, "bookings"),
         where("boat", "==", adminData.assignedBoat)
@@ -85,7 +100,7 @@ function AdminDashboard() {
       setBookings(bookingsData);
     };
     fetchBookings();
-  }, [adminData]);
+  }, [adminData?.assignedBoat, reloadKey]);
 
   const metrics = useMemo(() => computeDashboardMetrics(bookings), [bookings]);
 

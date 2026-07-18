@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { auth, db } from '../../firebase';
+import { db } from '../../firebase';
 import {
   doc,
   getDoc,
@@ -14,6 +14,7 @@ import {
 import AdminLayout from './AdminLayout';
 import { QRCodeCanvas } from 'qrcode.react';
 import { notifyPaymentSuccess, notifyPassengerRefundStatus } from '../../utils/notificationHelper';
+import { useAuthReloadKey, useAuthUser } from '../../hooks/useAuthUser';
 
 function PaymentManagement() {
   const getEmptyAccountForm = () => ({
@@ -42,8 +43,8 @@ function PaymentManagement() {
   const [showHistoryView, setShowHistoryView] = useState(false);
   const [currentHistoryPage, setCurrentHistoryPage] = useState(1);
   const [isMobile, setIsMobile] = useState(false);
-
-  const user = auth.currentUser;
+  const { user, authReady } = useAuthUser();
+  const reloadKey = useAuthReloadKey();
 
   // Pagination logic
   const itemsPerPage = 10;
@@ -80,9 +81,18 @@ function PaymentManagement() {
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
+
     const fetchAdminData = async () => {
-      if (user) {
-        try {
+      if (!user) {
+        setAdminData(null);
+        setPayments([]);
+        setRefundRequests([]);
+        setPaymentAccounts([]);
+        return;
+      }
+
+      try {
           console.log('Current user:', user.uid);
 
           // Fetch admin data
@@ -138,16 +148,13 @@ function PaymentManagement() {
 
           console.log('Accounts data:', accounts);
           setPaymentAccounts(accounts);
-        } catch (error) {
-          console.error('Error fetching data:', error.code, error.message);
-          alert('Error loading payment accounts:\n' + error.message);
-        }
-      } else {
-        console.warn('⚠️ No user logged in');
+      } catch (error) {
+        console.error('Error fetching data:', error.code, error.message);
+        alert('Error loading payment accounts:\n' + error.message);
       }
     };
     fetchAdminData();
-  }, [user]);
+  }, [authReady, user?.uid, reloadKey]);
 
   const handleAddAccount = async (e) => {
     e.preventDefault();

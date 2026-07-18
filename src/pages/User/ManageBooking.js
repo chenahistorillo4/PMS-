@@ -5,9 +5,11 @@ import { collection, query, where, getDocs, doc, getDoc } from "firebase/firesto
 import { onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { formatTime12Hour } from "../../utils/timeFormatter";
+import { useAuthReloadKey } from "../../hooks/useAuthUser";
 
 function ManageBooking() {
   const navigate = useNavigate();
+  const reloadKey = useAuthReloadKey();
   const [bookings, setBookings] = useState([]);
   const [paymentStatuses, setPaymentStatuses] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -157,7 +159,7 @@ function ManageBooking() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [reloadKey]);
 
   const getBookingDisplayState = (booking, paymentInfo = {}) => {
     const bookingStatus = booking.status?.toLowerCase?.() || "";

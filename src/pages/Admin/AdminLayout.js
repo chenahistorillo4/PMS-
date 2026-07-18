@@ -1,9 +1,10 @@
 import { Link, useNavigate } from "react-router-dom";
-import { auth, db } from "../../firebase";
+import { db } from "../../firebase";
 import { useEffect, useState } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { useAdminUnreadNotificationCount } from "../../hooks/useUnreadNotificationCount";
 import { NavNotificationBadge } from "../../components/NotificationBadge";
+import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
 function AdminLayout({ children, active }) {
   const navigate = useNavigate();
@@ -11,6 +12,8 @@ function AdminLayout({ children, active }) {
   const [adminId, setAdminId] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
+  const { user, authReady } = useAuthUser();
+  const reloadKey = useAuthReloadKey();
   const unreadNotificationCount = useAdminUnreadNotificationCount(
     adminData?.assignedBoat,
     adminId
@@ -32,39 +35,34 @@ function AdminLayout({ children, active }) {
 
   // Fetch current admin info from Firestore
   useEffect(() => {
+    if (!authReady) return;
+
     const fetchAdminData = async () => {
-      const user = auth.currentUser;
-      if (user) {
-        setAdminId(user.uid);
-        try {
-          const docRef = doc(db, "admins", user.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            setAdminData(data);
-          } else {
-            console.error("Admin document not found");
-          }
-        } catch (error) {
-          console.error("Error fetching admin data:", error);
-        }
-      } else {
+      if (!user) {
         setAdminId(null);
+        setAdminData(null);
+        return;
+      }
+
+      setAdminId(user.uid);
+
+      try {
+        const docRef = doc(db, "admins", user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setAdminData(docSnap.data());
+        } else {
+          console.error("Admin document not found");
+          setAdminData(null);
+        }
+      } catch (error) {
+        console.error("Error fetching admin data:", error);
         setAdminData(null);
       }
     };
+
     fetchAdminData();
-
-    // Refetch admin data when page becomes visible (user returns to tab)
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        fetchAdminData();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, []);
+  }, [authReady, user?.uid, reloadKey]);
 
 
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { db, auth } from "../../firebase";
 import { doc, updateDoc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
+import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
 function DiscountManagement() {
   const [adminData, setAdminData] = useState(null);
@@ -14,21 +15,30 @@ function DiscountManagement() {
   const [showAddDiscountModal, setShowAddDiscountModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const initializedRef = useRef(false);
+  const { user, authReady } = useAuthUser();
+  const reloadKey = useAuthReloadKey();
 
   // Fetch admin data
   useEffect(() => {
+    if (!authReady) return;
+
     const fetchAdminData = async () => {
-      const user = auth.currentUser;
-      if (user) {
-        try {
-          const docRef = doc(db, "admins", user.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            setAdminData(docSnap.data());
-          }
-        } catch (error) {
-          console.error("Error fetching admin data:", error);
+      if (!user) {
+        setAdminData(null);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const docRef = doc(db, "admins", user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setAdminData(docSnap.data());
+        } else {
+          setAdminData(null);
         }
+      } catch (error) {
+        console.error("Error fetching admin data:", error);
       }
     };
     fetchAdminData();
@@ -39,7 +49,7 @@ function DiscountManagement() {
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [authReady, user?.uid, reloadKey]);
 
   // Fetch discount data for admin's assigned boat
   useEffect(() => {

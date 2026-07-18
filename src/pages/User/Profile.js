@@ -9,6 +9,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../../firebase";
 import "./Profile.css";
+import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
 function Profile() {
   const [profile, setProfile] = useState({
@@ -34,12 +35,13 @@ function Profile() {
 
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
+  const { user, authReady } = useAuthUser();
+  const reloadKey = useAuthReloadKey();
 
-  const fetchProfileData = async () => {
-    const user = auth.currentUser;
-    if (!user) return;
+  const fetchProfileData = async (currentUser = user) => {
+    if (!currentUser) return;
 
-    const docRef = doc(db, "users", user.uid);
+    const docRef = doc(db, "users", currentUser.uid);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       setProfile(docSnap.data());
@@ -54,7 +56,8 @@ function Profile() {
   }, []);
 
   useEffect(() => {
-    fetchProfileData();
+    if (!authReady) return;
+    fetchProfileData(user);
 
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 768);
@@ -62,7 +65,7 @@ function Profile() {
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [authReady, user?.uid, reloadKey]);
 
   const handleEditToggle = () => {
     setIsEditingProfile(true);

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { auth, db } from "../../firebase";
+import { db } from "../../firebase";
 import { doc, getDoc, collection, getDocs, query, where, updateDoc } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
+import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
 function BookingManagement() {
   const [bookings, setBookings] = useState([]);
@@ -11,6 +12,8 @@ function BookingManagement() {
   const [selectedSchedule, setSelectedSchedule] = useState("all");
   const [hasSearched, setHasSearched] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const { user, authReady } = useAuthUser();
+  const reloadKey = useAuthReloadKey();
 
   // Pagination logic
   const itemsPerPage = 10;
@@ -22,11 +25,17 @@ function BookingManagement() {
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
+
     const fetchData = async () => {
-      const user = auth.currentUser;
-      if (user) {
-        setLoading(true);
-        try {
+      if (!user) {
+        setBookings([]);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      try {
           // Fetch admin data
           const adminDocRef = doc(db, "admins", user.uid);
           const adminDocSnap = await getDoc(adminDocRef);
@@ -105,15 +114,16 @@ function BookingManagement() {
 
             // Check and update departed bookings
             updateDepartedBookings(bookingsList);
+          } else {
+            setBookings([]);
           }
-        } catch (error) {
-          console.error("Error fetching data:", error);
-        }
-        setLoading(false);
+      } catch (error) {
+        console.error("Error fetching data:", error);
       }
+      setLoading(false);
     };
     fetchData();
-  }, []);
+  }, [authReady, user?.uid, reloadKey]);
 
   // Auto-update bookings to "departed" if departure time has passed
   const updateDepartedBookings = async (bookingsList) => {
