@@ -8,7 +8,7 @@ module.exports = (_req, res) => {
     ok: true,
     mailConfigured: isMailConfigured(),
     smsConfigured: isSmsConfigured(),
-    hasSemaphoreKey: Boolean(process.env.SEMAPHORE_API_KEY),
-    senderName: process.env.SEMAPHORE_SENDER_NAME || 'DentalPal',
+    hasTextBeeKey: Boolean(process.env.TEXTBEE_API_KEY),
+    textBeeDeviceId: process.env.TEXTBEE_DEVICE_ID || null,
   });
 };

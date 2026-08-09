@@ -1,12 +1,12 @@
 const APP_URL = process.env.APP_URL || 'https://ferry-app-minsu.vercel.app';
-const SEMAPHORE_API_URL = 'https://api.semaphore.co/api/v4/messages';
+const TEXTBEE_API_URL = 'https://api.textbee.dev/api/v1/gateway/send-sms';
 
 function getSmsBrandName() {
   return (process.env.SMS_BRAND_NAME || process.env.GMAIL_FROM_NAME || 'PMS Port').trim();
 }
 
 function isSmsConfigured() {
-  return Boolean(process.env.SEMAPHORE_API_KEY);
+  return Boolean(process.env.TEXTBEE_API_KEY);
 }
 
 function normalizePhone(phone) {
@@ -34,11 +34,11 @@ function normalizePhone(phone) {
   return digits;
 }
 
-function formatSemaphoreNumber(phone) {
+function formatE164Number(phone) {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
 
-  return normalized.startsWith('63') ? normalized : `63${normalized}`;
+  return normalized.startsWith('+') ? normalized : `+${normalized}`;
 }
 
 async function sendSms({ to, text }) {
@@ -46,7 +46,7 @@ async function sendSms({ to, text }) {
     return { skipped: true, reason: 'sms_not_configured' };
   }
 
-  const recipients = (Array.isArray(to) ? to : [to]).map(formatSemaphoreNumber).filter(Boolean);
+  const recipients = (Array.isArray(to) ? to : [to]).map(formatE164Number).filter(Boolean);
 
   if (recipients.length === 0) {
     return { skipped: true, reason: 'missing_recipient' };
@@ -61,24 +61,22 @@ async function sendSms({ to, text }) {
     return { skipped: true, reason: 'message_starts_with_test' };
   }
 
-  const params = new URLSearchParams({
-    apikey: process.env.SEMAPHORE_API_KEY,
-    number: recipients.join(','),
+  const body = {
+    recipients,
     message: message.slice(0, 2048),
-  });
+  };
 
-  // Use registered sender ID. Defaults to DentalPal for this Semaphore account.
-  const senderName = (process.env.SEMAPHORE_SENDER_NAME || 'DentalPal').trim();
-  if (senderName) {
-    params.set('sendername', senderName);
+  if (process.env.TEXTBEE_DEVICE_ID) {
+    body.deviceId = process.env.TEXTBEE_DEVICE_ID;
   }
 
-  const response = await fetch(SEMAPHORE_API_URL, {
+  const response = await fetch(TEXTBEE_API_URL, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.TEXTBEE_API_KEY,
     },
-    body: params.toString(),
+    body: JSON.stringify(body),
   });
 
   const responseText = await response.text();
@@ -94,39 +92,24 @@ async function sendSms({ to, text }) {
     const errorMessage =
       typeof data === 'object' && data !== null
         ? data.message || data.error || JSON.stringify(data)
-        : responseText || `Semaphore SMS failed (${response.status})`;
+        : responseText || `TextBee SMS failed (${response.status})`;
     throw new Error(errorMessage);
-  }
-
-  const messages = Array.isArray(data) ? data : data ? [data] : [];
-  const failed = messages.filter((entry) => String(entry?.status || '').toLowerCase() === 'failed');
-
-  if (failed.length > 0) {
-    throw new Error(
-      failed
-        .map((entry) => `${entry.recipient || 'unknown'}: ${entry.message || 'Failed'}`)
-        .join('; ')
-    );
-  }
-
-  if (messages.length === 0) {
-    throw new Error(`Unexpected Semaphore response: ${responseText || 'empty response'}`);
   }
 
   return {
     sent: true,
     to: recipients,
-    response: messages,
+    response: data,
   };
 }
 
 function getDefaultAdminPhones(extra = []) {
   const configured = (process.env.ADMIN_NOTIFICATION_PHONES || '')
     .split(',')
-    .map((phone) => formatSemaphoreNumber(phone.trim()))
+    .map((phone) => formatE164Number(phone.trim()))
     .filter(Boolean);
 
-  const normalizedExtra = extra.map(formatSemaphoreNumber).filter(Boolean);
+  const normalizedExtra = extra.map(formatE164Number).filter(Boolean);
   return [...new Set([...configured, ...normalizedExtra])];
 }
 
@@ -207,7 +190,7 @@ async function dispatchSmsNotification({ type, to, adminPhones, payload = {} }) 
   const isAdminType = type.startsWith('admin_');
   const recipients = isAdminType
     ? getDefaultAdminPhones(adminPhones)
-    : [to].map(formatSemaphoreNumber).filter(Boolean);
+    : [to].map(formatE164Number).filter(Boolean);
 
   if (recipients.length === 0) {
     return { skipped: true, reason: 'missing_recipient' };

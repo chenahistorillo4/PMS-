@@ -8,7 +8,7 @@ module.exports = async (req, res) => {
   try {
     if (!isAnyChannelConfigured()) {
       return res.status(503).json({
-        error: 'Notifications are not configured. Set Gmail and/or Semaphore env vars.',
+        error: 'Notifications are not configured. Set Gmail and/or TextBee env vars.',
       });
     }
 
@@ -36,7 +36,7 @@ module.exports = async (req, res) => {
       hint:
         process.env.NODE_ENV !== 'production'
           ? 'Start the backend with npm run dev (not npm start alone).'
-          : 'Check Vercel env vars: SEMAPHORE_API_KEY, SEMAPHORE_SENDER_NAME.',
+          : 'Check Vercel env vars: TEXTBEE_API_KEY (and optional TEXTBEE_DEVICE_ID).',
     });
   }
 };
