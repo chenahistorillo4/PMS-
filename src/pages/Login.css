@@ -2,6 +2,67 @@
   min-height: 100vh;
 }
 
+.password-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input {
+  padding-right: 48px !important;
+  min-height: 52px;
+  border: 1px solid #a9b7d1;
+  border-radius: 10px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.password-input::-ms-reveal,
+.password-input::-ms-clear {
+  display: none;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #4b5563;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  cursor: pointer;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.password-toggle-btn:hover,
+.password-toggle-btn:focus,
+.password-toggle-btn:active {
+  background: transparent;
+  border: none;
+  color: #1f2937;
+  box-shadow: none;
+  outline: none;
+}
+
+.password-toggle-btn:focus-visible {
+  outline: 1px solid rgba(31, 41, 55, 0.2);
+  outline-offset: 2px;
+}
+
+.password-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
 .login-card {
   border: none;
   border-radius: 24px;
@@ -58,6 +119,22 @@
   .login-card .form-control,
   .login-card .btn {
     font-size: 0.85rem;
+  }
+
+  .password-input {
+    padding-right: 38px !important;
+    min-height: 48px;
+  }
+
+  .password-toggle-btn {
+    right: 8px;
+    width: 24px;
+    height: 24px;
+  }
+
+  .password-toggle-btn svg {
+    width: 20px;
+    height: 20px;
   }
 }
 

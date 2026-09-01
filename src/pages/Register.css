@@ -2,6 +2,42 @@
   min-height: 100vh;
 }
 
+.register-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.register-password-input {
+  padding-right: 48px !important;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+}
+
+.register-password-input::-ms-reveal,
+.register-password-input::-ms-clear {
+  display: none;
+}
+
+.register-password-input::-webkit-credentials-auto-fill-button,
+.register-password-input::-webkit-textfield-decoration-container {
+  position: absolute;
+  right: -9999px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.register-password-toggle-btn {
+  right: 12px;
+}
+
+.register-password-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
 .register-card {
   border: none;
   border-radius: 24px;
