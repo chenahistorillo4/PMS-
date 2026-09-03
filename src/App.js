@@ -1,7 +1,5 @@
-import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "./firebase";
+import { BrowserRouter as Router, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { useEffect } from "react";
 
 // Pages
 import Home from "./pages/Home";
@@ -30,7 +28,8 @@ import ManageAdmins from "./pages/SuperAdmin/ManageAdmins";
 import ManageQRScanners from "./pages/SuperAdmin/ManageQRScanners";
 import QRScanner from "./pages/scanner/QRScanner";
 import RoleRedirect from "./components/RoleRedirect";
-import { Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./hooks/AuthContext";
+import ProtectedRoute from "./hooks/ProtectedRoute";
 
 // Components
 import Navbar from "./components/Navbar";
@@ -52,15 +51,8 @@ const HIDDEN_NAVBAR_ROUTES = [
 ];
 
 function AppWrapper() {
-  const [user, setUser] = useState(null);
+  const { user } = useAuth();
   const location = useLocation();
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
-  }, []);
 
   useEffect(() => {
     const isHiddenNavbarRoute = HIDDEN_NAVBAR_ROUTES.includes(location.pathname);
@@ -82,38 +74,40 @@ function AppWrapper() {
         <Route path="/home" element={<Home user={user} />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
-        <Route path="/booking" element={<Booking />} />
-        <Route path="/booking-details" element={<BookingDetails />} />
-        <Route path="/payment-redirect" element={<PaymentRedirect />} />
-        <Route path="/payment-return" element={<PaymentReturn />} />
-        <Route path="/payment-qr" element={<PaymentQrPh />} />
+        <Route path="/booking" element={<ProtectedRoute requiredRole="user"><Booking /></ProtectedRoute>} />
+        <Route path="/booking-details" element={<ProtectedRoute requiredRole="user"><BookingDetails /></ProtectedRoute>} />
+        <Route path="/payment-redirect" element={<ProtectedRoute requiredRole="user"><PaymentRedirect /></ProtectedRoute>} />
+        <Route path="/payment-return" element={<ProtectedRoute requiredRole="user"><PaymentReturn /></ProtectedRoute>} />
+        <Route path="/payment-qr" element={<ProtectedRoute requiredRole="user"><PaymentQrPh /></ProtectedRoute>} />
         <Route path="/schedule" element={<Schedule />} />
-        <Route path="/manage" element={<ManageBooking />} />
-        <Route path="/manage-booking" element={<ManageBooking />} />
+        <Route path="/manage" element={<ProtectedRoute requiredRole="user"><ManageBooking /></ProtectedRoute>} />
+        <Route path="/manage-booking" element={<ProtectedRoute requiredRole="user"><ManageBooking /></ProtectedRoute>} />
         <Route path="/about" element={<About />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/notifications" element={<UserNotifications />} /> 
+        <Route path="/profile" element={<ProtectedRoute requiredRole="user"><Profile /></ProtectedRoute>} />
+        <Route path="/notifications" element={<ProtectedRoute requiredRole="user"><UserNotifications /></ProtectedRoute>} />
 
         {/* Role redirect route */}
         <Route path="/redirect" element={<RoleRedirect />} />
 
         {/* Admin routes */}
-        <Route path="/admin-dashboard" element={<AdminDashboard />} />
-        <Route path="/admin-profile" element={<AdminProfile />} />
-        <Route path="/booking-management" element={<BookingManagement />} />
-        <Route path="/schedule-management" element={<ScheduleManagement />} />
-        <Route path="/payment-management" element={<PaymentManagement />} />
-        <Route path="/discount-management" element={<DiscountManagement />} />
-        <Route path="/admin-notifications" element={<AdminNotifications />} />
+        <Route path="/admin-dashboard" element={<ProtectedRoute requiredRole="admin"><AdminDashboard /></ProtectedRoute>} />
+        <Route path="/admin-profile" element={<ProtectedRoute requiredRole="admin"><AdminProfile /></ProtectedRoute>} />
+        <Route path="/booking-management" element={<ProtectedRoute requiredRole="admin"><BookingManagement /></ProtectedRoute>} />
+        <Route path="/schedule-management" element={<ProtectedRoute requiredRole="admin"><ScheduleManagement /></ProtectedRoute>} />
+        <Route path="/payment-management" element={<ProtectedRoute requiredRole="admin"><PaymentManagement /></ProtectedRoute>} />
+        <Route path="/discount-management" element={<ProtectedRoute requiredRole="admin"><DiscountManagement /></ProtectedRoute>} />
+        <Route path="/admin-notifications" element={<ProtectedRoute requiredRole="admin"><AdminNotifications /></ProtectedRoute>} />
 
         {/* Superadmin routes */}
-        <Route path="/superadmin-dashboard" element={<SuperadminDashboard />} />
-        <Route path="/create-account" element={<CreateAccount />} />
-        <Route path="/manage-admins" element={<ManageAdmins />} />
-        <Route path="/manage-qr-scanners" element={<ManageQRScanners />} />
+        <Route path="/superadmin-dashboard" element={<ProtectedRoute requiredRole="superadmin"><SuperadminDashboard /></ProtectedRoute>} />
+        <Route path="/create-account" element={<ProtectedRoute requiredRole="superadmin"><CreateAccount /></ProtectedRoute>} />
+        <Route path="/manage-admins" element={<ProtectedRoute requiredRole="superadmin"><ManageAdmins /></ProtectedRoute>} />
+        <Route path="/manage-qr-scanners" element={<ProtectedRoute requiredRole="superadmin"><ManageQRScanners /></ProtectedRoute>} />
 
         {/* QR Scanner route */}
-        <Route path="/qr-scanner" element={<QRScanner user={user} />} />
+        <Route path="/qr-scanner" element={<ProtectedRoute requiredRole="scanner"><QRScanner user={user} /></ProtectedRoute>} />
+        <Route path="/unauthorized" element={<div className="text-center mt-5"><h1>Unauthorized</h1><p>You do not have permission to view this page.</p></div>} />
+        <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
     </>
   );
@@ -121,9 +115,11 @@ function AppWrapper() {
 
 function App() {
   return (
-    <Router>
-      <AppWrapper />
-    </Router>
+    <AuthProvider>
+      <Router>
+        <AppWrapper />
+      </Router>
+    </AuthProvider>
   );
 }
 
