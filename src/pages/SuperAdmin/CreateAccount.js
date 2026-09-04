@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { auth, db } from "../../firebase";
+import { accountCreationAuth, db } from "../../firebase";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc, collection, getDocs, addDoc } from "firebase/firestore";
+import { doc, setDoc, collection, getDocs } from "firebase/firestore";
 import SuperadminLayout from "./SuperadminLayout";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { ensureBoatExists } from "../../utils/boatHelpers";
 
 function CreateAccount() {
   const [searchParams] = useSearchParams();
@@ -76,7 +77,7 @@ function CreateAccount() {
 
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(accountCreationAuth, email, password);
       const uid = userCredential.user.uid;
 
       if (accountType === "admin") {
@@ -84,13 +85,12 @@ function CreateAccount() {
         let assignedBoat = boat;
         let assignedRoute = route;
 
-        const existingBoat = boats.find(b => b.name === boat);
-        if (!existingBoat && boat && route) {
-          await addDoc(collection(db, "boats"), {
-            name: boat,
-            route: route
-          });
-        }
+        await ensureBoatExists(
+          db,
+          boat,
+          route,
+          availableRoutes.split(",").map(r => r.trim()).filter(Boolean)
+        );
 
         await setDoc(doc(db, "admins", uid), {
           uid,
@@ -442,6 +442,12 @@ function CreateAccount() {
                       const selectedBoat = boats.find(b => b.name === value);
                       if (selectedBoat) {
                         setRoute(selectedBoat.route);
+                        const routes = Array.isArray(selectedBoat.availableRoutes)
+                          ? selectedBoat.availableRoutes
+                          : selectedBoat.route ? [selectedBoat.route] : [];
+                        setAvailableRoutes(routes.join(", "));
+                      } else {
+                        setAvailableRoutes("");
                       }
                     }}
                     list="boat-suggestions"

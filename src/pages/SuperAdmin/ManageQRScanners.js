@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { db, auth } from "../../firebase";
+import { db, accountCreationAuth } from "../../firebase";
 import { collection, getDocs, deleteDoc, doc, updateDoc, setDoc } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import SuperadminLayout from "./SuperadminLayout";
@@ -107,7 +107,7 @@ function ManageQRScanners() {
 
     setIsCreating(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, newScannerData.email, newScannerData.password);
+      const userCredential = await createUserWithEmailAndPassword(accountCreationAuth, newScannerData.email, newScannerData.password);
       const uid = userCredential.user.uid;
 
       await setDoc(doc(db, "qr_scanners", uid), {
