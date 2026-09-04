@@ -5,6 +5,7 @@ import SuperadminLayout from "./SuperadminLayout";
 import jsPDF from "jspdf";
 import {
   filterBookingsByPeriod,
+  getBookingRouteLabel,
   getPeriodRange,
   summarizeBookings,
 } from "../../utils/reportHelpers";
@@ -25,6 +26,7 @@ function SuperadminDashboard() {
   const [bookings, setBookings] = useState([]);
   const [boats, setBoats] = useState([]);
   const [overviewPeriod, setOverviewPeriod] = useState("weekly");
+  const [overviewBoatRoutes, setOverviewBoatRoutes] = useState({});
   const [reportPeriod, setReportPeriod] = useState("weekly");
 
   useEffect(() => {
@@ -111,9 +113,17 @@ function SuperadminDashboard() {
     () => filterBookingsByPeriod(bookings, overviewPeriod),
     [bookings, overviewPeriod]
   );
+  const overviewFilteredBookings = useMemo(
+    () => overviewBookings.filter((booking) => {
+      const boatName = booking.boat || "Unassigned boat";
+      const selectedRoute = overviewBoatRoutes[boatName] || "all";
+      return selectedRoute === "all" || getBookingRouteLabel(booking) === selectedRoute;
+    }),
+    [overviewBookings, overviewBoatRoutes]
+  );
   const overviewSummary = useMemo(
-    () => summarizeBookings(overviewBookings),
-    [overviewBookings]
+    () => summarizeBookings(overviewFilteredBookings),
+    [overviewFilteredBookings]
   );
   const overviewBoatReports = useMemo(() => {
     const grouped = new Map();
@@ -122,6 +132,8 @@ function SuperadminDashboard() {
     });
     overviewBookings.forEach((booking) => {
       const boatName = booking.boat || "Unassigned boat";
+      const selectedRoute = overviewBoatRoutes[boatName] || "all";
+      if (selectedRoute !== "all" && getBookingRouteLabel(booking) !== selectedRoute) return;
       if (!grouped.has(boatName)) grouped.set(boatName, []);
       grouped.get(boatName).push(booking);
     });
@@ -129,7 +141,17 @@ function SuperadminDashboard() {
       name,
       summary: summarizeBookings(boatBookings),
     }));
-  }, [boats, overviewBookings]);
+  }, [boats, overviewBookings, overviewBoatRoutes]);
+  const overviewRoutesByBoat = useMemo(() => {
+    const routeMap = new Map();
+    boats.forEach((boat) => {
+      routeMap.set(boat.name, new Set(Array.isArray(boat.availableRoutes) ? boat.availableRoutes : [boat.route]));
+    });
+    return new Map([...routeMap.entries()].map(([name, routes]) => [
+      name,
+      [...routes].filter((route) => route && route !== "N/A").sort(),
+    ]));
+  }, [boats, bookings]);
   const getReportSummary = () => reportSummary;
 
   // Export report as JSON
@@ -216,14 +238,10 @@ function SuperadminDashboard() {
       yPosition += 12;
 
       // Account Statistics
-      pdf.setFontSize(12);
-      pdf.setTextColor(74, 139, 212);
       pdf.setFont(undefined, "bold");
       pdf.text("Account Statistics", marginLeft, yPosition);
       yPosition += 8;
 
-      pdf.setFontSize(10);
-      pdf.setTextColor(51, 51, 51);
       pdf.setFont(undefined, "normal");
       pdf.text("Admin Accounts: " + stats.totalAdmins, marginLeft, yPosition);
       yPosition += 6;
@@ -610,7 +628,23 @@ function SuperadminDashboard() {
               {overviewBoatReports.map((boatReport) => {
                 return (
                   <div key={boatReport.name} style={{ border: "1px solid #dbe6f1", borderRadius: "10px", padding: "14px" }}>
-                    <h3 style={{ margin: "0 0 12px", color: "#182b49", fontSize: "1rem" }}>{boatReport.name}</h3>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                      <h3 style={{ margin: 0, color: "#182b49", fontSize: "1rem" }}>{boatReport.name}</h3>
+                      <select
+                        value={overviewBoatRoutes[boatReport.name] || "all"}
+                        onChange={(event) => setOverviewBoatRoutes((current) => ({
+                          ...current,
+                          [boatReport.name]: event.target.value,
+                        }))}
+                        aria-label={`Route for ${boatReport.name}`}
+                        style={{ maxWidth: "145px", padding: "7px 9px", border: "1px solid #ccd8e5", borderRadius: "7px", color: "#38516d", fontSize: "0.75rem", fontWeight: 700 }}
+                      >
+                        <option value="all">All routes</option>
+                        {(overviewRoutesByBoat.get(boatReport.name) || []).map((route) => (
+                          <option key={route} value={route}>{route}</option>
+                        ))}
+                      </select>
+                    </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                       <div style={{ padding: "10px", background: "#e6f0f8", borderRadius: "8px" }}><strong style={{ display: "block", color: "#2f78bd", fontSize: "1.2rem" }}>{boatReport.summary.totalBookings}</strong><span style={{ color: "#667085", fontSize: "0.75rem" }}>Bookings</span></div>
                       <div style={{ padding: "10px", background: "#fff3e0", borderRadius: "8px" }}><strong style={{ display: "block", color: "#c8781e", fontSize: "1.05rem" }}>₱{Number(boatReport.summary.totalRevenue).toLocaleString("en-PH", { maximumFractionDigits: 0 })}</strong><span style={{ color: "#667085", fontSize: "0.75rem" }}>Revenue</span></div>

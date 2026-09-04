@@ -95,7 +95,11 @@
 .reports-export-actions {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: row;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-left: 14px;
+  border-left: 1px solid #dbe6f1;
 }
 
 .reports-period-button,
@@ -106,6 +110,7 @@
   font-size: 0.84rem;
   font-weight: 750;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .reports-period-button {
@@ -247,6 +252,17 @@
   font-weight: 800;
 }
 
+.boat-route-select {
+  max-width: 150px;
+  padding: 7px 26px 7px 9px;
+  color: #38516d;
+  background: #fff;
+  border: 1px solid #ccd8e5;
+  border-radius: 7px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
 .analytics-legend {
   display: flex;
   gap: 16px;
@@ -358,6 +374,10 @@
   font-size: 0.8rem;
 }
 
+.boat-aggregate-stats .boat-route-select {
+  align-self: center;
+}
+
 .boat-aggregate-stats strong {
   display: block;
   color: #182b49;
@@ -392,6 +412,12 @@
 
   .reports-export-actions {
     width: 100%;
+    flex-direction: row;
+    margin-left: 0;
+    padding-left: 0;
+    padding-top: 10px;
+    border-left: 0;
+    border-top: 1px solid #dbe6f1;
   }
 
   .reports-export-actions button {

@@ -9,6 +9,7 @@ import {
   filterBookingsByPeriod,
   getBookingCreatedAt,
   getBookingTripDate,
+  getBookingRouteLabel,
   summarizeBookings,
 } from "../../utils/reportHelpers";
 
@@ -16,6 +17,8 @@ function ReportsAnalytics() {
   const [boats, setBoats] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [reportPeriod, setReportPeriod] = useState("weekly");
+  const [reportRoute, setReportRoute] = useState("all");
+  const [boatRouteSelections, setBoatRouteSelections] = useState({});
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -47,9 +50,21 @@ function ReportsAnalytics() {
     fetchReportData();
   }, []);
 
+  const searchedBoatNames = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    if (!normalizedSearch) return [];
+    return boats
+      .filter((boat) => boat.name?.toLowerCase().includes(normalizedSearch))
+      .map((boat) => boat.name);
+  }, [boats, searchTerm]);
+
   const filteredBookings = useMemo(
-    () => filterBookingsByPeriod(bookings, reportPeriod),
-    [bookings, reportPeriod]
+    () => filterBookingsByPeriod(bookings, reportPeriod).filter((booking) => {
+      if (reportRoute === "all" || searchedBoatNames.length === 0) return true;
+      const boatName = booking.boat || "Unassigned boat";
+      return !searchedBoatNames.includes(boatName) || getBookingRouteLabel(booking) === reportRoute;
+    }),
+    [bookings, reportPeriod, reportRoute, searchedBoatNames]
   );
 
   const boatReports = useMemo(() => {
@@ -63,6 +78,10 @@ function ReportsAnalytics() {
 
     filteredBookings.forEach((booking) => {
       const boatName = booking.boat || "Unassigned boat";
+      const selectedRoute = boatRouteSelections[boatName] || "all";
+      if (selectedRoute !== "all" && getBookingRouteLabel(booking) !== selectedRoute) {
+        return;
+      }
       if (!reportsByBoat.has(boatName)) {
         reportsByBoat.set(boatName, []);
       }
@@ -76,7 +95,7 @@ function ReportsAnalytics() {
         bookings: boatBookings,
         summary: summarizeBookings(boatBookings),
       }));
-  }, [boats, filteredBookings]);
+  }, [boats, filteredBookings, boatRouteSelections]);
 
   const totalSummary = useMemo(
     () => summarizeBookings(filteredBookings),
@@ -87,6 +106,26 @@ function ReportsAnalytics() {
     if (!normalizedSearch) return boatReports;
     return boatReports.filter((boatReport) => boatReport.name.toLowerCase().includes(normalizedSearch));
   }, [boatReports, searchTerm]);
+  const boatRoutes = useMemo(() => {
+    const routesByBoat = new Map();
+    boats.forEach((boat) => {
+      routesByBoat.set(boat.name, new Set(Array.isArray(boat.availableRoutes) ? boat.availableRoutes : [boat.route]));
+    });
+    return new Map([...routesByBoat.entries()].map(([boatName, routes]) => [
+      boatName,
+      [...routes].filter((route) => route && route !== "N/A").sort(),
+    ]));
+  }, [boats]);
+  const searchedBoatRoutes = useMemo(() => {
+    if (searchedBoatNames.length === 0) return [];
+    return [...new Set(searchedBoatNames.flatMap((boatName) => boatRoutes.get(boatName) || []))].sort();
+  }, [boatRoutes, searchedBoatNames]);
+
+  useEffect(() => {
+    if (reportRoute !== "all" && !searchedBoatRoutes.includes(reportRoute)) {
+      setReportRoute("all");
+    }
+  }, [reportRoute, searchedBoatRoutes]);
   const dailyBoatReports = useMemo(() => {
     const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     const currentDate = new Date();
@@ -110,7 +149,12 @@ function ReportsAnalytics() {
       }
     });
 
-    bookings.forEach((booking) => {
+    const routeBookings = bookings.filter((booking) => {
+      const boatName = booking.boat || "Unassigned boat";
+      const selectedRoute = boatRouteSelections[boatName] || "all";
+      return selectedRoute === "all" || getBookingRouteLabel(booking) === selectedRoute;
+    });
+    routeBookings.forEach((booking) => {
       const bookingDates = [getBookingCreatedAt(booking), getBookingTripDate(booking)].filter(Boolean);
       const dayIndex = weekDays.findIndex(({ start, end }) =>
         bookingDates.some((date) => date >= start && date <= end)
@@ -132,7 +176,7 @@ function ReportsAnalytics() {
           summary: summarizeBookings(dayBookings),
         })),
       }));
-  }, [boats, bookings]);
+  }, [boats, bookings, boatRouteSelections]);
   const visibleDailyBoatReports = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     if (!normalizedSearch) return dailyBoatReports;
@@ -191,8 +235,20 @@ function ReportsAnalytics() {
   const printReports = () => {
     const printWindow = window.open("", "", "height=700,width=1000");
     if (!printWindow) return;
-    const sections = visibleBoatReports.map(({ name, summary }) => `<section><h2>${name}</h2><p>${summary.totalBookings} bookings | ${summary.completedBookings} confirmed | PHP ${Number(summary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p></section>`).join("");
-    printWindow.document.write(`<html><head><title>Boat Reports</title><style>body{font-family:Arial;margin:32px;color:#333}h1{color:#4a8bd4;border-bottom:2px solid #4a8bd4;padding-bottom:8px}h2{color:#315d8f;border-bottom:1px solid #ddd;padding-bottom:6px}section{page-break-inside:avoid;margin-top:20px}.meta{color:#666}</style></head><body><h1>Boat Reports</h1><p class="meta">${filterLabel} | ${searchTerm || "All boats"}</p><p><strong>Overall:</strong> ${totalSummary.totalBookings} bookings | PHP ${Number(totalSummary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>${sections}</body></html>`);
+    const sections = visibleBoatReports.map(({ name }) => {
+      const selectedRoute = boatRouteSelections[name] || "all";
+      const routes = selectedRoute === "all" ? (boatRoutes.get(name) || ["All routes"]) : [selectedRoute];
+      const routeSections = routes.map((route) => {
+        const routeBookings = filteredBookings.filter((booking) =>
+          (booking.boat || "Unassigned boat") === name &&
+          (route === "All routes" || getBookingRouteLabel(booking) === route)
+        );
+        const summary = summarizeBookings(routeBookings);
+        return `<div class="route-section"><h3>${route}</h3><p>${summary.totalBookings} bookings | ${summary.completedBookings} confirmed | ${summary.pendingBookings} pending | PHP ${Number(summary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p></div>`;
+      }).join("");
+      return `<section><h2>${name}</h2>${routeSections}</section>`;
+    }).join("");
+    printWindow.document.write(`<html><head><title>Boat Reports</title><style>body{font-family:Arial;margin:32px;color:#333}h1{color:#4a8bd4;border-bottom:2px solid #4a8bd4;padding-bottom:8px}h2{color:#315d8f;border-bottom:1px solid #ddd;padding-bottom:6px}h3{color:#666;margin-bottom:4px}.route-section{padding:8px 12px;margin:8px 0;background:#f5f9fd;border-left:3px solid #e4a454}section{page-break-inside:avoid;margin-top:20px}.meta{color:#666}</style></head><body><h1>Boat Reports</h1><p class="meta">${filterLabel} | ${searchTerm || "All boats"} | ${reportRoute === "all" ? "All routes" : reportRoute}</p><p><strong>Overall:</strong> ${totalSummary.totalBookings} bookings | PHP ${Number(totalSummary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>${sections}</body></html>`);
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
@@ -223,6 +279,13 @@ function ReportsAnalytics() {
               <option value="today">Today</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          <label className="reports-period-choice">
+            <span>Route</span>
+            <select value={reportRoute} onChange={(event) => setReportRoute(event.target.value)}>
+              <option value="all">All routes</option>
+              {searchedBoatRoutes.map((route) => <option key={route} value={route}>{route}</option>)}
             </select>
           </label>
           <div className="reports-export-actions">
@@ -267,7 +330,22 @@ function ReportsAnalytics() {
                     <p className="reports-eyebrow">Monday to Sunday</p>
                     <h2>{boatReport.name}</h2>
                   </div>
-                  <span className="analytics-card-icon">₱</span>
+                  <div>
+                    <select
+                      value={boatRouteSelections[boatReport.name] || "all"}
+                      onChange={(event) => setBoatRouteSelections((current) => ({
+                        ...current,
+                        [boatReport.name]: event.target.value,
+                      }))}
+                      aria-label={`Route for ${boatReport.name}`}
+                      className="boat-route-select"
+                    >
+                      <option value="all">All routes</option>
+                      {(boatRoutes.get(boatReport.name) || []).map((route) => (
+                        <option key={route} value={route}>{route}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
                 <div className="analytics-legend">
                   <span><i className="legend-swatch bookings" />Bookings</span>
@@ -310,6 +388,20 @@ function ReportsAnalytics() {
               <span>{filterLabel}</span>
             </div>
             <div className="boat-aggregate-stats">
+              <select
+                value={boatRouteSelections[boatReport.name] || "all"}
+                onChange={(event) => setBoatRouteSelections((current) => ({
+                  ...current,
+                  [boatReport.name]: event.target.value,
+                }))}
+                aria-label={`Route summary for ${boatReport.name}`}
+                className="boat-route-select"
+              >
+                <option value="all">All routes</option>
+                {(boatRoutes.get(boatReport.name) || []).map((route) => (
+                  <option key={route} value={route}>{route}</option>
+                ))}
+              </select>
               <span><strong>{boatReport.summary.totalBookings}</strong> bookings</span>
               <span><strong>{boatReport.summary.completedBookings}</strong> confirmed</span>
               <span><strong>₱{boatReport.summary.totalRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</strong> revenue</span>
