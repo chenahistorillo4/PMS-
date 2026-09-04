@@ -234,6 +234,37 @@ function SuperadminLayout({ children }) {
               Manage Admins
             </NavLink>
             <NavLink
+              to="/superadmin-reports"
+              onClick={handleNavClick}
+              style={({ isActive }) => ({
+                padding: "14px 16px",
+                borderRadius: "8px",
+                textDecoration: "none",
+                color: isActive ? "white" : "rgba(255,255,255,0.85)",
+                backgroundColor: isActive ? "rgba(255,255,255,0.2)" : "transparent",
+                borderLeft: isActive ? "3px solid white" : "3px solid transparent",
+                fontWeight: isActive ? "700" : "600",
+                fontSize: "0.95rem",
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                display: "block",
+                position: "relative"
+              })}
+              onMouseEnter={(e) => {
+                if (!e.currentTarget.style.backgroundColor.includes("0.2")) {
+                  e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.1)";
+                }
+                e.currentTarget.style.transform = "translateX(4px)";
+              }}
+              onMouseLeave={(e) => {
+                if (!e.currentTarget.style.backgroundColor.includes("0.2")) {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }
+                e.currentTarget.style.transform = "translateX(0)";
+              }}
+            >
+              Reports & Analytics
+            </NavLink>
+            <NavLink
               to="/manage-qr-scanners"
               onClick={handleNavClick}
               style={({ isActive }) => ({

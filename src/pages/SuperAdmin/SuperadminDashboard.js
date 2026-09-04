@@ -7,12 +7,10 @@ import {
   filterBookingsByPeriod,
   getPeriodRange,
   summarizeBookings,
-  buildReportFilterLabel,
 } from "../../utils/reportHelpers";
-import ReportPreview from "../../components/ReportPreview";
 
 function SuperadminDashboard() {
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState({  
     totalAdmins: 0,
     totalScanners: 0,
     totalBoats: 0
@@ -25,6 +23,8 @@ function SuperadminDashboard() {
   const [detailedData, setDetailedData] = useState([]);
   const [detailedLoading, setDetailedLoading] = useState(false);
   const [bookings, setBookings] = useState([]);
+  const [boats, setBoats] = useState([]);
+  const [overviewPeriod, setOverviewPeriod] = useState("weekly");
   const [reportPeriod, setReportPeriod] = useState("weekly");
 
   useEffect(() => {
@@ -53,6 +53,10 @@ function SuperadminDashboard() {
             return normalized;
           })
         );
+        setBoats(boatsSnapshot.docs.map((boatDoc) => ({
+          id: boatDoc.id,
+          ...boatDoc.data(),
+        })));
 
         setStats({
           totalAdmins: adminsSnapshot.size,
@@ -103,11 +107,29 @@ function SuperadminDashboard() {
     () => summarizeBookings(filteredReportBookings),
     [filteredReportBookings]
   );
-  const reportFilterLabel = useMemo(
-    () => buildReportFilterLabel({ reportPeriod: reportPeriod || "weekly" }),
-    [reportPeriod]
+  const overviewBookings = useMemo(
+    () => filterBookingsByPeriod(bookings, overviewPeriod),
+    [bookings, overviewPeriod]
   );
-
+  const overviewSummary = useMemo(
+    () => summarizeBookings(overviewBookings),
+    [overviewBookings]
+  );
+  const overviewBoatReports = useMemo(() => {
+    const grouped = new Map();
+    boats.forEach((boat) => {
+      if (boat.name) grouped.set(boat.name, []);
+    });
+    overviewBookings.forEach((booking) => {
+      const boatName = booking.boat || "Unassigned boat";
+      if (!grouped.has(boatName)) grouped.set(boatName, []);
+      grouped.get(boatName).push(booking);
+    });
+    return [...grouped.entries()].sort(([first], [second]) => first.localeCompare(second)).map(([name, boatBookings]) => ({
+      name,
+      summary: summarizeBookings(boatBookings),
+    }));
+  }, [boats, overviewBookings]);
   const getReportSummary = () => reportSummary;
 
   // Export report as JSON
@@ -343,6 +365,11 @@ function SuperadminDashboard() {
     printWindow.print();
   };
 
+  void setReportPeriod;
+  void exportAsJSON;
+  void saveAsPDF;
+  void printReport;
+
   const StatCard = ({ title, count, bgColor, onClick }) => (
     <div style={{
       backgroundColor: "white",
@@ -539,147 +566,60 @@ function SuperadminDashboard() {
           </div>
         </div>
 
-        {/* Reports & Export Section */}
+        {/* Per-boat weekly comparison */}
         <div style={{
           backgroundColor: "white",
           borderRadius: "12px",
-          padding: isMobile ? "16px" : "32px",
+          padding: isMobile ? "16px" : "28px",
           boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
           marginBottom: isMobile ? "25px" : "40px"
         }}>
-          <h2 style={{
-            fontSize: isMobile ? "0.95rem" : "1.3rem",
-            fontWeight: "900",
-            color: "#1a1a1a",
-            margin: "0 0 16px 0",
-            letterSpacing: "-0.3px"
-          }}>
-            Reports & Export
-          </h2>
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
-            {[
-              { id: "weekly", label: "Weekly report" },
-              { id: "monthly", label: "Monthly report" },
-            ].map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => setReportPeriod(option.id)}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: "10px",
-                  border: reportPeriod === option.id ? "2px solid #4a8bd4" : "2px solid #d0dbe8",
-                  background: reportPeriod === option.id ? "#e6f0f8" : "white",
-                  color: "#2c3e50",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "12px", flexWrap: "wrap", marginBottom: "18px" }}>
+            <div>
+              <h2 style={{ fontSize: isMobile ? "1rem" : "1.3rem", fontWeight: "900", color: "#1a1a1a", margin: 0 }}>
+                Boat Comparison
+              </h2>
+              <p style={{ color: "#667085", fontSize: "0.82rem", margin: "5px 0 0" }}>Compare bookings and revenue by period</p>
+            </div>
+            <select
+              value={overviewPeriod}
+              onChange={(event) => setOverviewPeriod(event.target.value)}
+              aria-label="Overview report period"
+              style={{ padding: "9px 12px", border: "1px solid #ccd8e5", borderRadius: "8px", color: "#38516d", fontWeight: 700 }}
+            >
+              <option value="today">Today</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+            <div style={{ display: "flex", gap: "14px", color: "#667085", fontSize: "0.78rem" }}>
+              <span><i style={{ display: "inline-block", width: "9px", height: "9px", background: "#2f78bd", borderRadius: "3px", marginRight: "5px" }} />Bookings</span>
+              <span><i style={{ display: "inline-block", width: "9px", height: "9px", background: "#e4a454", borderRadius: "3px", marginRight: "5px" }} />Revenue</span>
+            </div>
           </div>
-
-          <ReportPreview
-            title="Filtered Report Preview"
-            filterLabel={reportFilterLabel}
-            summary={reportSummary}
-            emptyMessage="No bookings match the selected weekly or monthly filter."
-          />
-
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",
-            gap: isMobile ? "10px" : "16px"
-          }}>
-            <button
-              onClick={printReport}
-              style={{
-                padding: isMobile ? "12px 10px" : "24px",
-                backgroundColor: "#e6f0f8",
-                border: "2px solid #4a8bd4",
-                borderRadius: "12px",
-                textDecoration: "none",
-                color: "#4a8bd4",
-                fontWeight: "600",
-                cursor: "pointer",
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                textAlign: "center",
-                fontSize: isMobile ? "0.75rem" : "1rem"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#4a8bd4";
-                e.currentTarget.style.color = "white";
-                e.currentTarget.style.boxShadow = "0 8px 16px rgba(74, 139, 212, 0.2)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "#e6f0f8";
-                e.currentTarget.style.color = "#4a8bd4";
-                e.currentTarget.style.boxShadow = "none";
-              }}
-            >
-              <div style={{ fontSize: isMobile ? "0.85rem" : "1.1rem", fontWeight: "700" }}>Print Report</div>
-              <div style={{ fontSize: isMobile ? "0.6rem" : "0.85rem", opacity: "0.8", marginTop: "2px" }}>Open print dialog</div>
-            </button>
-
-            <button
-              onClick={exportAsJSON}
-              style={{
-                padding: isMobile ? "12px 10px" : "24px",
-                backgroundColor: "#f1f8f4",
-                border: "2px solid #43a047",
-                borderRadius: "12px",
-                color: "#43a047",
-                fontWeight: "600",
-                cursor: "pointer",
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                textAlign: "center",
-                fontSize: isMobile ? "0.75rem" : "1rem"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#43a047";
-                e.currentTarget.style.color = "white";
-                e.currentTarget.style.boxShadow = "0 8px 16px rgba(67, 160, 71, 0.2)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "#f1f8f4";
-                e.currentTarget.style.color = "#43a047";
-                e.currentTarget.style.boxShadow = "none";
-              }}
-            >
-              <div style={{ fontSize: isMobile ? "0.85rem" : "1.1rem", fontWeight: "700" }}>Download JSON</div>
-              <div style={{ fontSize: isMobile ? "0.6rem" : "0.85rem", opacity: "0.8", marginTop: "2px" }}>Export as JSON data</div>
-            </button>
-
-            <button
-              onClick={saveAsPDF}
-              style={{
-                padding: isMobile ? "12px 10px" : "24px",
-                backgroundColor: "#fff3e0",
-                border: "2px solid #fb8c00",
-                borderRadius: "12px",
-                color: "#fb8c00",
-                fontWeight: "600",
-                cursor: "pointer",
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                textAlign: "center",
-                fontSize: isMobile ? "0.75rem" : "1rem"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#fb8c00";
-                e.currentTarget.style.color = "white";
-                e.currentTarget.style.boxShadow = "0 8px 16px rgba(251, 140, 0, 0.2)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "#fff3e0";
-                e.currentTarget.style.color = "#fb8c00";
-                e.currentTarget.style.boxShadow = "none";
-              }}
-            >
-              <div style={{ fontSize: isMobile ? "0.95rem" : "1.1rem", fontWeight: "700" }}>Save as PDF</div>
-              <div style={{ fontSize: isMobile ? "0.7rem" : "0.85rem", opacity: "0.8", marginTop: "4px" }}>Download PDF file</div>
-            </button>
-          </div>
+          {overviewBoatReports.length === 0 ? (
+            <div style={{ padding: "22px", textAlign: "center", color: "#667085", background: "#f8fbff", borderRadius: "8px" }}>No boat data available.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: "14px" }}>
+              <div style={{ gridColumn: "1 / -1", padding: "14px", background: "#eaf4fb", border: "1px solid #4a8bd4", borderRadius: "10px" }}>
+                <strong style={{ color: "#24588f" }}>All Boats Total</strong>
+                <div style={{ display: "flex", gap: "24px", flexWrap: "wrap", marginTop: "8px", color: "#182b49" }}>
+                  <span><strong>{overviewSummary.totalBookings}</strong> bookings</span>
+                  <span><strong>₱{Number(overviewSummary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</strong> revenue</span>
+                </div>
+              </div>
+              {overviewBoatReports.map((boatReport) => {
+                return (
+                  <div key={boatReport.name} style={{ border: "1px solid #dbe6f1", borderRadius: "10px", padding: "14px" }}>
+                    <h3 style={{ margin: "0 0 12px", color: "#182b49", fontSize: "1rem" }}>{boatReport.name}</h3>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                      <div style={{ padding: "10px", background: "#e6f0f8", borderRadius: "8px" }}><strong style={{ display: "block", color: "#2f78bd", fontSize: "1.2rem" }}>{boatReport.summary.totalBookings}</strong><span style={{ color: "#667085", fontSize: "0.75rem" }}>Bookings</span></div>
+                      <div style={{ padding: "10px", background: "#fff3e0", borderRadius: "8px" }}><strong style={{ display: "block", color: "#c8781e", fontSize: "1.05rem" }}>₱{Number(boatReport.summary.totalRevenue).toLocaleString("en-PH", { maximumFractionDigits: 0 })}</strong><span style={{ color: "#667085", fontSize: "0.75rem" }}>Revenue</span></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Detailed Data Modal */}

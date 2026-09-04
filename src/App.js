@@ -23,6 +23,7 @@ import PaymentManagement from "./pages/Admin/PaymentManagement";
 import DiscountManagement from "./pages/Admin/DiscountManagement";
 import AdminNotifications from "./pages/Admin/AdminNotifications";
 import SuperadminDashboard from "./pages/SuperAdmin/SuperadminDashboard";
+import ReportsAnalytics from "./pages/SuperAdmin/ReportsAnalytics";
 import CreateAccount from "./pages/SuperAdmin/CreateAccount";
 import ManageAdmins from "./pages/SuperAdmin/ManageAdmins";
 import ManageQRScanners from "./pages/SuperAdmin/ManageQRScanners";
@@ -44,6 +45,7 @@ const HIDDEN_NAVBAR_ROUTES = [
   "/discount-management",
   "/admin-notifications",
   "/superadmin-dashboard",
+  "/superadmin-reports",
   "/create-account",
   "/manage-admins",
   "/manage-qr-scanners",
@@ -100,6 +102,7 @@ function AppWrapper() {
 
         {/* Superadmin routes */}
         <Route path="/superadmin-dashboard" element={<ProtectedRoute requiredRole="superadmin"><SuperadminDashboard /></ProtectedRoute>} />
+        <Route path="/superadmin-reports" element={<ProtectedRoute requiredRole="superadmin"><ReportsAnalytics /></ProtectedRoute>} />
         <Route path="/create-account" element={<ProtectedRoute requiredRole="superadmin"><CreateAccount /></ProtectedRoute>} />
         <Route path="/manage-admins" element={<ProtectedRoute requiredRole="superadmin"><ManageAdmins /></ProtectedRoute>} />
         <Route path="/manage-qr-scanners" element={<ProtectedRoute requiredRole="superadmin"><ManageQRScanners /></ProtectedRoute>} />

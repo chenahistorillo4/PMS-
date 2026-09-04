@@ -23,6 +23,21 @@ export function getPeriodRange(period) {
   const end = new Date(now);
   end.setHours(23, 59, 59, 999);
 
+  if (period === 'today') {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    return { start, end, label: 'Today' };
+  }
+
+  if (period === 'yesterday') {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 1);
+    start.setHours(0, 0, 0, 0);
+    const yesterdayEnd = new Date(start);
+    yesterdayEnd.setHours(23, 59, 59, 999);
+    return { start, end: yesterdayEnd, label: 'Yesterday' };
+  }
+
   if (period === 'weekly') {
     const start = new Date(now);
     start.setDate(now.getDate() - 6);
@@ -37,6 +52,21 @@ export function getPeriodRange(period) {
   }
 
   return null;
+}
+
+export function getWeekRange(weekOffset = 0) {
+  const now = new Date();
+  const start = new Date(now);
+  const dayOfWeek = start.getDay();
+  const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  start.setDate(start.getDate() - daysFromMonday + (weekOffset * 7));
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+
+  return { start, end, label: weekOffset === 0 ? 'This week' : 'Last week' };
 }
 
 export function bookingMatchesPeriod(booking, range) {
@@ -56,6 +86,10 @@ export function bookingMatchesPeriod(booking, range) {
 export function filterBookingsByPeriod(bookings, period) {
   const range = getPeriodRange(period);
   if (!range) return bookings;
+  return bookings.filter((booking) => bookingMatchesPeriod(booking, range));
+}
+
+export function filterBookingsByRange(bookings, range) {
   return bookings.filter((booking) => bookingMatchesPeriod(booking, range));
 }
 
