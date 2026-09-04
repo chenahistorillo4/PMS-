@@ -75,6 +75,11 @@ function CreateAccount() {
       return;
     }
 
+    if (accountType === "scanner" && !boat) {
+      alert("Please select the boat assigned to this QR scanner");
+      return;
+    }
+
     setLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(accountCreationAuth, email, password);
@@ -113,6 +118,9 @@ function CreateAccount() {
           name,
           email,
           role: "qr_scanner",
+          assignedBoat: boat,
+          assignedRoute: boats.find((item) => item.name === boat)?.route || null,
+          phone: phone.trim() || null,
           permissions: ["scan_qr"],
           status: "active",
           createdAt: new Date(),
@@ -329,7 +337,7 @@ function CreateAccount() {
             />
           </div>
 
-          {accountType === "admin" && (
+          {(accountType === "admin" || accountType === "scanner") && (
           <div style={{ marginBottom: isMobile ? "16px" : "20px" }}>
             <label style={{
               display: "block",
@@ -338,7 +346,7 @@ function CreateAccount() {
               color: "#333",
               fontSize: isMobile ? "0.85rem" : "0.95rem"
             }}>
-              Phone Number (for SMS alerts)
+              {accountType === "admin" ? "Phone Number (for SMS alerts)" : "Contact Details"}
             </label>
             <input
               type="tel"
@@ -359,7 +367,7 @@ function CreateAccount() {
               onBlur={(e) => e.target.style.borderColor = "#ddd"}
             />
             <small style={{ display: "block", marginTop: "6px", color: "#666", fontSize: "0.85rem" }}>
-              Admin receives SMS for new bookings, refunds, and trip alerts
+              {accountType === "admin" ? "Admin receives SMS for new bookings, refunds, and trip alerts" : "Contact number for this QR scanner"}
             </small>
           </div>
           )}
@@ -574,19 +582,20 @@ function CreateAccount() {
 
           {/* Scanner Info Box */}
           {accountType === "scanner" && (
-            <div style={{
-              backgroundColor: "#e3f2fd",
-              border: "1px solid #90caf9",
-              borderRadius: "8px",
-              padding: isMobile ? "12px" : "15px",
-              marginBottom: isMobile ? "20px" : "25px",
-              fontSize: isMobile ? "0.8rem" : "0.9rem",
-              color: "#1565c0"
-            }}>
-              <strong>ℹ️ QR Scanner Permissions:</strong><br />
-              • Can scan QR codes during boarding<br />
-              • No access to admin features<br />
-              • Account managed by superadmin
+            <div style={{ marginBottom: isMobile ? "16px" : "20px" }}>
+              <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#333", fontSize: isMobile ? "0.85rem" : "0.95rem" }}>
+                Assigned Boat *
+              </label>
+              <select
+                value={boat}
+                onChange={(e) => setBoat(e.target.value)}
+                required
+                className="form-select"
+                style={{ padding: "12px", borderRadius: "6px", border: "1px solid #ddd", fontSize: isMobile ? "16px" : "1rem" }}
+              >
+                <option value="">Select boat</option>
+                {boats.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+              </select>
             </div>
           )}
 

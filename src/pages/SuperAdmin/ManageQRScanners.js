@@ -7,6 +7,7 @@ import "./ManageQRScanners.css";
 
 function ManageQRScanners() {
   const [scanners, setScanners] = useState([]);
+  const [boats, setBoats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -17,7 +18,9 @@ function ManageQRScanners() {
   const [newScannerData, setNewScannerData] = useState({
     name: "",
     email: "",
-    password: ""
+    password: "",
+    boat: "",
+    phone: ""
   });
   const [isCreating, setIsCreating] = useState(false);
 
@@ -47,7 +50,13 @@ function ManageQRScanners() {
       }
     };
 
+    const fetchBoats = async () => {
+      const querySnapshot = await getDocs(collection(db, "boats"));
+      setBoats(querySnapshot.docs.map((boatDoc) => ({ id: boatDoc.id, ...boatDoc.data() })));
+    };
+
     fetchScanners();
+    fetchBoats();
   }, []);
 
   // Delete scanner
@@ -105,6 +114,11 @@ function ManageQRScanners() {
       return;
     }
 
+    if (!newScannerData.boat) {
+      alert("Please select the boat assigned to this QR scanner");
+      return;
+    }
+
     setIsCreating(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(accountCreationAuth, newScannerData.email, newScannerData.password);
@@ -115,6 +129,9 @@ function ManageQRScanners() {
         name: newScannerData.name,
         email: newScannerData.email,
         role: "qr_scanner",
+        assignedBoat: newScannerData.boat,
+        assignedRoute: boats.find((boat) => boat.name === newScannerData.boat)?.route || null,
+        phone: newScannerData.phone.trim() || null,
         permissions: ["scan_qr"],
         status: "active",
         createdAt: new Date(),
@@ -123,7 +140,7 @@ function ManageQRScanners() {
 
       alert("QR Scanner account created successfully!");
       setShowCreateModal(false);
-      setNewScannerData({ name: "", email: "", password: "" });
+      setNewScannerData({ name: "", email: "", password: "", boat: "", phone: "" });
       
       // Refresh scanners list
       const querySnapshot = await getDocs(collection(db, "qr_scanners"));
@@ -144,7 +161,8 @@ function ManageQRScanners() {
   // Filter scanners
   const filteredScanners = scanners.filter(scanner =>
     scanner.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    scanner.email.toLowerCase().includes(searchTerm.toLowerCase())
+    scanner.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (scanner.assignedBoat || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -197,6 +215,8 @@ function ManageQRScanners() {
               <tr>
                 <th>Name</th>
                 <th>Email</th>
+                <th>Contact Details</th>
+                <th>Assigned Boat</th>
                 <th>Status</th>
                 <th>Created</th>
                 <th>Last Login</th>
@@ -208,9 +228,11 @@ function ManageQRScanners() {
                 <tr key={scanner.id}>
                   <td data-label="Name">{scanner.name}</td>
                   <td data-label="Email">{scanner.email}</td>
+                  <td data-label="Contact Details">{scanner.phone || "Not provided"}</td>
+                  <td data-label="Assigned Boat">{scanner.assignedBoat || "Not assigned"}</td>
                   <td data-label="Status">
                     <span className={`status-badge ${scanner.status === "active" ? "active" : "inactive"}`}>
-                      {scanner.status === "active" ? "✓ Active" : "✗ Inactive"}
+                      {scanner.status === "active" ? " Active" : " Inactive"}
                     </span>
                   </td>
                   <td data-label="Created">
@@ -381,20 +403,32 @@ function ManageQRScanners() {
                   </small>
                 </div>
 
-                {/* Info Box */}
-                <div style={{
-                  backgroundColor: "#e3f2fd",
-                  border: "1px solid #90caf9",
-                  borderRadius: "6px",
-                  padding: isMobile ? "8px" : "15px",
-                  marginBottom: isMobile ? "12px" : "25px",
-                  fontSize: isMobile ? "0.55rem" : "0.9rem",
-                  color: "#1565c0",
-                  lineHeight: isMobile ? "1.2" : "1.5"
-                }}>
-                  <strong>ℹ️ Information:</strong><br />
-                  • This account can only scan QR codes<br />
-                  • No access to other admin features
+                <div style={{ marginBottom: isMobile ? "10px" : "20px" }}>
+                  <label style={{ display: "block", marginBottom: isMobile ? "3px" : "8px", fontWeight: "600", color: "#333", fontSize: isMobile ? "0.6rem" : "0.95rem" }}>
+                    Assigned Boat *
+                  </label>
+                  <select
+                    value={newScannerData.boat}
+                    onChange={(e) => setNewScannerData({ ...newScannerData, boat: e.target.value })}
+                    required
+                    style={{ width: "100%", padding: isMobile ? "4px 5px" : "12px", borderRadius: "6px", border: "1px solid #ddd", fontSize: isMobile ? "11px" : "1rem", boxSizing: "border-box" }}
+                  >
+                    <option value="">Select boat</option>
+                    {boats.map((boat) => <option key={boat.id} value={boat.name}>{boat.name}</option>)}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: isMobile ? "10px" : "20px" }}>
+                  <label style={{ display: "block", marginBottom: isMobile ? "3px" : "8px", fontWeight: "600", color: "#333", fontSize: isMobile ? "0.6rem" : "0.95rem" }}>
+                    Contact Details
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="Enter contact number"
+                    value={newScannerData.phone}
+                    onChange={(e) => setNewScannerData({ ...newScannerData, phone: e.target.value })}
+                    style={{ width: "100%", padding: isMobile ? "4px 5px" : "12px", borderRadius: "6px", border: "1px solid #ddd", fontSize: isMobile ? "11px" : "1rem", boxSizing: "border-box" }}
+                  />
                 </div>
 
                 {/* Action Buttons */}
