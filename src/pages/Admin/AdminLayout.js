@@ -145,7 +145,7 @@ function AdminLayout({ children, active }) {
   ];
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#f5f9fc", overflowX: "hidden" }}>
+    <div style={{ display: "flex", height: "100vh", minHeight: 0, background: "#f5f9fc", overflow: "hidden" }}>
       {/* Mobile Sidebar Overlay */}
       {isMobile && sidebarOpen && (
         <div
@@ -342,6 +342,8 @@ function AdminLayout({ children, active }) {
           flex: 1,
           display: "flex",
           flexDirection: "column",
+          height: "100vh",
+          minHeight: 0,
           marginLeft: isMobile ? "0" : "280px",
           width: isMobile ? "100%" : "calc(100% - 280px)"
         }}
@@ -355,7 +357,10 @@ function AdminLayout({ children, active }) {
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
+            boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+            position: "relative",
+            zIndex: 2,
+            flexShrink: 0
           }}
         >
           {isMobile && (
@@ -439,8 +444,10 @@ function AdminLayout({ children, active }) {
         <div
           style={{
             flex: 1,
+            minHeight: 0,
             padding: isMobile ? "16px 12px" : "30px",
             overflowY: "auto",
+            overscrollBehavior: "contain",
             background: "linear-gradient(135deg, rgba(15, 107, 127, 0.08) 0%, rgba(13, 79, 161, 0.08) 100%), url('/bg5.avif') center/cover fixed",
             position: "relative"
           }}

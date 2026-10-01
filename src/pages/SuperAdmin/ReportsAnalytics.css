@@ -385,72 +385,242 @@
 }
 
 @media (max-width: 700px) {
+  .reports-page {
+    padding: 0 2px 24px;
+  }
+
   .reports-header {
     display: block;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
+  }
+
+  .reports-title {
+    font-size: 1.45rem;
+    line-height: 1.2;
+  }
+
+  .reports-subtitle {
+    font-size: 0.85rem;
+    line-height: 1.45;
   }
 
   .reports-toolbar {
-    gap: 10px;
-    padding: 12px;
+    align-items: stretch;
+    gap: 9px;
+    padding: 11px;
+    border-radius: 10px;
   }
 
   .reports-search {
     flex-basis: 100%;
     min-width: 0;
+    width: 100%;
+    min-height: 44px;
+    box-sizing: border-box;
   }
 
   .reports-period-choice {
     flex: 1 1 100%;
+    min-width: 0;
     justify-content: space-between;
+    gap: 10px;
+    font-size: 0.76rem;
+  }
+
+  .reports-period-choice span {
+    flex: 0 0 auto;
   }
 
   .reports-period-choice select {
     flex: 1;
-    max-width: 220px;
+    min-width: 0;
+    max-width: none;
+    min-height: 44px;
+    padding: 9px 28px 9px 10px;
+    font-size: 0.82rem;
   }
 
   .reports-export-actions {
     width: 100%;
-    flex-direction: row;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-left: 0;
     padding-left: 0;
-    padding-top: 10px;
+    padding-top: 9px;
     border-left: 0;
     border-top: 1px solid #dbe6f1;
   }
 
+  .reports-export-actions .reports-print-button {
+    grid-column: 1 / -1;
+  }
+
   .reports-export-actions button {
-    flex: 1;
+    min-width: 0;
+    min-height: 42px;
+    padding: 9px 7px;
+    white-space: normal;
+    line-height: 1.2;
+    font-size: 0.76rem;
   }
 
   .reports-periods {
     flex: 1;
+    min-width: 0;
   }
 
   .reports-period-button,
   .reports-print-button,
   .reports-export-button {
-    flex: 1;
-    padding: 10px 8px;
+    min-width: 0;
+    padding: 9px 7px;
+    white-space: normal;
   }
 
   .reports-overview {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin: 14px 0 22px;
+    gap: 8px;
+    margin: 12px 0 20px;
+  }
+
+  .reports-stat {
+    min-width: 0;
+    padding: 12px;
+  }
+
+  .reports-stat-label {
+    font-size: 0.7rem;
+  }
+
+  .reports-stat-value {
+    overflow-wrap: anywhere;
+    font-size: 1rem;
+  }
+
+  .reports-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+
+  .reports-section-heading h2 {
+    font-size: 1rem;
+  }
+
+  .reports-section-heading span {
+    font-size: 0.74rem;
   }
 
   .boat-analytics-grid {
     grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+
+  .analytics-card {
+    min-width: 0;
+    padding: 13px 12px;
+    border-radius: 9px;
+  }
+
+  .analytics-card-heading {
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .analytics-card-heading h2 {
+    overflow-wrap: anywhere;
+    font-size: 1rem;
+  }
+
+  .analytics-card-heading > div:last-child {
+    flex: 0 1 45%;
+    min-width: 0;
+  }
+
+  .boat-route-select {
+    width: 100%;
+    max-width: none;
+    min-height: 40px;
+    padding: 7px 24px 7px 8px;
+    font-size: 0.73rem;
+  }
+
+  .analytics-legend {
     gap: 12px;
+    margin-bottom: 10px;
+    font-size: 0.7rem;
+  }
+
+  .analytics-days {
+    gap: 9px;
+  }
+
+  .analytics-day-row {
+    grid-template-columns: 25px minmax(0, 1fr) minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .analytics-day-label {
+    font-size: 0.68rem;
+  }
+
+  .analytics-series {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px;
+  }
+
+  .analytics-series strong {
+    min-width: 24px;
+    font-size: 0.64rem;
+  }
+
+  .analytics-series-track {
+    height: 7px;
   }
 
   .boat-aggregate-report {
-    display: block;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin-top: 10px;
+    padding: 13px;
+    border-radius: 9px;
+  }
+
+  .boat-aggregate-report h3 {
+    overflow-wrap: anywhere;
+    font-size: 0.95rem;
   }
 
   .boat-aggregate-stats {
-    justify-content: flex-start;
-    margin-top: 14px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+    justify-content: stretch;
+    margin-top: 0;
+  }
+
+  .boat-aggregate-stats .boat-route-select {
+    grid-column: 1 / -1;
+  }
+
+  .boat-aggregate-stats > span {
+    min-width: 0;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    font-size: 0.72rem;
+  }
+
+  .boat-aggregate-stats strong {
+    font-size: 0.9rem;
+  }
+
+  .reports-empty {
+    padding: 20px 14px;
+    border-radius: 9px;
+    font-size: 0.85rem;
   }
 }

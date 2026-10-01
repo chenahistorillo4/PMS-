@@ -10,6 +10,8 @@ function BookingManagement() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedSchedule, setSelectedSchedule] = useState("all");
+  const [availableRoutes, setAvailableRoutes] = useState([]);
+  const [selectedRoute, setSelectedRoute] = useState("");
   const [hasSearched, setHasSearched] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const { user, authReady } = useAuthUser();
@@ -30,6 +32,8 @@ function BookingManagement() {
     const fetchData = async () => {
       if (!user) {
         setBookings([]);
+        setAvailableRoutes([]);
+        setSelectedRoute("");
         setLoading(false);
         return;
       }
@@ -53,6 +57,30 @@ function BookingManagement() {
               id: doc.id,
               ...doc.data()
             }));
+            const boatSnapshot = await getDocs(
+              query(collection(db, "boats"), where("name", "==", admin.assignedBoat))
+            );
+            const assignedBoat = boatSnapshot.docs[0]?.data();
+            const boatRoutes = Array.isArray(assignedBoat?.availableRoutes)
+              ? assignedBoat.availableRoutes
+              : assignedBoat?.route
+                ? [assignedBoat.route]
+                : [];
+            const routeOptions = [...new Set(
+              (boatRoutes.length > 0
+                ? boatRoutes
+                : admin.availableRoutes?.length > 0
+                  ? admin.availableRoutes
+                  : [admin.assignedRoute]
+              ).filter(Boolean)
+            )].sort();
+            setAvailableRoutes(routeOptions);
+            setSelectedRoute((currentRoute) => {
+              if (routeOptions.includes(currentRoute)) return currentRoute;
+              return routeOptions.includes(admin.assignedRoute)
+                ? admin.assignedRoute
+                : routeOptions[0] || "all";
+            });
 
             // Fetch payment information for each booking
             const paymentsQuery = query(collection(db, "payments"));
@@ -116,6 +144,8 @@ function BookingManagement() {
             updateDepartedBookings(bookingsList);
           } else {
             setBookings([]);
+            setAvailableRoutes([]);
+            setSelectedRoute("");
           }
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -163,7 +193,8 @@ function BookingManagement() {
     let filtered = bookings.filter(
       (b) =>
         b.date === selectedDate &&
-        (b.status === "confirmed" || b.status === "departed")
+        (b.status === "confirmed" || b.status === "departed") &&
+        (selectedRoute === "all" || !selectedRoute || (b.routeDirection || b.route) === selectedRoute)
     );
     
     // Filter by schedule if not "all"
@@ -267,6 +298,33 @@ function BookingManagement() {
               }}
             />
           </div>
+          <div style={{ flex: 1, minWidth: isMobile ? "100%" : "200px" }}>
+            <label style={{ display: "block", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
+              Select Route
+            </label>
+            <select
+              value={selectedRoute}
+              onChange={(e) => {
+                setSelectedRoute(e.target.value);
+                setCurrentPage(1);
+              }}
+              style={{
+                width: "100%",
+                padding: isMobile ? "6px 8px" : "10px 12px",
+                border: "1px solid #d0d0d0",
+                borderRadius: "6px",
+                fontSize: isMobile ? "0.8rem" : "1rem",
+                boxSizing: "border-box",
+                cursor: "pointer",
+                background: "white"
+              }}
+            >
+              <option value="all">All Routes</option>
+              {availableRoutes.map((route) => (
+                <option key={route} value={route}>{route}</option>
+              ))}
+            </select>
+          </div>
           <div style={{ flex: 1, minWidth: isMobile ? "120px" : "200px" }}>
             <label style={{ display: "block", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
               Trip Schedule
@@ -346,7 +404,7 @@ function BookingManagement() {
           marginBottom: isMobile ? "15px" : "30px"
         }}>
           <h2 style={{ fontSize: isMobile ? "0.9rem" : "1.25rem", fontWeight: 800, color: "#1e3a5f", marginBottom: isMobile ? "12px" : "20px" }}>
-            Bookings for {formatDate(selectedDate)}
+            Bookings for {formatDate(selectedDate)} · {selectedRoute === "all" ? "All Routes" : selectedRoute || "All Routes"}
           </h2>
 
           {selectedDateBookings.length === 0 ? (

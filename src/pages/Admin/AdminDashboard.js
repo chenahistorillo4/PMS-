@@ -582,8 +582,8 @@ function AdminDashboard() {
   const StatCard = ({ title, value, color, subtitle }) => (
     <div style={{
       backgroundColor: "white",
-      borderRadius: "12px",
-      padding: isMobile ? "16px 12px" : "20px",
+      borderRadius: isMobile ? "10px" : "12px",
+      padding: isMobile ? "10px 7px" : "20px",
       boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)",
       border: `2px solid ${color}`,
       borderTop: `4px solid ${color}`,
@@ -592,14 +592,14 @@ function AdminDashboard() {
       flexDirection: "column",
       justifyContent: "center",
       alignItems: "center",
-      minHeight: isMobile ? "110px" : "130px",
+      minHeight: isMobile ? "86px" : "130px",
       width: "100%",
       boxSizing: "border-box",
     }}>
       <h4 style={{
-        margin: "0 0 8px 0",
+        margin: isMobile ? "0 0 5px" : "0 0 8px",
         color: "#666",
-        fontSize: isMobile ? "0.75rem" : "0.9rem",
+        fontSize: isMobile ? "0.62rem" : "0.9rem",
         fontWeight: "600",
         textTransform: "uppercase",
         letterSpacing: "0.5px",
@@ -609,7 +609,7 @@ function AdminDashboard() {
         {title}
       </h4>
       <div style={{
-        fontSize: isMobile ? "1.6rem" : "2.4rem",
+        fontSize: isMobile ? "1.05rem" : "2.4rem",
         fontWeight: "900",
         color: color,
         margin: "0",
@@ -621,8 +621,8 @@ function AdminDashboard() {
       </div>
       {subtitle ? (
         <div style={{
-          marginTop: "8px",
-          fontSize: isMobile ? "0.72rem" : "0.82rem",
+          marginTop: isMobile ? "4px" : "8px",
+          fontSize: isMobile ? "0.58rem" : "0.82rem",
           color: "#888",
           textAlign: "center",
         }}>
@@ -669,8 +669,8 @@ function AdminDashboard() {
         {/* Metrics Section */}
         <div style={{
           display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : isTablet ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
-          gap: isMobile ? "12px" : "24px",
+          gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : isTablet ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))",
+          gap: isMobile ? "8px" : "24px",
           marginBottom: isMobile ? "24px" : "40px",
           width: "100%",
         }}>
@@ -791,30 +791,41 @@ function AdminDashboard() {
               )}
             </div>
 
-            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "20px" }}>
+            <div style={{
+              display: "flex",
+              gap: isMobile ? "6px" : "10px",
+              flexWrap: "nowrap",
+              marginBottom: "20px",
+              width: "100%",
+            }}>
               {[
-                { id: "", label: "All bookings" },
-                { id: "weekly", label: "Weekly report" },
-                { id: "monthly", label: "Monthly report" },
+                { id: "", label: "All bookings", mobileLabel: "All" },
+                { id: "weekly", label: "Weekly report", mobileLabel: "Weekly" },
+                { id: "monthly", label: "Monthly report", mobileLabel: "Monthly" },
               ].map((option) => (
                 <button
                   key={option.id || "all"}
                   type="button"
+                  aria-label={option.label}
                   onClick={() => {
                     setReportPeriod(option.id);
                     if (option.id) setFilterDate("");
                   }}
                   style={{
-                    padding: "10px 14px",
+                    padding: isMobile ? "9px 3px" : "10px 14px",
                     borderRadius: "10px",
                     border: reportPeriod === option.id ? "2px solid #4a8bd4" : "2px solid #d0dbe8",
                     background: reportPeriod === option.id ? "#e6f0f8" : "white",
                     color: "#2c3e50",
                     fontWeight: 600,
                     cursor: "pointer",
+                    flex: "1 1 0",
+                    minWidth: 0,
+                    whiteSpace: "nowrap",
+                    fontSize: isMobile ? "0.7rem" : "1rem",
                   }}
                 >
-                  {option.label}
+                  {isMobile ? option.mobileLabel : option.label}
                 </button>
               ))}
             </div>
@@ -822,14 +833,14 @@ function AdminDashboard() {
             {/* Filters Grid */}
             <div style={{
               display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))",
-              gap: "20px",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: isMobile ? "12px" : "20px",
               marginBottom: "20px"
             }}>
               {/* Date Filter */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "6px" : "10px", minWidth: 0 }}>
                 <label style={{
-                  fontSize: "0.95rem",
+                  fontSize: isMobile ? "0.78rem" : "0.95rem",
                   fontWeight: "600",
                   color: "#2c3e50"
                 }}>
@@ -843,10 +854,13 @@ function AdminDashboard() {
                     if (e.target.value) setReportPeriod("");
                   }}
                   style={{
-                    padding: "12px 14px",
+                    boxSizing: "border-box",
+                    width: "100%",
+                    minWidth: 0,
+                    padding: isMobile ? "10px 8px" : "12px 14px",
                     border: "2px solid #4a8bd4",
                     borderRadius: "10px",
-                    fontSize: "0.95rem",
+                    fontSize: isMobile ? "0.78rem" : "0.95rem",
                     fontFamily: "inherit",
                     backgroundColor: "white",
                     color: "#333",
@@ -875,9 +889,9 @@ function AdminDashboard() {
               </div>
 
               {/* Route Filter */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "6px" : "10px", minWidth: 0 }}>
                 <label style={{
-                  fontSize: "0.95rem",
+                  fontSize: isMobile ? "0.78rem" : "0.95rem",
                   fontWeight: "600",
                   color: "#2c3e50"
                 }}>
@@ -887,10 +901,13 @@ function AdminDashboard() {
                   value={filterRoute}
                   onChange={(e) => setFilterRoute(e.target.value)}
                   style={{
-                    padding: "12px 14px",
+                    boxSizing: "border-box",
+                    width: "100%",
+                    minWidth: 0,
+                    padding: isMobile ? "10px 8px" : "12px 14px",
                     border: "2px solid #4a8bd4",
                     borderRadius: "10px",
-                    fontSize: "0.95rem",
+                    fontSize: isMobile ? "0.78rem" : "0.95rem",
                     fontFamily: "inherit",
                     backgroundColor: "white",
                     color: "#333",
@@ -988,18 +1005,18 @@ function AdminDashboard() {
 
           {/* Export Options Header */}
           <h3 style={{
-            fontSize: "1.1rem",
+            fontSize: isMobile ? "1rem" : "1.1rem",
             fontWeight: "700",
             color: "#1a1a1a",
-            margin: "32px 0 20px 0"
+            margin: isMobile ? "22px 0 12px" : "32px 0 20px"
           }}>
             Export Your Data
             {(reportPeriod || filterDate || filterRoute) && (
               <span style={{
-                fontSize: "0.85rem",
+                fontSize: isMobile ? "0.72rem" : "0.85rem",
                 fontWeight: "400",
                 color: "#fb8c00",
-                marginLeft: "12px"
+                marginLeft: isMobile ? "6px" : "12px"
               }}>
                 (with selected filters applied)
               </span>
@@ -1008,22 +1025,24 @@ function AdminDashboard() {
 
           <div style={{
             display: "grid",
-            gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))",
-            gap: "20px"
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: isMobile ? "8px" : "20px"
           }}>
             <button
               onClick={printReport}
               style={{
-                padding: "28px 20px",
+                padding: isMobile ? "10px 4px" : "28px 20px",
                 backgroundColor: "#e6f0f8",
                 border: "2px solid #4a8bd4",
-                borderRadius: "14px",
+                borderRadius: isMobile ? "9px" : "14px",
                 color: "#4a8bd4",
                 fontWeight: "600",
                 cursor: "pointer",
                 transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                 textAlign: "center",
-                fontSize: "1rem"
+                fontSize: isMobile ? "0.75rem" : "1rem",
+                minHeight: isMobile ? "54px" : "auto",
+                boxSizing: "border-box"
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = "#4a8bd4";
@@ -1038,23 +1057,25 @@ function AdminDashboard() {
                 e.currentTarget.style.transform = "translateY(0)";
               }}
             >
-              <div style={{ fontSize: "1.05rem", fontWeight: "700", marginBottom: "6px" }}>Print Report</div>
-              <div style={{ fontSize: "0.8rem", opacity: "0.75" }}>Open print dialog</div>
+              <div style={{ fontSize: isMobile ? "0.7rem" : "1.05rem", fontWeight: "700", marginBottom: isMobile ? "0" : "6px" }}>{isMobile ? "Print" : "Print Report"}</div>
+              {!isMobile && <div style={{ fontSize: "0.8rem", opacity: "0.75" }}>Open print dialog</div>}
             </button>
 
             <button
               onClick={exportAsJSON}
               style={{
-                padding: "28px 20px",
+                padding: isMobile ? "10px 4px" : "28px 20px",
                 backgroundColor: "#f1f8f4",
                 border: "2px solid #43a047",
-                borderRadius: "14px",
+                borderRadius: isMobile ? "9px" : "14px",
                 color: "#43a047",
                 fontWeight: "600",
                 cursor: "pointer",
                 transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                 textAlign: "center",
-                fontSize: "1rem"
+                fontSize: isMobile ? "0.75rem" : "1rem",
+                minHeight: isMobile ? "54px" : "auto",
+                boxSizing: "border-box"
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = "#43a047";
@@ -1069,23 +1090,25 @@ function AdminDashboard() {
                 e.currentTarget.style.transform = "translateY(0)";
               }}
             >
-              <div style={{ fontSize: "1.05rem", fontWeight: "700", marginBottom: "6px" }}>Download JSON</div>
-              <div style={{ fontSize: "0.8rem", opacity: "0.75" }}>Export as JSON data</div>
+              <div style={{ fontSize: isMobile ? "0.7rem" : "1.05rem", fontWeight: "700", marginBottom: isMobile ? "0" : "6px" }}>{isMobile ? "JSON" : "Download JSON"}</div>
+              {!isMobile && <div style={{ fontSize: "0.8rem", opacity: "0.75" }}>Export as JSON data</div>}
             </button>
 
             <button
               onClick={saveAsPDF}
               style={{
-                padding: "28px 20px",
+                padding: isMobile ? "10px 4px" : "28px 20px",
                 backgroundColor: "#fff3e0",
                 border: "2px solid #fb8c00",
-                borderRadius: "14px",
+                borderRadius: isMobile ? "9px" : "14px",
                 color: "#fb8c00",
                 fontWeight: "600",
                 cursor: "pointer",
                 transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                 textAlign: "center",
-                fontSize: "1rem"
+                fontSize: isMobile ? "0.75rem" : "1rem",
+                minHeight: isMobile ? "54px" : "auto",
+                boxSizing: "border-box"
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = "#fb8c00";
@@ -1100,8 +1123,8 @@ function AdminDashboard() {
                 e.currentTarget.style.transform = "translateY(0)";
               }}
             >
-              <div style={{ fontSize: "1.05rem", fontWeight: "700", marginBottom: "6px" }}>Save as PDF</div>
-              <div style={{ fontSize: "0.8rem", opacity: "0.75" }}>Download PDF report with filters</div>
+              <div style={{ fontSize: isMobile ? "0.7rem" : "1.05rem", fontWeight: "700", marginBottom: isMobile ? "0" : "6px" }}>{isMobile ? "PDF" : "Save as PDF"}</div>
+              {!isMobile && <div style={{ fontSize: "0.8rem", opacity: "0.75" }}>Download PDF report with filters</div>}
             </button>
           </div>
         </div>
