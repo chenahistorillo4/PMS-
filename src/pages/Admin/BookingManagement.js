@@ -4,14 +4,18 @@ import { doc, getDoc, collection, getDocs, query, where, updateDoc } from "fireb
 import AdminLayout from "./AdminLayout";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
+const normalizeRoute = (route) =>
+  String(route || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
 function BookingManagement() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState("");
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState("");
   const [selectedSchedule, setSelectedSchedule] = useState("all");
   const [availableRoutes, setAvailableRoutes] = useState([]);
-  const [selectedRoute, setSelectedRoute] = useState("");
+  const [selectedRoute, setSelectedRoute] = useState("all");
   const [hasSearched, setHasSearched] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const { user, authReady } = useAuthUser();
@@ -34,11 +38,13 @@ function BookingManagement() {
         setBookings([]);
         setAvailableRoutes([]);
         setSelectedRoute("");
+        setFetchError("");
         setLoading(false);
         return;
       }
 
       setLoading(true);
+      setFetchError("");
       try {
           // Fetch admin data
           const adminDocRef = doc(db, "admins", user.uid);
@@ -47,16 +53,67 @@ function BookingManagement() {
           if (adminDocSnap.exists()) {
             const admin = adminDocSnap.data();
 
-            // Fetch bookings for this boat
-            const bookingsQuery = query(
-              collection(db, "bookings"),
-              where("boat", "==", admin.assignedBoat)
+            if (!admin.assignedBoat) {
+              setBookings([]);
+              setAvailableRoutes([]);
+              setSelectedRoute("");
+              setFetchError("This admin account does not have an assigned boat.");
+              setLoading(false);
+              return;
+            }
+
+            const schedulesRef = collection(db, "schedules");
+            const bookingsRef = collection(db, "bookings");
+            const [bookingsSnap, schedulesSnap] = await Promise.all([
+              getDocs(query(bookingsRef, where("boat", "==", admin.assignedBoat))),
+              getDocs(query(schedulesRef, where("boat", "==", admin.assignedBoat)))
+            ]);
+
+            const bookingDocsById = new Map(
+              bookingsSnap.docs.map((bookingDoc) => [bookingDoc.id, bookingDoc])
             );
-            const bookingsSnap = await getDocs(bookingsQuery);
-            let bookingsList = bookingsSnap.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
+            const scheduleIds = schedulesSnap.docs.map((scheduleDoc) => scheduleDoc.id);
+            const tripIdChunks = [];
+            for (let index = 0; index < scheduleIds.length; index += 30) {
+              tripIdChunks.push(scheduleIds.slice(index, index + 30));
+            }
+            let tripLookupFailed = false;
+            const bookingsByTrip = await Promise.all(
+              tripIdChunks.map((tripIds) =>
+                getDocs(query(bookingsRef, where("tripId", "in", tripIds))).catch((error) => {
+                  tripLookupFailed = true;
+                  console.error("Error looking up bookings by assigned trip:", error);
+                  return null;
+                })
+              )
+            );
+            bookingsByTrip.forEach((snapshot) => {
+              if (!snapshot) return;
+              snapshot.docs.forEach((bookingDoc) => {
+                bookingDocsById.set(bookingDoc.id, bookingDoc);
+              });
+            });
+
+            let bookingsList = Array.from(bookingDocsById.values()).map((bookingDoc) => ({
+              id: bookingDoc.id,
+              ...bookingDoc.data()
             }));
+            if (bookingsList.length === 0 && tripLookupFailed) {
+              setFetchError("Could not check bookings linked to this boat's trips. Check Firestore access and try again.");
+            }
+            bookingsList = bookingsList.map((booking) => {
+              const date = booking.date?.toDate?.() || booking.date;
+              if (!(date instanceof Date)) return booking;
+              const localDate = [
+                date.getFullYear(),
+                String(date.getMonth() + 1).padStart(2, "0"),
+                String(date.getDate()).padStart(2, "0")
+              ].join("-");
+              return { ...booking, date: localDate };
+            });
+            const bookingRoutes = bookingsList
+              .map((booking) => booking.routeDirection || booking.route)
+              .filter(Boolean);
             const boatSnapshot = await getDocs(
               query(collection(db, "boats"), where("name", "==", admin.assignedBoat))
             );
@@ -67,19 +124,18 @@ function BookingManagement() {
                 ? [assignedBoat.route]
                 : [];
             const routeOptions = [...new Set(
-              (boatRoutes.length > 0
-                ? boatRoutes
-                : admin.availableRoutes?.length > 0
-                  ? admin.availableRoutes
-                  : [admin.assignedRoute]
-              ).filter(Boolean)
+              [
+                ...boatRoutes,
+                ...(Array.isArray(admin.availableRoutes) ? admin.availableRoutes : []),
+                admin.assignedRoute,
+                ...bookingRoutes
+              ].filter(Boolean)
             )].sort();
             setAvailableRoutes(routeOptions);
             setSelectedRoute((currentRoute) => {
+              if (currentRoute === "all") return "all";
               if (routeOptions.includes(currentRoute)) return currentRoute;
-              return routeOptions.includes(admin.assignedRoute)
-                ? admin.assignedRoute
-                : routeOptions[0] || "all";
+              return "all";
             });
 
             // Fetch payment information for each booking
@@ -92,7 +148,8 @@ function BookingManagement() {
                 paymentMap[payment.bookingId] = {
                   method: payment.method || payment.accountType || "Unknown",
                   accountNumber: payment.accountNumber || payment.paymentAccountNumber || "N/A",
-                  accountHolder: payment.accountHolder || "N/A"
+                  accountHolder: payment.accountHolder || "N/A",
+                  status: payment.status || "pending"
                 };
               }
             });
@@ -100,7 +157,12 @@ function BookingManagement() {
             // Merge payment info into bookings
             bookingsList = bookingsList.map(booking => ({
               ...booking,
-              paymentInfo: paymentMap[booking.id] || { method: "Unknown", accountNumber: "N/A", accountHolder: "N/A" }
+              paymentInfo: paymentMap[booking.id] || {
+                method: "Unknown",
+                accountNumber: "N/A",
+                accountHolder: "N/A",
+                status: "unknown"
+              }
             }));
 
             // Fetch user names for bookings that don't have bookedByName
@@ -130,10 +192,10 @@ function BookingManagement() {
               bookedByName: booking.bookedByName || userMap[booking.userId] || booking.userEmail || "Unknown"
             }));
 
-            // Only paid/confirmed bookings belong in admin records.
+            // Keep pending reservations visible; cancelled bookings are excluded from active records.
             bookingsList = bookingsList.filter((booking) => {
               const status = String(booking.status || "").toLowerCase();
-              return status === "confirmed" || status === "departed";
+              return status === "pending" || status === "confirmed" || status === "departed";
             });
 
             // Sort by date descending (most recent first)
@@ -146,9 +208,12 @@ function BookingManagement() {
             setBookings([]);
             setAvailableRoutes([]);
             setSelectedRoute("");
+            setFetchError("Admin profile was not found. Please contact the system administrator.");
           }
       } catch (error) {
         console.error("Error fetching data:", error);
+        setFetchError("Unable to load bookings. Please refresh the page or contact support if this continues.");
+        setBookings([]);
       }
       setLoading(false);
     };
@@ -188,13 +253,25 @@ function BookingManagement() {
     return new Date(dateString).toLocaleDateString('en-US', options);
   };
 
+  const formatBookingDate = (dateValue) => {
+    if (!dateValue) return "N/A";
+    const dateString = typeof dateValue === "string" ? dateValue : "";
+    const dateMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const date = dateMatch
+      ? new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]))
+      : dateValue?.toDate?.() || new Date(dateValue);
+    return Number.isNaN(date.getTime()) ? "N/A" : date.toLocaleDateString();
+  };
+
   // Get bookings for selected date and schedule
   const getSelectedDateBookings = () => {
     let filtered = bookings.filter(
       (b) =>
-        b.date === selectedDate &&
-        (b.status === "confirmed" || b.status === "departed") &&
-        (selectedRoute === "all" || !selectedRoute || (b.routeDirection || b.route) === selectedRoute)
+        (!selectedDate || b.date === selectedDate) &&
+        ["pending", "confirmed", "departed"].includes(String(b.status || "").toLowerCase()) &&
+        (selectedRoute === "all" ||
+          !selectedRoute ||
+          normalizeRoute(b.routeDirection || b.route) === normalizeRoute(selectedRoute))
     );
     
     // Filter by schedule if not "all"
@@ -219,17 +296,16 @@ function BookingManagement() {
   const endIndex = startIndex + itemsPerPage;
   const paginatedBookings = selectedDateBookings.slice(startIndex, endIndex);
 
-  const handleStatusChange = async (bookingId, newStatus) => {
-    try {
-      setLoading(true);
-      const bookingRef = doc(db, "bookings", bookingId);
-      await updateDoc(bookingRef, { status: newStatus });
-      setBookings(bookings.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
-      setLoading(false);
-    } catch (error) {
-      console.error("Error updating status: " + error.message);
-      setLoading(false);
+  const getDisplayBookingStatus = (booking) => {
+    const bookingStatus = String(booking.status || "pending").toLowerCase();
+    const paymentStatus = String(booking.paymentInfo?.status || "").toLowerCase();
+
+    if (["cancelled", "departed", "scanned"].includes(bookingStatus)) return bookingStatus;
+    if (["cancelled", "failed"].includes(paymentStatus)) return "cancelled";
+    if (bookingStatus === "confirmed" || ["completed", "confirmed"].includes(paymentStatus)) {
+      return "confirmed";
     }
+    return "pending";
   };
 
   const getStatusColor = (status) => {
@@ -259,7 +335,7 @@ function BookingManagement() {
         fontWeight: "500",
         lineHeight: isMobile ? "1.4" : "1.5"
       }}>
-        Booking transactions overview for your assigned ferry boat. Only paid and confirmed bookings appear here. Unpaid bookings stay in Payment Management until payment is completed.
+        View pending reservations and confirmed bookings for your assigned ferry boat. Pending payments can be confirmed or cancelled in Payment Management.
       </p>
 
 
@@ -275,9 +351,9 @@ function BookingManagement() {
         <h3 style={{ fontSize: isMobile ? "0.85rem" : "1.05rem", fontWeight: 800, color: "#1e3a5f", marginBottom: isMobile ? "10px" : "15px" }}>
           Search Bookings by Date & Schedule
         </h3>
-        <div style={{ display: "flex", gap: isMobile ? "8px" : "15px", alignItems: "flex-end", flexWrap: isMobile ? "wrap" : "wrap" }}>
+        <div style={{ display: "flex", gap: isMobile ? "8px" : "15px", alignItems: "flex-start", flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: isMobile ? "120px" : "200px" }}>
-            <label style={{ display: "block", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
+            <label style={{ display: "block", minHeight: isMobile ? "14px" : "17px", lineHeight: isMobile ? "14px" : "17px", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
               Select Date
             </label>
             <input
@@ -293,13 +369,17 @@ function BookingManagement() {
                 border: "1px solid #d0d0d0",
                 borderRadius: "6px",
                 fontSize: isMobile ? "0.8rem" : "1rem",
+                height: isMobile ? "32px" : "42px",
                 boxSizing: "border-box",
                 cursor: "pointer"
               }}
             />
+            <div style={{ marginTop: "5px", color: "#777", fontSize: isMobile ? "0.65rem" : "0.75rem" }}>
+              Leave blank to show bookings for all dates.
+            </div>
           </div>
           <div style={{ flex: 1, minWidth: isMobile ? "100%" : "200px" }}>
-            <label style={{ display: "block", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
+            <label style={{ display: "block", minHeight: isMobile ? "14px" : "17px", lineHeight: isMobile ? "14px" : "17px", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
               Select Route
             </label>
             <select
@@ -314,6 +394,7 @@ function BookingManagement() {
                 border: "1px solid #d0d0d0",
                 borderRadius: "6px",
                 fontSize: isMobile ? "0.8rem" : "1rem",
+                height: isMobile ? "32px" : "42px",
                 boxSizing: "border-box",
                 cursor: "pointer",
                 background: "white"
@@ -326,7 +407,7 @@ function BookingManagement() {
             </select>
           </div>
           <div style={{ flex: 1, minWidth: isMobile ? "120px" : "200px" }}>
-            <label style={{ display: "block", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
+            <label style={{ display: "block", minHeight: isMobile ? "14px" : "17px", lineHeight: isMobile ? "14px" : "17px", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
               Trip Schedule
             </label>
             <select
@@ -341,6 +422,7 @@ function BookingManagement() {
                 border: "1px solid #d0d0d0",
                 borderRadius: "6px",
                 fontSize: isMobile ? "0.8rem" : "1rem",
+                height: isMobile ? "32px" : "42px",
                 boxSizing: "border-box",
                 cursor: "pointer",
                 background: "white"
@@ -364,6 +446,7 @@ function BookingManagement() {
             }}
             style={{
               padding: isMobile ? "6px 10px" : "10px 24px",
+              height: isMobile ? "32px" : "42px",
               background: "#2196f3",
               color: "white",
               border: "none",
@@ -373,9 +456,12 @@ function BookingManagement() {
               cursor: "pointer",
               transition: "all 0.3s ease",
               whiteSpace: "nowrap",
-              flex: isMobile ? "0 0 auto" : "0 0 auto",
+              alignSelf: "flex-start",
+              marginTop: isMobile ? "18px" : "25px",
+              flex: "0 0 auto",
               minWidth: isMobile ? "80px" : "auto",
-              marginLeft: isMobile ? "auto" : "0"
+              marginLeft: isMobile ? "auto" : "0",
+              boxSizing: "border-box"
             }}
             onMouseEnter={(e) => {
               e.target.style.background = "#1976d2";
@@ -404,10 +490,18 @@ function BookingManagement() {
           marginBottom: isMobile ? "15px" : "30px"
         }}>
           <h2 style={{ fontSize: isMobile ? "0.9rem" : "1.25rem", fontWeight: 800, color: "#1e3a5f", marginBottom: isMobile ? "12px" : "20px" }}>
-            Bookings for {formatDate(selectedDate)} · {selectedRoute === "all" ? "All Routes" : selectedRoute || "All Routes"}
+            Bookings for {selectedDate ? formatDate(selectedDate) : "All Dates"} · {selectedRoute === "all" ? "All Routes" : selectedRoute || "All Routes"}
           </h2>
 
-          {selectedDateBookings.length === 0 ? (
+          {loading ? (
+            <p style={{ textAlign: "center", color: "#666", padding: "40px 20px", fontSize: "0.95rem" }}>
+              Loading bookings...
+            </p>
+          ) : fetchError ? (
+            <p role="alert" style={{ textAlign: "center", color: "#b00020", padding: "40px 20px", fontSize: "0.95rem" }}>
+              {fetchError}
+            </p>
+          ) : selectedDateBookings.length === 0 ? (
             <p style={{ textAlign: "center", color: "#666", padding: "40px 20px", fontSize: "0.95rem" }}>
               No bookings found for this date and schedule
             </p>
@@ -419,12 +513,16 @@ function BookingManagement() {
                   <div style={{ flex: "0 0 20%", minWidth: "60px" }}>User Account</div>
                   <div style={{ flex: "0 0 20%", minWidth: "60px" }}>Passenger</div>
                   <div style={{ flex: "0 0 18%", minWidth: "50px" }}>Route</div>
+                  <div style={{ flex: "0 0 15%", minWidth: "55px" }}>Date</div>
                   <div style={{ flex: "0 0 15%", minWidth: "45px" }}>Time</div>
                   <div style={{ flex: "0 0 13%", minWidth: "40px" }}>Payment</div>
                   <div style={{ flex: "0 0 14%", minWidth: "45px" }}>Amount</div>
                 </div>
 
                 {paginatedBookings.map((booking) => (
+                  (() => {
+                    const displayStatus = getDisplayBookingStatus(booking);
+                    return (
                   <div key={booking.id} style={{
                     display: "flex",
                     gap: "6px",
@@ -445,40 +543,55 @@ function BookingManagement() {
                     <div style={{ flex: "0 0 18%", minWidth: "50px", color: "#666", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.65rem" }}>
                       {booking.routeDirection}
                     </div>
+                    <div style={{ flex: "0 0 15%", minWidth: "55px", color: "#666", fontSize: "0.6rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {formatBookingDate(booking.date || booking.bookingDate)}
+                    </div>
                     <div style={{ flex: "0 0 15%", minWidth: "45px", color: "#666", fontSize: "0.6rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {booking.departure} → {booking.arrival}
                     </div>
                     <div style={{ flex: "0 0 13%", minWidth: "40px", color: "#ff9800", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.6rem" }}>
-                      {booking.paymentInfo?.method === "gcash" ? "GCash" : booking.paymentInfo?.method === "paymaya" ? "PayMaya" : booking.paymentInfo?.method?.charAt(0).toUpperCase() + booking.paymentInfo?.method?.slice(1)}
+                      <div>
+                        {booking.paymentInfo?.method === "gcash" ? "GCash" : booking.paymentInfo?.method === "paymaya" ? "PayMaya" : booking.paymentInfo?.method?.charAt(0).toUpperCase() + booking.paymentInfo?.method?.slice(1)}
+                      </div>
+                      <div style={{
+                        color: booking.paymentInfo?.status === "completed"
+                          ? "#4caf50"
+                          : booking.paymentInfo?.status === "pending"
+                            ? "#ff9800"
+                            : "#999"
+                      }}>
+                        {booking.paymentInfo?.status === "completed"
+                          ? "Paid"
+                          : booking.paymentInfo?.status === "pending"
+                            ? "Payment Pending"
+                            : booking.status === "pending"
+                              ? "Pending"
+                              : "Unknown"}
+                      </div>
                     </div>
                     <div style={{ flex: "0 0 14%", minWidth: "45px", display: "flex", flexDirection: "column", gap: "4px" }}>
                       <div style={{ color: "#2196f3", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         ₱{Number(booking.finalPrice).toFixed(2)}
                       </div>
-                      <select
-                        value={booking.status || "pending"}
-                        onChange={e => handleStatusChange(booking.id, e.target.value)}
-                        disabled={loading || booking.status === "departed"}
-                        style={{
-                          width: "100%",
-                          padding: "3px 4px",
-                          border: `2px solid ${getStatusColor(booking.status)}`,
-                          borderRadius: "4px",
-                          background: booking.status === "departed" ? "#f5f5f5" : "white",
-                          color: booking.status === "departed" ? "#999" : "#333",
-                          fontWeight: 600,
-                          cursor: booking.status === "departed" ? "not-allowed" : "pointer",
-                          fontSize: "0.55rem",
-                          opacity: booking.status === "departed" ? 0.6 : 1
-                        }}
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="confirmed">Confirmed</option>
-                        <option value="departed">Departed</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
+                      <span style={{
+                        display: "inline-block",
+                        width: "100%",
+                        boxSizing: "border-box",
+                        padding: "4px",
+                        border: `1px solid ${getStatusColor(displayStatus)}`,
+                        borderRadius: "4px",
+                        color: getStatusColor(displayStatus),
+                        fontWeight: 700,
+                        fontSize: "0.55rem",
+                        textAlign: "center",
+                        textTransform: "capitalize"
+                      }}>
+                        {displayStatus}
+                      </span>
                     </div>
                   </div>
+                    );
+                  })()
                 ))}
               </div>
             </div>
@@ -502,10 +615,13 @@ function BookingManagement() {
                       Route
                     </th>
                     <th style={{ padding: "12px", textAlign: "left", fontWeight: 700, color: "#1e3a5f", fontSize: "0.85rem", textTransform: "uppercase" }}>
+                      Date
+                    </th>
+                    <th style={{ padding: "12px", textAlign: "left", fontWeight: 700, color: "#1e3a5f", fontSize: "0.85rem", textTransform: "uppercase" }}>
                       Time
                     </th>
                     <th style={{ padding: "12px", textAlign: "left", fontWeight: 700, color: "#1e3a5f", fontSize: "0.85rem", textTransform: "uppercase" }}>
-                      Payment Account
+                      Payment
                     </th>
                     <th style={{ padding: "12px", textAlign: "left", fontWeight: 700, color: "#1e3a5f", fontSize: "0.85rem", textTransform: "uppercase" }}>
                       Amount
@@ -517,6 +633,9 @@ function BookingManagement() {
                 </thead>
                 <tbody>
                   {paginatedBookings.map((booking) => (
+                    (() => {
+                      const displayStatus = getDisplayBookingStatus(booking);
+                      return (
                     <tr key={booking.id} style={{ borderBottom: "1px solid #e0e8f0", transition: "all 0.3s ease" }}
                       onMouseEnter={(e) => e.currentTarget.style.background = "#f9fbfd"}
                       onMouseLeave={(e) => e.currentTarget.style.background = "white"}
@@ -530,6 +649,9 @@ function BookingManagement() {
                       <td style={{ padding: "12px", color: "#666" }}>
                         {booking.routeDirection}
                       </td>
+                      <td style={{ padding: "12px", color: "#666", whiteSpace: "nowrap" }}>
+                        {formatBookingDate(booking.date || booking.bookingDate)}
+                      </td>
                       <td style={{ padding: "12px", color: "#666", fontSize: "0.85rem" }}>
                         {booking.departure} → {booking.arrival}
                       </td>
@@ -537,37 +659,47 @@ function BookingManagement() {
                         <div style={{ marginBottom: "4px" }}>
                           {booking.paymentInfo?.method === "gcash" ? "GCash" : booking.paymentInfo?.method === "paymaya" ? "PayMaya" : booking.paymentInfo?.method?.charAt(0).toUpperCase() + booking.paymentInfo?.method?.slice(1)}
                         </div>
-                        <div style={{ fontSize: "0.8rem", color: "#666", fontWeight: 500 }}>
-                          {booking.paymentInfo?.accountNumber || "N/A"}
+                        <div style={{
+                          fontSize: "0.75rem",
+                          color: booking.paymentInfo?.status === "completed"
+                            ? "#4caf50"
+                            : booking.paymentInfo?.status === "pending"
+                              ? "#ff9800"
+                              : "#999",
+                          fontWeight: 700,
+                          marginTop: "3px"
+                        }}>
+                          {booking.paymentInfo?.status === "completed"
+                            ? "Paid"
+                            : booking.paymentInfo?.status === "pending"
+                              ? "Pending"
+                              : booking.status === "pending"
+                                ? "Pending"
+                                : "Unknown"}
                         </div>
                       </td>
                       <td style={{ padding: "12px", color: "#2196f3", fontWeight: 700 }}>
                         ₱{Number(booking.finalPrice).toFixed(2)}
                       </td>
                       <td style={{ padding: "12px" }}>
-                        <select
-                          value={booking.status || "pending"}
-                          onChange={e => handleStatusChange(booking.id, e.target.value)}
-                          disabled={loading || booking.status === "departed"}
-                          style={{
-                            padding: "6px 10px",
-                            border: `2px solid ${getStatusColor(booking.status)}`,
-                            borderRadius: "6px",
-                            background: booking.status === "departed" ? "#f5f5f5" : "white",
-                            color: booking.status === "departed" ? "#999" : "#333",
-                            fontWeight: 600,
-                            cursor: booking.status === "departed" ? "not-allowed" : "pointer",
-                            fontSize: "0.85rem",
-                            opacity: booking.status === "departed" ? 0.6 : 1
-                          }}
-                        >
-                          <option value="pending">Pending</option>
-                          <option value="confirmed">Confirmed</option>
-                          <option value="departed">Departed</option>
-                          <option value="cancelled">Cancelled</option>
-                        </select>
+                        <span style={{
+                          display: "inline-block",
+                          minWidth: "90px",
+                          padding: "6px 10px",
+                          border: `1px solid ${getStatusColor(displayStatus)}`,
+                          borderRadius: "6px",
+                          color: getStatusColor(displayStatus),
+                          fontWeight: 700,
+                          fontSize: "0.85rem",
+                          textAlign: "center",
+                          textTransform: "capitalize"
+                        }}>
+                          {displayStatus}
+                        </span>
                       </td>
                     </tr>
+                      );
+                    })()
                   ))}
                 </tbody>
               </table>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, collection, addDoc, onSnapshot, query, where, updateDoc, deleteDoc, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, addDoc, onSnapshot, query, where, updateDoc, deleteDoc } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { createTripNotifications } from "../../utils/notificationHelper";
@@ -16,7 +16,6 @@ function ScheduleManagement() {
   const [currentPageUpcoming, setCurrentPageUpcoming] = useState(1);
   const [currentPageHistory, setCurrentPageHistory] = useState(1);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const [creatingTestTrip, setCreatingTestTrip] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [newTrip, setNewTrip] = useState({
     name: "",
@@ -27,6 +26,7 @@ function ScheduleManagement() {
     routeDirection: "",
     price: "",
     cargoPerKilo: "",
+    allowPayLater: false,
     status: "Upcoming",
     boatImage: ""
   });
@@ -67,9 +67,9 @@ function ScheduleManagement() {
 
   // Real-time listener for trips of this boat
   useEffect(() => {
-    if (adminData) {
+    if (adminData?.assignedBoat) {
       const q = query(collection(db, "schedules"), where("boat", "==", adminData.assignedBoat));
-      const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const unsubscribeTrips = onSnapshot(q, (snapshot) => {
         const tripList = snapshot.docs.map(doc => {
           const data = doc.data();
           return {
@@ -81,26 +81,30 @@ function ScheduleManagement() {
         // Sort by date (descending)
         tripList.sort((a, b) => new Date(b.date) - new Date(a.date));
         setTrips(tripList);
-        
-        // Fetch active booking counts for each trip so availability reflects user bookings.
-        const counts = {};
-        for (const trip of tripList) {
-          const bookingsQuery = query(
-            collection(db, "bookings"),
-            where("tripId", "==", trip.id)
-          );
-          const bookingsSnap = await getDocs(bookingsQuery);
-          const activeBookings = bookingsSnap.docs.filter((bookingDoc) => {
-            const bookingStatus = bookingDoc.data().status?.toLowerCase?.() || "";
-            return bookingStatus !== "cancelled" && bookingStatus !== "failed";
-          });
-
-          // Calculate available spots: capacity - active user bookings.
-          counts[trip.id] = Math.max(0, trip.capacity - activeBookings.length);
-        }
-        setBookingCounts(counts);
+      }, (error) => {
+        console.error("Error listening to schedules:", error);
       });
-      return () => unsubscribe();
+      const bookingsQuery = query(
+        collection(db, "bookings"),
+        where("boat", "==", adminData.assignedBoat)
+      );
+      const unsubscribeBookings = onSnapshot(bookingsQuery, (snapshot) => {
+        const counts = {};
+        snapshot.docs.forEach((bookingDoc) => {
+          const booking = bookingDoc.data();
+          const bookingStatus = booking.status?.toLowerCase?.() || "";
+          if (!booking.tripId || bookingStatus === "cancelled" || bookingStatus === "failed") return;
+          counts[booking.tripId] = (counts[booking.tripId] || 0) + 1;
+        });
+        setBookingCounts(counts);
+      }, (error) => {
+        console.error("Error listening to bookings:", error);
+      });
+
+      return () => {
+        unsubscribeTrips();
+        unsubscribeBookings();
+      };
     }
   }, [adminData]);
 
@@ -188,7 +192,7 @@ function ScheduleManagement() {
     setImagePreview(null);
     const input = document.getElementById("boatImageInput");
     if (input) input.value = "";
-    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "" });
+    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", allowPayLater: false });
   } catch (error) {
     alert("Error saving trip: " + error.message);
   }
@@ -205,6 +209,7 @@ const handleEditTrip = (trip) => {
     routeDirection: trip.routeDirection,
     price: trip.price,
     cargoPerKilo: trip.cargoPerKilo || "",
+    allowPayLater: trip.allowPayLater === true,
     boatImage: trip.boatImage || ""
   });
   setImagePreview(trip.boatImage || null);
@@ -238,65 +243,6 @@ const handleDeleteTrip = async (id) => {
     alert("Trip deleted successfully and notifications sent!");
   } catch (error) {
     alert("Error deleting trip: " + error.message);
-  }
-};
-
-const handleCreateTestTrip = async (price) => {
-  if (!adminData) {
-    alert("Admin profile is still loading. Please wait a moment and try again.");
-    return;
-  }
-
-  let assignedBoat = adminData.assignedBoat;
-  let assignedRoute = adminData.assignedRoute || "Test Route";
-
-  if (!assignedBoat) {
-    try {
-      const boatsSnap = await getDocs(collection(db, "boats"));
-      if (!boatsSnap.empty) {
-        assignedBoat = boatsSnap.docs[0].data().name;
-        assignedRoute = boatsSnap.docs[0].data().route || assignedRoute;
-      }
-    } catch (error) {
-      console.error("Error fetching boats:", error);
-    }
-  }
-
-  if (!assignedBoat) {
-    alert(
-      "Your admin account has no assigned boat. Ask the superadmin to set assignedBoat on your admin profile, or add a boat first."
-    );
-    return;
-  }
-
-  const today = new Date();
-  const dateString = today.toISOString().split("T")[0];
-  const label = price === 0 ? "P0" : "P1";
-
-  setCreatingTestTrip(true);
-  try {
-    await addDoc(collection(db, "schedules"), {
-      name: `TEST Trip ${label} (Payment Testing)`,
-      date: dateString,
-      departure: "09:00",
-      arrival: "10:00",
-      capacity: 50,
-      routeDirection: assignedRoute,
-      price,
-      cargoPerKilo: 0,
-      status: "Upcoming",
-      boatImage: "",
-      boat: assignedBoat,
-      route: assignedRoute,
-      isTestTrip: true,
-      createdAt: new Date(),
-    });
-    alert(`Test trip (${price === 0 ? "₱0" : "₱1"}) created for ${assignedBoat}.`);
-  } catch (error) {
-    console.error("Create test trip error:", error);
-    alert("Error creating test trip: " + error.message);
-  } finally {
-    setCreatingTestTrip(false);
   }
 };
 
@@ -581,6 +527,22 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     }}
                   />
                 </div>
+                <label style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "8px",
+                  color: "#333",
+                  fontSize: isMobile ? "0.7rem" : "0.85rem",
+                  lineHeight: 1.4
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={newTrip.allowPayLater}
+                    onChange={(e) => setNewTrip({ ...newTrip, allowPayLater: e.target.checked })}
+                    style={{ marginTop: "2px" }}
+                  />
+                  Booking only; passengers can reserve now and pay manually later.
+                </label>
                 <div>
                   <label style={{
                     display: "block",
@@ -722,7 +684,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     setImagePreview(null);
                     const input = document.getElementById("boatImageInput");
                     if (input) input.value = "";
-                    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "" });
+                    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", allowPayLater: false });
                   }}
                   style={{
                     background: "#f5f5f5",
@@ -907,42 +869,6 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
               }}
             >
               + Add Trip
-            </button>
-            <button
-              type="button"
-              onClick={() => handleCreateTestTrip(1)}
-              disabled={creatingTestTrip}
-              style={{
-                background: creatingTestTrip ? "#a5d6a7" : "#4caf50",
-                color: "white",
-                border: "none",
-                padding: isMobile ? "6px 12px" : "10px 16px",
-                borderRadius: "8px",
-                fontWeight: 700,
-                cursor: creatingTestTrip ? "not-allowed" : "pointer",
-                fontSize: isMobile ? "0.75rem" : "0.85rem",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {creatingTestTrip ? "Creating..." : "+ Test P1 Trip"}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleCreateTestTrip(0)}
-              disabled={creatingTestTrip}
-              style={{
-                background: creatingTestTrip ? "#ffcc80" : "#ff9800",
-                color: "white",
-                border: "none",
-                padding: isMobile ? "6px 12px" : "10px 16px",
-                borderRadius: "8px",
-                fontWeight: 700,
-                cursor: creatingTestTrip ? "not-allowed" : "pointer",
-                fontSize: isMobile ? "0.75rem" : "0.85rem",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {creatingTestTrip ? "Creating..." : "+ Test P0 Trip"}
             </button>
             </div>
           )}

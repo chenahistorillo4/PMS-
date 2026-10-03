@@ -9,6 +9,7 @@ import {
   updateDoc,
   query,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import AdminLayout from './AdminLayout';
 import { QRCodeCanvas } from 'qrcode.react';
@@ -31,6 +32,9 @@ function PaymentManagement() {
   const [historyRoute, setHistoryRoute] = useState('all');
   const [searchedHistoryDate, setSearchedHistoryDate] = useState('');
   const [searchedHistoryRoute, setSearchedHistoryRoute] = useState('all');
+  const [transactionNameSearch, setTransactionNameSearch] = useState('');
+  const [historyNameSearch, setHistoryNameSearch] = useState('');
+  const [activePaymentView, setActivePaymentView] = useState('transactions');
   const [routeOptions, setRouteOptions] = useState([]);
   const [isMobile, setIsMobile] = useState(false);
   const { user, authReady } = useAuthUser();
@@ -40,23 +44,32 @@ function PaymentManagement() {
   const itemsPerPage = 10;
 
   // For transactions: exclude completed payments
-  const transactionPayments = payments.filter((p) => p.status !== 'completed');
+  const matchesCustomerName = (payment, searchTerm) =>
+    !searchTerm.trim() ||
+    String(payment.customerName || payment.passengerName || '')
+      .toLowerCase()
+      .includes(searchTerm.trim().toLowerCase());
+  const transactionPayments = payments.filter(
+    (payment) =>
+      payment.status !== 'completed' && matchesCustomerName(payment, transactionNameSearch)
+  );
   const totalPaymentPages = Math.ceil(transactionPayments.length / itemsPerPage);
   const startIndex = (currentPaymentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const paginatedPayments = transactionPayments.slice(startIndex, endIndex);
-  const isHistorySearch = Boolean(searchedHistoryDate);
+  const isHistorySearch = activePaymentView === 'history';
 
-  // History logic - filter completed payments by the searched local calendar date
+  // History logic - show completed payments, optionally filtered by date and route
   const completedPayments = payments.filter((payment) => {
     if (payment.status !== 'completed') return false;
-    if (!searchedHistoryDate) return true;
+    if (!matchesCustomerName(payment, historyNameSearch)) return false;
     if (
       searchedHistoryRoute !== 'all' &&
       (payment.routeDirection || payment.route) !== searchedHistoryRoute
     ) {
       return false;
     }
+    if (!searchedHistoryDate) return true;
 
     const rawDate = payment.createdAt?.toDate?.() || payment.createdAt;
     const createdDate = rawDate ? new Date(rawDate) : null;
@@ -132,6 +145,11 @@ function PaymentManagement() {
               .map((doc) => ({
                 id: doc.id,
                 ...doc.data(),
+                customerName:
+                  doc.data().customerName ||
+                  bookingsById.get(doc.data().bookingId)?.customerName ||
+                  bookingsById.get(doc.data().bookingId)?.bookedByName ||
+                  '',
                 routeDirection:
                   doc.data().routeDirection ||
                   bookingsById.get(doc.data().bookingId)?.routeDirection ||
@@ -177,13 +195,16 @@ function PaymentManagement() {
         return;
       }
 
-      // Update payment status to completed
       const paymentRef = doc(db, 'payments', paymentId);
-      await updateDoc(paymentRef, { status: 'completed' });
-
-      // Update corresponding booking status to confirmed
+      if (!payment.bookingId) {
+        alert('This payment is not linked to a booking.');
+        return;
+      }
       const bookingRef = doc(db, 'bookings', payment.bookingId);
-      await updateDoc(bookingRef, { status: 'confirmed' });
+      const batch = writeBatch(db);
+      batch.update(paymentRef, { status: 'completed' });
+      batch.update(bookingRef, { status: 'confirmed' });
+      await batch.commit();
 
       const bookingSnap = await getDoc(bookingRef);
       if (bookingSnap.exists()) {
@@ -203,22 +224,25 @@ function PaymentManagement() {
     }
   };
 
-  const handleRejectPayment = async (paymentId) => {
-    if (window.confirm('Are you sure you want to reject this payment?')) {
+  const handleCancelBooking = async (paymentId) => {
+    if (window.confirm('Cancel this booking because payment was not received? The seat will be released.')) {
       try {
         const payment = payments.find((p) => p.id === paymentId);
-        const paymentRef = doc(db, 'payments', paymentId);
-        await updateDoc(paymentRef, { status: 'failed' });
-
-        if (payment?.bookingId) {
-          await updateDoc(doc(db, 'bookings', payment.bookingId), { status: 'cancelled' });
+        if (!payment?.bookingId) {
+          alert('This payment is not linked to a booking.');
+          return;
         }
+        const paymentRef = doc(db, 'payments', paymentId);
+        const batch = writeBatch(db);
+        batch.update(paymentRef, { status: 'cancelled' });
+        batch.update(doc(db, 'bookings', payment.bookingId), { status: 'cancelled' });
+        await batch.commit();
 
-        setPayments(payments.map((p) => (p.id === paymentId ? { ...p, status: 'failed' } : p)));
-        alert('Payment rejected!');
+        setPayments(payments.map((p) => (p.id === paymentId ? { ...p, status: 'cancelled' } : p)));
+        alert('Booking cancelled. Its seat is now available again.');
       } catch (error) {
-        console.error('Error rejecting payment:', error);
-        alert('Error rejecting payment: ' + error.message);
+        console.error('Error cancelling booking:', error);
+        alert('Error cancelling booking: ' + error.message);
       }
     }
   };
@@ -360,7 +384,7 @@ function PaymentManagement() {
       <div
         style={{
           marginBottom: isMobile ? '18px' : '30px',
-          maxWidth: '760px',
+          maxWidth: '1100px',
         }}
       >
         <form
@@ -369,14 +393,58 @@ function PaymentManagement() {
             setSearchedHistoryDate(historyDate);
             setSearchedHistoryRoute(historyRoute);
             setCurrentHistoryPage(1);
+            setActivePaymentView('history');
           }}
           style={{
             display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'minmax(200px, 1fr) minmax(200px, 1fr) auto',
+            gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr)) auto',
             gap: isMobile ? '8px' : '10px',
             width: '100%',
           }}
         >
+          <div style={{ minWidth: 0 }}>
+            <label
+              htmlFor="payment-customer-search"
+              style={{
+                display: 'block',
+                marginBottom: '6px',
+                color: '#444',
+                fontSize: isMobile ? '0.85rem' : '1rem',
+              }}
+            >
+              Search Customer Name
+            </label>
+            <input
+              id="payment-customer-search"
+              type="search"
+              value={isHistorySearch ? historyNameSearch : transactionNameSearch}
+              onChange={(event) => {
+                if (isHistorySearch) {
+                  setHistoryNameSearch(event.target.value);
+                  setCurrentHistoryPage(1);
+                } else {
+                  setTransactionNameSearch(event.target.value);
+                  setCurrentPaymentPage(1);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.preventDefault();
+              }}
+              placeholder="Enter customer name..."
+              style={{
+                boxSizing: 'border-box',
+                width: '100%',
+                minWidth: 0,
+                height: '44px',
+                padding: '8px 12px',
+                border: '1px solid #b8c9dc',
+                borderRadius: '6px',
+                background: '#fff',
+                color: '#333',
+                fontSize: '1rem',
+              }}
+            />
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <label
               htmlFor="payment-history-date"
@@ -394,7 +462,6 @@ function PaymentManagement() {
               type="date"
               value={historyDate}
               onChange={(event) => setHistoryDate(event.target.value)}
-              required
               style={{
                 boxSizing: 'border-box',
                 width: '100%',
@@ -468,6 +535,42 @@ function PaymentManagement() {
         </form>
       </div>
 
+      <div
+        role="tablist"
+        aria-label="Payment views"
+        style={{
+          display: 'flex',
+          gap: '10px',
+          marginBottom: isMobile ? '14px' : '20px',
+          flexWrap: 'wrap',
+        }}
+      >
+        {[
+          { id: 'transactions', label: 'Payment Transactions' },
+          { id: 'history', label: 'Payment History' },
+        ].map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            role="tab"
+            aria-selected={activePaymentView === view.id}
+            onClick={() => setActivePaymentView(view.id)}
+            style={{
+              padding: isMobile ? '9px 12px' : '11px 18px',
+              border: activePaymentView === view.id ? '2px solid #2876d2' : '1px solid #b8c9dc',
+              borderRadius: '7px',
+              background: activePaymentView === view.id ? '#eaf3fc' : '#fff',
+              color: activePaymentView === view.id ? '#1b5fa7' : '#444',
+              fontWeight: 700,
+              fontSize: isMobile ? '0.8rem' : '0.95rem',
+              cursor: 'pointer',
+            }}
+          >
+            {view.label}
+          </button>
+        ))}
+      </div>
+
       {/* Transactions Table */}
       <div
         style={{
@@ -487,7 +590,7 @@ function PaymentManagement() {
           }}
         >
           {isHistorySearch
-            ? `Completed Payments: ${searchedHistoryDate} · ${
+            ? `Payment History${searchedHistoryDate ? `: ${searchedHistoryDate}` : ''} · ${
                 searchedHistoryRoute === 'all' ? 'All routes' : searchedHistoryRoute
               }`
             : 'Payment Transactions'}
@@ -788,10 +891,10 @@ function PaymentManagement() {
                                 e.target.style.background = '#4caf50';
                               }}
                             >
-                              Confirm
+                              Confirm Paid
                             </button>
                             <button
-                              onClick={() => handleRejectPayment(payment.id)}
+                              onClick={() => handleCancelBooking(payment.id)}
                               style={{
                                 background: '#f44336',
                                 color: 'white',
@@ -810,7 +913,7 @@ function PaymentManagement() {
                                 e.target.style.background = '#f44336';
                               }}
                             >
-                              Reject
+                              Cancel Booking
                             </button>
                           </div>
                         ) : payment.status === 'completed' ? (
@@ -900,9 +1003,9 @@ function PaymentManagement() {
                     }}
                   >
                     {isHistorySearch
-                      ? `No completed payments found for ${searchedHistoryDate} on ${
-                          searchedHistoryRoute === 'all' ? 'any route' : searchedHistoryRoute
-                        }.`
+                      ? `No completed payments found${searchedHistoryDate ? ` for ${searchedHistoryDate}` : ''}${
+                          searchedHistoryRoute === 'all' ? '.' : ` on ${searchedHistoryRoute}.`
+                        }`
                       : `No payment data available yet for ${
                           adminData ? adminData.assignedBoat : 'this boat'
                         }.`}
