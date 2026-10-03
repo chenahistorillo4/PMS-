@@ -9,14 +9,18 @@ function initFirebaseAdmin() {
     return admin;
   }
 
+  const projectId =
+    process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'pms-ferry';
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (serviceAccountJson) {
     admin.initializeApp({
       credential: admin.credential.cert(JSON.parse(serviceAccountJson)),
+      projectId,
     });
   } else {
     admin.initializeApp({
       credential: admin.credential.applicationDefault(),
+      projectId,
     });
   }
 
@@ -40,17 +44,19 @@ async function markPaymentCompletedByIntentId(paymongoPaymentIntentId) {
   const paymentDoc = paymentsQuery.docs[0];
   const paymentData = paymentDoc.data();
 
-  await paymentDoc.ref.update({
+  const batch = db.batch();
+  batch.update(paymentDoc.ref, {
     status: 'completed',
     paymongoStatus: 'paid',
     confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
   if (paymentData.bookingId) {
-    await db.collection('bookings').doc(paymentData.bookingId).update({
+    batch.update(db.collection('bookings').doc(paymentData.bookingId), {
       status: 'confirmed',
     });
   }
+  await batch.commit();
 }
 
 async function markPaymentFailedByIntentId(paymongoPaymentIntentId) {
@@ -88,17 +94,19 @@ async function markPaymentCompletedBySourceId(paymongoSourceId) {
   const paymentDoc = paymentsQuery.docs[0];
   const paymentData = paymentDoc.data();
 
-  await paymentDoc.ref.update({
+  const batch = db.batch();
+  batch.update(paymentDoc.ref, {
     status: 'completed',
     paymongoStatus: 'paid',
     confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
   if (paymentData.bookingId) {
-    await db.collection('bookings').doc(paymentData.bookingId).update({
+    batch.update(db.collection('bookings').doc(paymentData.bookingId), {
       status: 'confirmed',
     });
   }
+  await batch.commit();
 }
 
 async function markPaymentFailedBySourceId(paymongoSourceId) {

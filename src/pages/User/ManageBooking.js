@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { auth, db } from "../../firebase";
-import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { formatTime12Hour } from "../../utils/timeFormatter";
@@ -140,6 +140,7 @@ function ManageBooking() {
               paymentMap[payment.bookingId] = {
                 paymentId: doc.id,
                 status: payment.status?.toLowerCase?.() || "",
+                paymentMode: payment.paymentMode || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
               };
             }
@@ -148,7 +149,10 @@ function ManageBooking() {
 
         await Promise.all(
           Object.entries(paymentMap)
-            .filter(([, payment]) => payment.status === 'pending')
+            .filter(
+              ([, payment]) =>
+                payment.status === 'pending' && payment.paymentMode !== 'pay_later'
+            )
             .map(([, payment]) => checkPaymentExpiry(payment.paymentId))
         );
 
@@ -161,6 +165,7 @@ function ManageBooking() {
               refreshedPaymentMap[payment.bookingId] = {
                 paymentId: paymentDoc.id,
                 status: payment.status?.toLowerCase?.() || "",
+                paymentMode: payment.paymentMode || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null,
               };
             }
@@ -196,6 +201,57 @@ function ManageBooking() {
     return () => unsubscribe();
   }, [reloadKey]);
 
+  useEffect(() => {
+    if (!qrModal.isOpen || !qrModal.bookingId) return undefined;
+
+    const bookingRef = doc(db, "bookings", qrModal.bookingId);
+    const unsubscribeBooking = onSnapshot(
+      bookingRef,
+      (snapshot) => {
+        if (!snapshot.exists()) return;
+        const booking = { id: snapshot.id, ...snapshot.data() };
+        if (booking.date?.toDate) {
+          booking.date = booking.date.toDate().toLocaleDateString("en-PH", {
+            year: "numeric",
+            month: "long",
+            day: "numeric"
+          });
+        }
+        setBookings((previous) =>
+          previous.map((item) => (item.id === booking.id ? { ...item, ...booking } : item))
+        );
+      },
+      (error) => console.error("Error watching booking status:", error)
+    );
+    const paymentQuery = query(
+      collection(db, "payments"),
+      where("bookingId", "==", qrModal.bookingId)
+    );
+    const unsubscribePayment = onSnapshot(
+      paymentQuery,
+      (snapshot) => {
+        const paymentDoc = snapshot.docs[0];
+        if (!paymentDoc) return;
+        const payment = paymentDoc.data();
+        setPaymentStatuses((previous) => ({
+          ...previous,
+          [qrModal.bookingId]: {
+            paymentId: paymentDoc.id,
+            status: payment.status?.toLowerCase?.() || "",
+            paymentMode: payment.paymentMode || "",
+            proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
+          }
+        }));
+      },
+      (error) => console.error("Error watching payment status:", error)
+    );
+
+    return () => {
+      unsubscribeBooking();
+      unsubscribePayment();
+    };
+  }, [qrModal.isOpen, qrModal.bookingId]);
+
   const getBookingDisplayState = (booking, paymentInfo = {}) => {
     const bookingStatus = booking.status?.toLowerCase?.() || "";
     const paymentStatus = paymentInfo.status?.toLowerCase?.() || "";
@@ -212,11 +268,21 @@ function ManageBooking() {
       };
     }
 
+    if (bookingStatus === "scanned") {
+      return {
+        label: "Boarded",
+        color: "#4caf50",
+        paymentLabel: paymentStatus === "completed" ? "Paid" : "Pending",
+        paymentColor: paymentStatus === "completed" ? "#4caf50" : "#ff9800",
+        canShowQr: false,
+        actionLabel: "Already Boarded",
+        actionDisabled: true,
+      };
+    }
+
     if (
       paymentStatus === "completed" ||
-      paymentStatus === "confirmed" ||
-      bookingStatus === "confirmed" ||
-      bookingStatus === "departed"
+      paymentStatus === "confirmed"
     ) {
       return {
         label: bookingStatus === "departed" ? "Departed" : "Confirmed",
@@ -229,15 +295,27 @@ function ManageBooking() {
       };
     }
 
-    if (paymentStatus === "pending" && paymentInfo.proofOfPaymentBase64) {
+    if (paymentStatus === "failed") {
       return {
-        label: "Not Paid",
-        color: "#ff9800",
-        paymentLabel: "Pending Approval",
-        paymentColor: "#ff9800",
+        label: "Cancelled",
+        color: "#f44336",
+        paymentLabel: "Payment Failed",
+        paymentColor: "#f44336",
         canShowQr: false,
-        actionLabel: "Waiting for Approval",
+        actionLabel: "Payment Failed",
         actionDisabled: true,
+      };
+    }
+
+    if (paymentStatus === "pending" || paymentInfo.paymentId) {
+      return {
+        label: "Pending",
+        color: "#ff9800",
+        paymentLabel: paymentInfo.proofOfPaymentBase64 ? "Pending Approval" : "Pending",
+        paymentColor: "#ff9800",
+        canShowQr: Boolean(paymentInfo.paymentId),
+        actionLabel: "View QR (Pending)",
+        actionDisabled: !paymentInfo.paymentId,
       };
     }
 
@@ -772,6 +850,49 @@ function ManageBooking() {
               <div style={{ background: "white", padding: isMobile ? "10px" : "12px", borderRadius: "12px", border: "1px solid #e0e8f0", display: "inline-block", marginBottom: "14px" }}>
                 <QRCodeCanvas value={qrModal.referenceCode || qrModal.bookingId || ""} size={isMobile ? 180 : 220} />
               </div>
+              {(() => {
+                const booking = bookings.find((item) => item.id === qrModal.bookingId);
+                const paymentInfo = paymentStatuses[qrModal.bookingId] || {};
+                const displayState = booking
+                  ? getBookingDisplayState(booking, paymentInfo)
+                  : null;
+                const isPaidAndValid =
+                  displayState?.paymentLabel === "Paid" && booking?.status === "confirmed";
+                const qrStatusLabel = booking?.status === "scanned"
+                  ? "Already boarded"
+                  : booking?.status === "cancelled"
+                    ? "Cancelled"
+                    : isPaidAndValid
+                      ? "Paid / Valid for boarding"
+                      : "Pending payment / Not valid for boarding";
+                const qrStatusIsInvalid =
+                  booking?.status === "scanned" || booking?.status === "cancelled";
+
+                return (
+                  <div
+                    role="status"
+                    style={{
+                      marginBottom: "14px",
+                      padding: "10px",
+                      borderRadius: "8px",
+                      background: isPaidAndValid
+                        ? "#e8f5e9"
+                        : qrStatusIsInvalid
+                          ? "#ffebee"
+                          : "#fff3e0",
+                      color: isPaidAndValid
+                        ? "#2e7d32"
+                        : qrStatusIsInvalid
+                          ? "#c62828"
+                          : "#e65100",
+                      fontWeight: 800,
+                      fontSize: isMobile ? "0.78rem" : "0.9rem"
+                    }}
+                  >
+                    {qrStatusLabel}
+                  </div>
+                );
+              })()}
               <div style={{ fontSize: isMobile ? "0.62rem" : "0.7rem", fontWeight: 800, color: "#7b8da1", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                 Reference Code
               </div>

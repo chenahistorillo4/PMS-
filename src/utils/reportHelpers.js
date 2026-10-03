@@ -94,7 +94,11 @@ export function filterBookingsByRange(bookings, range) {
 }
 
 export function getBookingRouteLabel(booking) {
-  return booking.tripName || booking.route || booking.routeDirection || 'N/A';
+  return booking.routeDirection || booking.route || 'N/A';
+}
+
+export function getBookingTripNameLabel(booking) {
+  return booking.tripName || 'N/A';
 }
 
 export function normalizeBookingForReport(booking) {
@@ -122,7 +126,7 @@ export function summarizeBookings(bookings) {
   const normalized = bookings.map(normalizeBookingForReport);
   const totalRevenue = normalized.reduce((sum, b) => sum + b.paymentAmount, 0);
   const completedBookings = normalized.filter(
-    (b) => b.status === 'confirmed' || b.status === 'completed'
+    (b) => ['confirmed', 'completed', 'departed', 'scanned'].includes(b.status)
   ).length;
   const pendingBookings = normalized.filter((b) => b.status === 'pending').length;
   const cancelledBookings = normalized.filter((b) => b.status === 'cancelled').length;
@@ -143,13 +147,17 @@ export function getUniqueRoutesFromBookings(bookings) {
   return [...new Set(bookings.map(getBookingRouteLabel).filter((route) => route && route !== 'N/A'))].sort();
 }
 
+export function getUniqueTripNamesFromBookings(bookings) {
+  return [...new Set(bookings.map(getBookingTripNameLabel).filter((name) => name && name !== 'N/A'))].sort();
+}
+
 export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
 }
 
 export function isConfirmedBooking(booking) {
   const status = String(booking?.status || 'pending').toLowerCase();
-  return status === 'confirmed' || status === 'completed' || status === 'departed';
+  return ['confirmed', 'completed', 'departed', 'scanned'].includes(status);
 }
 
 function bookingCreatedInRange(booking, range) {
@@ -194,7 +202,7 @@ export function computeDashboardMetrics(bookings = []) {
   };
 }
 
-export function buildReportFilterLabel({ reportPeriod, filterDate, filterRoute }) {
+export function buildReportFilterLabel({ reportPeriod, filterDate, filterRoute, filterTripName }) {
   const parts = [];
   if (reportPeriod) {
     parts.push(getPeriodRange(reportPeriod)?.label || reportPeriod);
@@ -204,6 +212,9 @@ export function buildReportFilterLabel({ reportPeriod, filterDate, filterRoute }
   }
   if (filterRoute) {
     parts.push(`Route: ${filterRoute}`);
+  }
+  if (filterTripName) {
+    parts.push(`Trip name: ${filterTripName}`);
   }
   return parts.length > 0 ? parts.join(' · ') : 'All bookings';
 }

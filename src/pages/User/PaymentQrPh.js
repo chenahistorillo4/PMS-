@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../firebase';
 import {
   getPayMongoPaymentStatus,
@@ -94,21 +94,27 @@ function PaymentQrPh() {
     }
 
     const markPaid = async (paymentRef, paymentData) => {
-      await updateDoc(paymentRef, {
-        status: 'completed',
-        paymongoStatus: 'paid',
-      });
-
       if (paymentData.bookingId) {
-        await updateDoc(doc(db, 'bookings', paymentData.bookingId), {
+        const batch = writeBatch(db);
+        batch.update(paymentRef, {
+          status: 'completed',
+          paymongoStatus: 'paid',
+        });
+        batch.update(doc(db, 'bookings', paymentData.bookingId), {
           status: 'confirmed',
         });
+        await batch.commit();
 
         notifyPaymentSuccess({
           paymentId,
           bookingId: paymentData.bookingId,
           notifyAdmin: true,
         }).catch((error) => console.warn('Payment success notification failed:', error));
+      } else {
+        await updateDoc(paymentRef, {
+          status: 'completed',
+          paymongoStatus: 'paid',
+        });
       }
 
       setStatus('success');

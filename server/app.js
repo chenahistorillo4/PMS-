@@ -10,10 +10,12 @@ const {
   chargeSource,
 } = require('./paymongo');
 const {
+  initFirebaseAdmin,
   markPaymentCompletedByIntentId,
   markPaymentFailedByIntentId,
   markPaymentCompletedBySourceId,
 } = require('./firebaseAdmin');
+const { processPaymentExpiry } = require('./paymentExpiryService');
 
 function getAllowedOrigins() {
   const origins = (process.env.CLIENT_ORIGIN || 'http://localhost:3000')
@@ -128,6 +130,24 @@ function createApp() {
       mailConfigured: isMailConfigured(),
       smsConfigured: isSmsConfigured(),
     });
+  });
+
+  app.get('/api/payments/qrph', async (req, res) => {
+    const { paymentId } = req.query;
+    if (typeof paymentId !== 'string' || !paymentId.trim()) {
+      return res.status(400).json({ error: 'paymentId is required' });
+    }
+
+    try {
+      const adminApp = initFirebaseAdmin();
+      const result = await processPaymentExpiry(adminApp.firestore(), {
+        paymentId: paymentId.trim(),
+      });
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error('QR Ph payment expiry check error:', error);
+      return res.status(500).json({ error: 'Unable to check payment expiry' });
+    }
   });
 
   app.post('/api/payments/qrph', async (req, res) => {

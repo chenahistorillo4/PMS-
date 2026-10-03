@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { db } from "../../firebase";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import BookingDetails from "./BookingDetails";
 
@@ -9,6 +9,7 @@ function Booking({ userId, userType }) {
   const [discounts, setDiscounts] = useState({});
   const [search, setSearch] = useState("");
   const [bookingCounts, setBookingCounts] = useState({});
+  const [bookingCountsLoaded, setBookingCountsLoaded] = useState(false);
   const [expandedTrips, setExpandedTrips] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [showModal, setShowModal] = useState(false);
@@ -30,41 +31,70 @@ function Booking({ userId, userType }) {
   }, []);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const tripSnap = await getDocs(collection(db, "schedules"));
-        const tripData = tripSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        setTrips(tripData);
+    const unsubscribeTrips = onSnapshot(
+      collection(db, "schedules"),
+      (snapshot) => {
+        setTrips(snapshot.docs.map((tripDoc) => ({ id: tripDoc.id, ...tripDoc.data() })));
+      },
+      (error) => console.error("Error listening to trips:", error)
+    );
 
-        const counts = {};
-        for (const trip of tripData) {
-          try {
-            const bookingQuery = query(
-              collection(db, "bookings"),
-              where("tripId", "==", trip.id),
-              where("status", "==", "confirmed")
-            );
-            const bookingSnap = await getDocs(bookingQuery);
-            counts[trip.id] = bookingSnap.size;
-          } catch (error) {
-            console.error(`Error fetching bookings for trip ${trip.id}:`, error);
-            counts[trip.id] = 0;
-          }
-        }
-        setBookingCounts(counts);
-
-        const discountSnap = await getDocs(collection(db, "discounts"));
+    getDocs(collection(db, "discounts"))
+      .then((discountSnap) => {
         const discountData = {};
-        discountSnap.docs.forEach((doc) => {
-          discountData[doc.id] = doc.data();
+        discountSnap.docs.forEach((discountDoc) => {
+          discountData[discountDoc.id] = discountDoc.data();
         });
         setDiscounts(discountData);
-      } catch (error) {
-        console.error("Error fetching data:", error);
-      }
+      })
+      .catch((error) => console.error("Error fetching discounts:", error));
+
+    return () => {
+      unsubscribeTrips();
     };
-    fetchData();
   }, []);
+
+  useEffect(() => {
+    if (trips.length === 0) {
+      setBookingCounts({});
+      setBookingCountsLoaded(true);
+      return undefined;
+    }
+
+    let isActive = true;
+    const pendingInitialSnapshots = new Set(trips.map((trip) => trip.id));
+    setBookingCountsLoaded(false);
+
+    const unsubscribers = trips.map((trip) => {
+      const bookingsQuery = query(
+        collection(db, "bookings"),
+        where("tripId", "==", trip.id)
+      );
+      return onSnapshot(
+        bookingsQuery,
+        (snapshot) => {
+          if (!isActive) return;
+          const activeBookingCount = snapshot.docs.filter((bookingDoc) => {
+            const status = bookingDoc.data().status?.toLowerCase?.() || "";
+            return status !== "cancelled" && status !== "failed";
+          }).length;
+          setBookingCounts((previous) => ({ ...previous, [trip.id]: activeBookingCount }));
+          pendingInitialSnapshots.delete(trip.id);
+          if (pendingInitialSnapshots.size === 0) setBookingCountsLoaded(true);
+        },
+        (error) => {
+          console.error(`Error listening to bookings for trip ${trip.id}:`, error);
+          pendingInitialSnapshots.delete(trip.id);
+          if (pendingInitialSnapshots.size === 0) setBookingCountsLoaded(true);
+        }
+      );
+    });
+
+    return () => {
+      isActive = false;
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [trips]);
 
   const filteredTrips = trips.filter((trip) => {
     const matchesSearch =
@@ -254,6 +284,8 @@ function Booking({ userId, userType }) {
                 {(() => {
                   const isExpanded = !!expandedTrips[trip.id];
                   const isUnavailable =
+                    !bookingCountsLoaded ||
+                    getAvailableSpots(trip) <= 0 ||
                     trip.status?.toLowerCase() === "departed" ||
                     trip.status?.toLowerCase() === "cancelled" ||
                     trip.status?.toLowerCase() === "boarding";
@@ -461,7 +493,13 @@ function Booking({ userId, userType }) {
                       }
                     }}
                   >
-                    {isUnavailable ? "Not Available" : "Book Now"}
+                    {!bookingCountsLoaded
+                      ? "Loading Availability..."
+                      : getAvailableSpots(trip) <= 0
+                        ? "Fully Booked"
+                        : isUnavailable
+                          ? "Not Available"
+                          : "Book Now"}
                   </button>
 
                 </div>

@@ -50,7 +50,7 @@ function BookingDetails(props) {
     cargoType: '',
     cargoWeight: '',
     userType: userType || 'regular',
-    payment: '',
+    payment: trip?.allowPayLater ? 'Pay Later' : '',
     idProof: null,
     idProofBase64: null,
     idPreview: null,
@@ -67,6 +67,7 @@ function BookingDetails(props) {
   const [payMongoReady, setPayMongoReady] = useState(false);
   const paymentAutoSelectedRef = useRef(false);
   const usesPayMongoGcash = isPayMongoGcash(form.payment);
+  const isPayLater = form.payment === 'Pay Later';
 
   useEffect(() => {
     checkPayMongoReady().then(setPayMongoReady);
@@ -196,8 +197,12 @@ function BookingDetails(props) {
 
         setAvailablePaymentMethods(methods);
 
-        // Auto-select first available payment method only once
-        if (methods.length > 0 && !paymentAutoSelectedRef.current) {
+        if (trip?.allowPayLater) {
+          setForm((prev) => ({ ...prev, payment: 'Pay Later' }));
+          setSelectedPaymentAccount(null);
+          paymentAutoSelectedRef.current = true;
+        } else if (methods.length > 0 && !paymentAutoSelectedRef.current) {
+          // Auto-select first available payment method only once
           setForm((prev) => ({ ...prev, payment: methods[0].accountType }));
           setSelectedPaymentAccount(methods[0]);
           paymentAutoSelectedRef.current = true;
@@ -208,7 +213,7 @@ function BookingDetails(props) {
     };
 
     fetchPaymentMethods();
-  }, [trip?.boat]);
+  }, [trip?.allowPayLater, trip?.boat]);
 
   // Validate user type when boat discounts change
   useEffect(() => {
@@ -301,7 +306,7 @@ function BookingDetails(props) {
     }
 
     // Manual proof is only required for non-PayMongo payments
-    if (!usesPayMongoGcash && !paymentProofBase64) {
+    if (!isPayLater && !usesPayMongoGcash && !paymentProofBase64) {
       alert('Please upload your proof of payment screenshot.');
       return;
     }
@@ -368,6 +373,7 @@ function BookingDetails(props) {
         discountAmount,
         finalPrice,
         payment: form.payment,
+        paymentMode: isPayLater ? 'pay_later' : 'prepaid',
         userId: userId || null,
         userEmail: auth.currentUser?.email || null,
         userPhone: userPhone || null,
@@ -377,7 +383,7 @@ function BookingDetails(props) {
         status: 'pending',
         referenceCode: referenceCode,
         qrCodeValue: referenceCode,
-        paymentExpiresAt,
+        paymentExpiresAt: isPayLater ? null : paymentExpiresAt,
         createdAt: new Date(),
       };
 
@@ -397,13 +403,14 @@ function BookingDetails(props) {
         trip: trip.name,
         amount: finalPrice,
         method: form.payment,
+        paymentMode: isPayLater ? 'pay_later' : 'prepaid',
         paymentAccountId: selectedPaymentAccount?.id || null,
         paymentAccountNumber: selectedPaymentAccount?.accountNumber || null,
         status: 'pending',
         paymentProvider: usesPayMongoGcash ? 'paymongo' : 'manual',
         proofOfPaymentBase64: usesPayMongoGcash ? null : paymentProofBase64,
         proofOfPaymentFileName: usesPayMongoGcash ? null : paymentProof?.name || null,
-        paymentExpiresAt,
+        paymentExpiresAt: isPayLater ? null : paymentExpiresAt,
         createdAt: new Date(),
       };
 
@@ -457,10 +464,12 @@ function BookingDetails(props) {
         return;
       }
 
-      console.log('[SUCCESS] Booking successful! Your proof of payment has been submitted.');
+      console.log('[SUCCESS] Booking successfully saved.');
       setBookingId(docRef.id);
       alert(
-        'Booking successful! Your proof of payment has been submitted. The admin will review and confirm shortly.'
+        isPayLater
+          ? 'Booking successful! Payment is pending. Please pay manually; the admin will confirm your booking after receiving payment.'
+          : 'Booking successful! Your proof of payment has been submitted. The admin will review and confirm shortly.'
       );
 
       // If in modal, close it; otherwise redirect
@@ -1178,9 +1187,25 @@ function BookingDetails(props) {
                 borderBottom: '2px solid #2196f3',
               }}
             >
-              Payment Method
+              {trip?.allowPayLater ? 'Booking Only' : 'Payment Method'}
             </h3>
-            {availablePaymentMethods.length === 0 ? (
+            {trip?.allowPayLater ? (
+              <div
+                style={{
+                  padding: '15px',
+                  background: '#fff9e6',
+                  border: '1px solid #ffc107',
+                  borderRadius: '8px',
+                  color: '#856404',
+                  fontSize: isMobile ? '0.75rem' : '0.9rem',
+                  fontWeight: 500,
+                  lineHeight: 1.5,
+                }}
+              >
+                Reserve this trip now. Payment of ₱{Number(finalPrice).toFixed(2)} is due manually
+                later and will remain pending until the admin confirms it.
+              </div>
+            ) : availablePaymentMethods.length === 0 ? (
               <div
                 style={{
                   padding: '15px',
@@ -1231,7 +1256,7 @@ function BookingDetails(props) {
           </div>
 
           {/* Payment Instructions Section - Show when payment method selected BEFORE booking */}
-          {form.payment && !bookingId && (
+          {form.payment && !bookingId && !isPayLater && (
             <div
               style={{
                 background: usesPayMongoGcash ? '#e8f5e9' : '#fff9e6',
@@ -1256,7 +1281,11 @@ function BookingDetails(props) {
                   borderBottom: usesPayMongoGcash ? '2px solid #4caf50' : '2px solid #ffc107',
                 }}
               >
-                {usesPayMongoGcash ? 'Pay with QR Ph (GCash / Bank Apps)' : 'Payment Instructions'}
+                {isPayLater
+                  ? 'Pay Later'
+                  : usesPayMongoGcash
+                  ? 'Pay with QR Ph (GCash / Bank Apps)'
+                  : 'Payment Instructions'}
               </h3>
 
               <div
@@ -1268,7 +1297,21 @@ function BookingDetails(props) {
                   border: usesPayMongoGcash ? '1px solid #4caf50' : '1px solid #ffc107',
                 }}
               >
-                {usesPayMongoGcash ? (
+                {isPayLater ? (
+                  <p
+                    style={{
+                      fontSize: isMobile
+                        ? 'clamp(0.7rem, 0.85vw, 0.78rem)'
+                        : 'clamp(0.85rem, 1vw, 0.9rem)',
+                      color: '#666',
+                      marginBottom: '15px',
+                      lineHeight: '1.6',
+                    }}
+                  >
+                    You can pay ₱<strong>{Number(finalPrice).toFixed(2)}</strong> later. Your booking
+                    and payment will stay pending until the admin confirms payment.
+                  </p>
+                ) : usesPayMongoGcash ? (
                   <>
                     <p
                       style={{
@@ -1431,7 +1474,7 @@ function BookingDetails(props) {
           )}
 
           {/* Proof of Payment Upload Section - manual payments only */}
-          {form.payment && !bookingId && !usesPayMongoGcash && (
+          {form.payment && !bookingId && !usesPayMongoGcash && !isPayLater && (
             <div
               style={{
                 background: 'white',
@@ -1553,6 +1596,25 @@ function BookingDetails(props) {
             </div>
           )}
 
+          <div
+            role="note"
+            style={{
+              marginBottom: '16px',
+              padding: '14px 16px',
+              background: '#fff3e0',
+              border: '1px solid #ffb74d',
+              borderLeft: '5px solid #f57c00',
+              borderRadius: '8px',
+              color: '#7a3e00',
+              fontSize: isMobile ? '0.78rem' : '0.92rem',
+              lineHeight: 1.6,
+            }}
+          >
+            <strong>Paalala:</strong> Dapat nasa venue ka nang hindi bababa sa 30 minuto bago
+            ang oras ng pag-alis ng bangka. Kapag hindi ka nakarating bago ang 30-minute cutoff,
+            kakanselahin ang booking at bibigyan ng prayoridad ang mga pasaherong nasa venue.
+          </div>
+
           {/* Confirm Booking Button - at dulo, after payment instructions */}
           {!bookingId && (
             <div
@@ -1624,6 +1686,8 @@ function BookingDetails(props) {
               >
                 {loading
                   ? 'Processing...'
+                  : isPayLater
+                  ? 'Confirm Booking (Pay Later)'
                   : usesPayMongoGcash
                   ? 'Confirm & Show QR Code'
                   : 'Confirm Booking'}
