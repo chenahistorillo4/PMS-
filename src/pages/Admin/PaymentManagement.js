@@ -15,6 +15,7 @@ import AdminLayout from './AdminLayout';
 import { QRCodeCanvas } from 'qrcode.react';
 import { notifyPaymentSuccess, notifyPassengerRefundStatus } from '../../utils/notificationHelper';
 import { useAuthReloadKey, useAuthUser } from '../../hooks/useAuthUser';
+import { getStaffAccount } from '../../utils/staffAccount';
 
 function PaymentManagement() {
   const [adminData, setAdminData] = useState(null);
@@ -87,7 +88,11 @@ function PaymentManagement() {
   const historyEndIndex = historyStartIndex + itemsPerPage;
   const paginatedHistory = completedPayments.slice(historyStartIndex, historyEndIndex);
 
-  const getPaymentStatusLabel = (status) => {
+  const getPaymentStatusLabel = (payment) => {
+    if (payment.paymongoStatus === 'paid' && payment.status === 'pending') {
+      return 'Paid - Awaiting Port Confirmation';
+    }
+    const { status } = payment;
     if (status === 'completed') return 'confirmed';
     return status || 'pending';
   };
@@ -119,15 +124,21 @@ function PaymentManagement() {
       try {
           console.log('Current user:', user.uid);
 
-          // Fetch admin data
-          const docRef = doc(db, 'admins', user.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            console.log('Admin data found:', docSnap.data());
-            setAdminData(docSnap.data());
+          // Fetch the assigned boat for either an admin or Port Staff account.
+          const account = await getStaffAccount(user.uid);
+          if (account) {
+            console.log('Staff account data found:', account.data);
+            setAdminData(account.data);
 
             // Fetch payments for this boat
-            const boatName = docSnap.data().assignedBoat;
+            const boatName = account.data.assignedBoat;
+            if (!boatName) {
+              setPayments([]);
+              setRefundRequests([]);
+              setRouteOptions([]);
+              console.warn('Staff account has no assigned boat; payment data was not loaded.');
+              return;
+            }
             const [paymentsSnap, bookingsSnap] = await Promise.all([
               getDocs(query(collection(db, 'payments'), where('boat', '==', boatName))),
               getDocs(query(collection(db, 'bookings'), where('boat', '==', boatName))),
@@ -139,7 +150,7 @@ function PaymentManagement() {
               .map((bookingDoc) => bookingDoc.data().routeDirection || bookingDoc.data().route)
               .filter(Boolean);
             setRouteOptions(
-              [...new Set([...(docSnap.data().availableRoutes || []), ...bookingRoutes])].sort()
+              [...new Set([...(account.data.availableRoutes || []), ...bookingRoutes])].sort()
             );
             const paymentsList = paymentsSnap.docs
               .map((doc) => ({
@@ -811,7 +822,9 @@ function PaymentManagement() {
                           style={{
                             background:
                               payment.status === 'pending'
-                                ? '#ff9800'
+                                ? payment.paymongoStatus === 'paid'
+                                  ? '#ef6c00'
+                                  : '#ff9800'
                                 : payment.status === 'completed'
                                 ? '#4caf50'
                                 : '#f44336',
@@ -823,7 +836,7 @@ function PaymentManagement() {
                             textTransform: 'uppercase',
                           }}
                         >
-                          {getPaymentStatusLabel(payment.status)}
+                          {getPaymentStatusLabel(payment)}
                         </span>
                       </td>
                       <td
@@ -891,7 +904,7 @@ function PaymentManagement() {
                                 e.target.style.background = '#4caf50';
                               }}
                             >
-                              Confirm Paid
+                              {payment.paymongoStatus === 'paid' ? 'Confirm Booking' : 'Confirm Paid'}
                             </button>
                             <button
                               onClick={() => handleCancelBooking(payment.id)}

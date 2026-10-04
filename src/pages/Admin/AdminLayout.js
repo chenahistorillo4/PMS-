@@ -1,10 +1,12 @@
 import { Link, useNavigate } from "react-router-dom";
-import { db } from "../../firebase";
 import { useEffect, useState } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { signOut } from "firebase/auth";
+import { auth } from "../../firebase";
 import { useAdminUnreadNotificationCount } from "../../hooks/useUnreadNotificationCount";
 import { NavNotificationBadge } from "../../components/NotificationBadge";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
+import { useAuth } from "../../hooks/AuthContext";
+import { getStaffAccount } from "../../utils/staffAccount";
 
 function AdminLayout({ children, active }) {
   const navigate = useNavigate();
@@ -13,11 +15,22 @@ function AdminLayout({ children, active }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
   const { user, authReady } = useAuthUser();
+  const { role } = useAuth();
   const reloadKey = useAuthReloadKey();
   const unreadNotificationCount = useAdminUnreadNotificationCount(
-    adminData?.assignedBoat,
-    adminId
+    role === "portstaff" ? null : adminData?.assignedBoat,
+    role === "portstaff" ? null : adminId
   );
+
+  const handlePortStaffSignOut = async () => {
+    try {
+      await signOut(auth);
+      navigate("/login", { replace: true });
+    } catch (error) {
+      console.error("Unable to sign out Port Staff:", error);
+      alert(`Unable to sign out: ${error.message}`);
+    }
+  };
 
   // Handle window resize
   useEffect(() => {
@@ -47,16 +60,15 @@ function AdminLayout({ children, active }) {
       setAdminId(user.uid);
 
       try {
-        const docRef = doc(db, "admins", user.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setAdminData(docSnap.data());
+        const account = await getStaffAccount(user.uid);
+        if (account) {
+          setAdminData(account.data);
         } else {
-          console.error("Admin document not found");
+          console.error("Staff account document not found");
           setAdminData(null);
         }
       } catch (error) {
-        console.error("Error fetching admin data:", error);
+        console.error("Error fetching staff account data:", error);
         setAdminData(null);
       }
     };
@@ -141,8 +153,37 @@ function AdminLayout({ children, active }) {
           <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
         </svg>
       )
+    },
+    {
+      to: "/port-staff-management",
+      label: "Port Staff",
+      key: "port-staff",
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M20 8v6"></path>
+          <path d="M23 11h-6"></path>
+        </svg>
+      )
+    },
+    {
+      to: "/qr-scanner",
+      label: "Scan QR",
+      key: "scan",
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+          <path d="M14 14h3v3h-3zM20 14v2M14 20h2M20 19v2"></path>
+        </svg>
+      )
     }
   ];
+  const visibleMenuItems = role === "portstaff"
+    ? menuItems.filter((item) => ["reports", "booking", "payment", "schedule", "scan"].includes(item.key))
+    : menuItems;
 
   return (
     <div style={{ display: "flex", height: "100vh", minHeight: 0, background: "#f5f9fc", overflow: "hidden" }}>
@@ -236,7 +277,7 @@ function AdminLayout({ children, active }) {
                 letterSpacing: "0.4px",
                 textTransform: "uppercase"
               }}>
-                Admin Portal
+                {role === "portstaff" ? "Port Staff Portal" : "Admin Portal"}
               </p>
             </div>
           </div>
@@ -290,7 +331,7 @@ function AdminLayout({ children, active }) {
               Navigation
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {menuItems.map((item) => (
+              {visibleMenuItems.map((item) => (
                 <Link
                   key={item.key}
                   to={item.to}
@@ -331,6 +372,26 @@ function AdminLayout({ children, active }) {
                   )}
                 </Link>
               ))}
+              {role === "portstaff" && (
+                <button
+                  type="button"
+                  onClick={handlePortStaffSignOut}
+                  style={{
+                    marginTop: 8,
+                    padding: "12px 15px",
+                    border: "1px solid rgba(255,255,255,0.35)",
+                    borderRadius: 8,
+                    background: "rgba(255,255,255,0.12)",
+                    color: "white",
+                    fontWeight: 700,
+                    fontSize: "0.95rem",
+                    textAlign: "left",
+                    cursor: "pointer",
+                  }}
+                >
+                  Sign Out
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -363,8 +424,7 @@ function AdminLayout({ children, active }) {
             flexShrink: 0
           }}
         >
-          {isMobile && (
-            <button
+          {isMobile && <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               style={{
                 background: "none",
@@ -397,12 +457,11 @@ function AdminLayout({ children, active }) {
                 <line x1="3" y1="18" x2="21" y2="18"></line>
               </svg>
               <NavNotificationBadge count={unreadNotificationCount} />
-            </button>
-          )}
+            </button>}
           <h2 style={{ fontSize: isMobile ? "1.05rem" : "1.3rem", fontWeight: 800, color: "#2c5aa0", margin: 0, flex: 1 }}>
-            Admin Dashboard
+            {role === "portstaff" ? "Port Staff Portal" : "Admin Dashboard"}
           </h2>
-          <button
+          {role !== "portstaff" && <button
             onClick={() => navigate("/admin-profile")}
             title="Account"
             style={{
@@ -437,7 +496,7 @@ function AdminLayout({ children, active }) {
                 objectFit: "cover"
               }}
             />
-          </button>
+          </button>}
         </div>
 
         {/* Content Area */}

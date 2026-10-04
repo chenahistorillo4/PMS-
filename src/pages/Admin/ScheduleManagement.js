@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, collection, addDoc, onSnapshot, query, where, updateDoc, deleteDoc } from "firebase/firestore";
+import { doc, collection, addDoc, onSnapshot, query, where, updateDoc, deleteDoc } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { createTripNotifications } from "../../utils/notificationHelper";
+import { getStaffAccount } from "../../utils/staffAccount";
+import { useAuth } from "../../hooks/AuthContext";
 
 function ScheduleManagement() {
+  const { role } = useAuth();
+  const isPortStaff = role === "portstaff";
   const [adminData, setAdminData] = useState(null);
   const [trips, setTrips] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -40,10 +44,9 @@ function ScheduleManagement() {
       }
 
       try {
-        const docRef = doc(db, "admins", user.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setAdminData(docSnap.data());
+        const account = await getStaffAccount(user.uid);
+        if (account) {
+          setAdminData(account.data);
         } else {
           setAdminData(null);
           console.error("Admin document not found for uid:", user.uid);
@@ -110,7 +113,7 @@ function ScheduleManagement() {
 
   const handleSaveTrip = async (e) => {
   e.preventDefault();
-  if (!adminData) return;
+    if (!adminData || isPortStaff) return;
 
   try {
     // Use Base64 image preview if available, otherwise use existing image or empty string
@@ -199,6 +202,7 @@ function ScheduleManagement() {
 };
 
 const handleEditTrip = (trip) => {
+  if (isPortStaff) return;
   setNewTrip({
     name: trip.name,
     date: trip.date,
@@ -218,6 +222,7 @@ const handleEditTrip = (trip) => {
 };
 
 const handleDeleteTrip = async (id) => {
+  if (isPortStaff) return;
   try {
     const tripToDelete = trips.find(t => t.id === id);
     if (!tripToDelete) return;
@@ -843,7 +848,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
             color: "#1a1a1a",
             margin: "0"
           }}>Trip Schedule</h2>
-          {!showForm && (
+          {!isPortStaff && !showForm && (
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button 
               onClick={() => setShowForm(true)}
@@ -1103,7 +1108,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                       alignItems: "center",
                       width: "100%"
                     }}>
-                      {scheduleView === "upcoming" && (
+                      {!isPortStaff && scheduleView === "upcoming" && (
                         <>
                           <button 
                             onClick={() => handleEditTrip(trip)}
@@ -1157,7 +1162,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                           </button>
                         </>
                       )}
-                      {scheduleView === "history" && (
+                      {!isPortStaff && scheduleView === "history" && (
                         <button 
                           onClick={() => handleDeleteTrip(trip.id)}
                           style={{

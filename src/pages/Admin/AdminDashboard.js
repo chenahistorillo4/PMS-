@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { db } from "../../firebase";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { collection, query, where, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import jsPDF from "jspdf";
 import "jspdf-autotable";
@@ -18,6 +18,7 @@ import {
 } from "../../utils/reportHelpers";
 import ReportPreview from "../../components/ReportPreview";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
+import { getStaffAccount } from "../../utils/staffAccount";
 
 // Chart.js imports
 import { Bar } from "react-chartjs-2";
@@ -65,10 +66,9 @@ function AdminDashboard() {
         return;
       }
 
-      const docRef = doc(db, "admins", user.uid);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setAdminData(docSnap.data());
+      const account = await getStaffAccount(user.uid);
+      if (account) {
+        setAdminData(account.data);
       } else {
         setAdminData(null);
         setBookings([]);

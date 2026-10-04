@@ -3,6 +3,7 @@ import { db } from "../../firebase";
 import { doc, getDoc, collection, getDocs, query, where, updateDoc } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
+import { getStaffAccount } from "../../utils/staffAccount";
 
 const normalizeRoute = (route) =>
   String(route || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -46,12 +47,11 @@ function BookingManagement() {
       setLoading(true);
       setFetchError("");
       try {
-          // Fetch admin data
-          const adminDocRef = doc(db, "admins", user.uid);
-          const adminDocSnap = await getDoc(adminDocRef);
+          // Fetch the assigned boat for either an admin or Port Staff account.
+          const adminAccount = await getStaffAccount(user.uid);
           
-          if (adminDocSnap.exists()) {
-            const admin = adminDocSnap.data();
+          if (adminAccount) {
+            const admin = adminAccount.data;
 
             if (!admin.assignedBoat) {
               setBookings([]);
@@ -90,6 +90,8 @@ function BookingManagement() {
             bookingsByTrip.forEach((snapshot) => {
               if (!snapshot) return;
               snapshot.docs.forEach((bookingDoc) => {
+                const bookingBoat = bookingDoc.data().boat;
+                if (bookingBoat && bookingBoat !== admin.assignedBoat) return;
                 bookingDocsById.set(bookingDoc.id, bookingDoc);
               });
             });
