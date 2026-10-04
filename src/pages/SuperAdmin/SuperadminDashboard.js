@@ -13,7 +13,7 @@ import {
 function SuperadminDashboard() {
   const [stats, setStats] = useState({  
     totalAdmins: 0,
-    totalScanners: 0,
+    totalPortStaff: 0,
     totalBoats: 0
   });
   const [loading, setLoading] = useState(true);
@@ -41,7 +41,7 @@ function SuperadminDashboard() {
     const fetchStats = async () => {
       try {
         const adminsSnapshot = await getDocs(collection(db, "admins"));
-        const scannersSnapshot = await getDocs(collection(db, "qr_scanners"));
+        const portStaffSnapshot = await getDocs(collection(db, "port_staff"));
         const boatsSnapshot = await getDocs(collection(db, "boats"));
         const bookingsSnapshot = await getDocs(collection(db, "bookings"));
 
@@ -62,7 +62,7 @@ function SuperadminDashboard() {
 
         setStats({
           totalAdmins: adminsSnapshot.size,
-          totalScanners: scannersSnapshot.size,
+          totalPortStaff: portStaffSnapshot.size,
           totalBoats: boatsSnapshot.size
         });
         setSystemOperational(true);
@@ -85,8 +85,8 @@ function SuperadminDashboard() {
       if (cardType === "admins") {
         const snapshot = await getDocs(collection(db, "admins"));
         data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      } else if (cardType === "scanners") {
-        const snapshot = await getDocs(collection(db, "qr_scanners"));
+      } else if (cardType === "portstaff") {
+        const snapshot = await getDocs(collection(db, "port_staff"));
         data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       } else if (cardType === "boats") {
         const snapshot = await getDocs(collection(db, "boats"));
@@ -151,7 +151,7 @@ function SuperadminDashboard() {
       name,
       [...routes].filter((route) => route && route !== "N/A").sort(),
     ]));
-  }, [boats, bookings]);
+  }, [boats]);
   const getReportSummary = () => reportSummary;
 
   // Export report as JSON
@@ -164,9 +164,9 @@ function SuperadminDashboard() {
       systemStatus: systemOperational ? "Operational" : "Error",
       statistics: {
         totalAdmins: stats.totalAdmins,
-        totalScanners: stats.totalScanners,
+        totalPortStaff: stats.totalPortStaff,
         totalBoats: stats.totalBoats,
-        totalAccounts: stats.totalAdmins + stats.totalScanners,
+        totalAccounts: stats.totalAdmins + stats.totalPortStaff,
       },
       bookingSummary: summary,
     };
@@ -245,12 +245,12 @@ function SuperadminDashboard() {
       pdf.setFont(undefined, "normal");
       pdf.text("Admin Accounts: " + stats.totalAdmins, marginLeft, yPosition);
       yPosition += 6;
-      pdf.text("QR Scanner Accounts: " + stats.totalScanners, marginLeft, yPosition);
+      pdf.text("Port Staff Accounts: " + stats.totalPortStaff, marginLeft, yPosition);
       yPosition += 6;
       pdf.text("Registered Boats: " + stats.totalBoats, marginLeft, yPosition);
       yPosition += 6;
       pdf.setFont(undefined, "bold");
-      pdf.text("Total Accounts: " + (stats.totalAdmins + stats.totalScanners), marginLeft, yPosition);
+      pdf.text("Total Accounts: " + (stats.totalAdmins + stats.totalPortStaff), marginLeft, yPosition);
       yPosition += 12;
 
       pdf.setFontSize(12);
@@ -334,8 +334,8 @@ function SuperadminDashboard() {
             <span class="stat-value">${stats.totalAdmins}</span>
           </div>
           <div class="stat-row">
-            <span class="stat-label">QR Scanner Accounts</span>
-            <span class="stat-value">${stats.totalScanners}</span>
+            <span class="stat-label">Port Staff Accounts</span>
+            <span class="stat-value">${stats.totalPortStaff}</span>
           </div>
           <div class="stat-row">
             <span class="stat-label">Registered Boats</span>
@@ -343,7 +343,7 @@ function SuperadminDashboard() {
           </div>
           <div class="stat-row" style="border-bottom: 2px solid #4a8bd4; font-weight: 600;">
             <span class="stat-label">Total Accounts</span>
-            <span class="stat-value">${stats.totalAdmins + stats.totalScanners}</span>
+            <span class="stat-value">${stats.totalAdmins + stats.totalPortStaff}</span>
           </div>
 
           <h2>${(reportPeriod || "weekly").toUpperCase()} Booking Summary</h2>
@@ -489,10 +489,10 @@ function SuperadminDashboard() {
             onClick={() => openDetailedModal("admins")}
           />
           <StatCard
-            title="QR Scanner Accounts"
-            count={stats.totalScanners}
+            title="Port Staff Accounts"
+            count={stats.totalPortStaff}
             bgColor="#43a047"
-            onClick={() => openDetailedModal("scanners")}
+            onClick={() => openDetailedModal("portstaff")}
           />
           <StatCard
             title="Registered Boats"
@@ -554,7 +554,7 @@ function SuperadminDashboard() {
             </a>
 
             <a
-              href="/manage-qr-scanners"
+              href="/manage-port-staff"
               style={{
                 display: "block",
                 padding: isMobile ? "12px 10px" : "24px",
@@ -578,8 +578,8 @@ function SuperadminDashboard() {
                 e.currentTarget.style.boxShadow = "none";
               }}
             >
-              <div style={{ fontSize: isMobile ? "0.85rem" : "1.1rem", fontWeight: "700" }}>Manage QR Scanners</div>
-              <div style={{ fontSize: isMobile ? "0.65rem" : "0.85rem", opacity: "0.8", marginTop: "2px" }}>View and manage scanner accounts</div>
+              <div style={{ fontSize: isMobile ? "0.85rem" : "1.1rem", fontWeight: "700" }}>Manage Port Staff</div>
+              <div style={{ fontSize: isMobile ? "0.65rem" : "0.85rem", opacity: "0.8", marginTop: "2px" }}>View and manage Port Staff accounts</div>
             </a>
           </div>
         </div>
@@ -684,7 +684,7 @@ function SuperadminDashboard() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
                 <h2 style={{ margin: 0, fontSize: isMobile ? "1rem" : "1.5rem", color: "#1a1a1a" }}>
                   {selectedCard === "admins" && "Admin Accounts"}
-                  {selectedCard === "scanners" && "QR Scanner Accounts"}
+                  {selectedCard === "portstaff" && "Port Staff Accounts"}
                   {selectedCard === "boats" && "Registered Boats"}
                 </h2>
                 <button onClick={() => setModalOpen(false)} style={{
@@ -724,7 +724,7 @@ function SuperadminDashboard() {
                           <span style={{ color: "#666" }}>Phone: {item.phone || "Not set"}</span>
                         </>
                       )}
-                      {selectedCard === "scanners" && (
+                      {selectedCard === "portstaff" && (
                         <>
                           <span style={{ color: "#666" }}>Name: {item.name}</span><br/>
                           <span style={{ color: "#666" }}>Email: {item.email || "No email"}</span>

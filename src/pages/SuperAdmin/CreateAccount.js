@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { accountCreationAuth, db } from "../../firebase";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, deleteUser } from "firebase/auth";
 import { doc, setDoc, collection, getDocs } from "firebase/firestore";
 import SuperadminLayout from "./SuperadminLayout";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -8,10 +8,10 @@ import { ensureBoatExists } from "../../utils/boatHelpers";
 
 function CreateAccount() {
   const [searchParams] = useSearchParams();
-  const typeParam = searchParams.get("type"); // Get type from URL (admin or scanner)
+  const typeParam = searchParams.get("type");
   const isFixedType = !!typeParam; // If type is specified in URL, don't allow switching
   
-  const [accountType, setAccountType] = useState(typeParam || "admin");
+  const [accountType, setAccountType] = useState(typeParam === "scanner" ? "portstaff" : typeParam || "admin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -75,8 +75,8 @@ function CreateAccount() {
       return;
     }
 
-    if (accountType === "scanner" && !boat) {
-      alert("Please select the boat assigned to this QR scanner");
+    if (accountType === "portstaff" && !boat) {
+      alert("Please select the boat assigned to this Port Staff member");
       return;
     }
 
@@ -112,23 +112,33 @@ function CreateAccount() {
         alert("Admin account created successfully!");
         navigate("/manage-admins");
       } else {
-        // Create QR Scanner Account
-        await setDoc(doc(db, "qr_scanners", uid), {
-          uid,
-          name,
-          email,
-          role: "qr_scanner",
-          assignedBoat: boat,
-          assignedRoute: boats.find((item) => item.name === boat)?.route || null,
-          phone: phone.trim() || null,
-          permissions: ["scan_qr"],
-          status: "active",
-          createdAt: new Date(),
-          lastLogin: null
-        });
+        const selectedBoat = boats.find((item) => item.name === boat);
+        try {
+          await setDoc(doc(db, "port_staff", uid), {
+            uid,
+            name: name.trim(),
+            email: email.trim(),
+            phone: phone.trim() || null,
+            role: "port_staff",
+            status: "active",
+            adminName: "Super Admin",
+            assignedBoat: boat,
+            assignedRoute: selectedBoat?.route || null,
+            permissions: ["scan_qr"],
+            createdAt: new Date(),
+            lastLogin: null
+          });
+        } catch (error) {
+          try {
+            await deleteUser(userCredential.user);
+          } catch (cleanupError) {
+            console.error("Failed to remove the Auth account that was not written to Firestore:", cleanupError);
+          }
+          throw error;
+        }
 
-        alert("QR Scanner account created successfully!");
-        navigate("/manage-qr-scanners");
+        alert("Port Staff account created successfully!");
+        navigate("/manage-port-staff");
       }
 
       resetForm();
@@ -176,7 +186,7 @@ function CreateAccount() {
               fontSize: isMobile ? "1.3rem" : "1.8rem"
             }}>
               {isFixedType 
-                ? (accountType === "admin" ? "Create Admin Account" : "Create QR Scanner Account")
+                ? `Create ${accountType === "admin" ? "Admin" : "Port Staff"} Account`
                 : "Create New Account"
               }
             </h3>
@@ -186,10 +196,10 @@ function CreateAccount() {
               margin: "0"
             }}>
               {isFixedType
-                ? (accountType === "admin" 
+                ? (accountType === "admin"
                     ? "Create a new admin account to manage routes and bookings"
-                    : "Create a new QR scanner account for staff")
-                : "Create admin or QR scanner accounts for your team"
+                    : "Create a Port Staff account assigned to a boat")
+                : "Create admin or Port Staff accounts for your team"
               }
             </p>
           </div>
@@ -239,33 +249,33 @@ function CreateAccount() {
           <button
             type="button"
             onClick={() => {
-              setAccountType("scanner");
+              setAccountType("portstaff");
               resetForm();
             }}
             style={{
               padding: isMobile ? "10px 16px" : "12px 24px",
               border: "none",
-              backgroundColor: accountType === "scanner" ? "#1976d2" : "transparent",
-              color: accountType === "scanner" ? "white" : "#666",
+              backgroundColor: accountType === "portstaff" ? "#1976d2" : "transparent",
+              color: accountType === "portstaff" ? "white" : "#666",
               fontSize: isMobile ? "0.9rem" : "1rem",
-              fontWeight: accountType === "scanner" ? "700" : "600",
+              fontWeight: accountType === "portstaff" ? "700" : "600",
               cursor: "pointer",
               borderRadius: "8px 8px 0 0",
               transition: "all 0.3s ease",
-              borderBottom: accountType === "scanner" ? "3px solid #1565c0" : "none"
+              borderBottom: accountType === "portstaff" ? "3px solid #1565c0" : "none"
             }}
             onMouseEnter={(e) => {
-              if (accountType !== "scanner") {
+              if (accountType !== "portstaff") {
                 e.target.style.backgroundColor = "#f5f5f5";
               }
             }}
             onMouseLeave={(e) => {
-              if (accountType !== "scanner") {
+              if (accountType !== "portstaff") {
                 e.target.style.backgroundColor = "transparent";
               }
             }}
           >
-            QR Scanner Account
+            Port Staff Account
           </button>
         </div>
         )}
@@ -337,7 +347,7 @@ function CreateAccount() {
             />
           </div>
 
-          {(accountType === "admin" || accountType === "scanner") && (
+          {(accountType === "admin" || accountType === "portstaff") && (
           <div style={{ marginBottom: isMobile ? "16px" : "20px" }}>
             <label style={{
               display: "block",
@@ -367,7 +377,7 @@ function CreateAccount() {
               onBlur={(e) => e.target.style.borderColor = "#ddd"}
             />
             <small style={{ display: "block", marginTop: "6px", color: "#666", fontSize: "0.85rem" }}>
-              {accountType === "admin" ? "Admin receives SMS for new bookings, refunds, and trip alerts" : "Contact number for this QR scanner"}
+              {accountType === "admin" ? "Admin receives SMS for new bookings, refunds, and trip alerts" : "Contact number for this Port Staff member"}
             </small>
           </div>
           )}
@@ -580,8 +590,8 @@ function CreateAccount() {
             </>
           )}
 
-          {/* Scanner Info Box */}
-          {accountType === "scanner" && (
+          {/* Port Staff boat assignment */}
+          {accountType === "portstaff" && (
             <div style={{ marginBottom: isMobile ? "16px" : "20px" }}>
               <label style={{ display: "block", marginBottom: "8px", fontWeight: "600", color: "#333", fontSize: isMobile ? "0.85rem" : "0.95rem" }}>
                 Assigned Boat *
@@ -608,7 +618,11 @@ function CreateAccount() {
           }}>
             <button
               type="button"
-              onClick={() => navigate(accountType === "admin" ? "/manage-admins" : "/manage-qr-scanners")}
+              onClick={() => navigate(
+                accountType === "admin"
+                  ? "/manage-admins"
+                  : "/manage-port-staff"
+              )}
               style={{
                 flex: isMobile ? "1 1 100%" : "0 1 auto",
                 padding: isMobile ? "10px 20px" : "12px 24px",
@@ -664,7 +678,7 @@ function CreateAccount() {
                 }
               }}
             >
-              {loading ? "Creating..." : `Create ${accountType === "admin" ? "Admin" : "Scanner"} Account`}
+              {loading ? "Creating..." : `Create ${accountType === "admin" ? "Admin" : "Port Staff"} Account`}
             </button>
           </div>
         </form>
