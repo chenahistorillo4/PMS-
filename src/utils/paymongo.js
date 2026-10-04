@@ -15,7 +15,7 @@ async function parseJsonResponse(response) {
   } catch {
     throw new Error(
       text.startsWith('A server error')
-        ? 'Payment server error on deployment. Push the latest code and confirm server/.env is deployed.'
+        ? 'Payment server error on deployment. Confirm PAYMONGO_SECRET_KEY is configured in the hosting provider environment settings, then redeploy.'
         : text.slice(0, 160)
     );
   }
