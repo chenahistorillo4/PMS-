@@ -8,7 +8,8 @@ const AuthContext = createContext({ user: null, role: null, authReady: false });
 const ROLE_COLLECTIONS = [
   ["superadmin", "superadmin"],
   ["admin", "admins"],
-  ["scanner", "qr_scanners"],
+  ["portstaff", "port_staff"],
+  ["portstaff", "qr_scanners"],
   ["user", "users"],
 ];
 
@@ -23,13 +24,18 @@ async function getUserRole(user) {
     console.warn("Could not read Firebase role claim; checking Firestore role documents.", error);
   }
 
-  if (["superadmin", "admin", "scanner", "qrscanner", "user"].includes(claimRole)) {
-    return claimRole === "qrscanner" ? "scanner" : claimRole;
+  if (["superadmin", "admin", "portstaff", "scanner", "qrscanner", "user"].includes(claimRole)) {
+    return ["scanner", "qrscanner"].includes(claimRole) ? "portstaff" : claimRole;
   }
 
   for (const [roleName, collectionName] of ROLE_COLLECTIONS) {
     const roleSnapshot = await getDoc(doc(db, collectionName, user.uid));
-    if (roleSnapshot.exists()) return roleName;
+    if (roleSnapshot.exists()) {
+      if (roleName === "portstaff" && roleSnapshot.data().status === "inactive") {
+        return null;
+      }
+      return roleName;
+    }
   }
 
   return null;
