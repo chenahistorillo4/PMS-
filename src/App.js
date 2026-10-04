@@ -22,12 +22,14 @@ import ScheduleManagement from "./pages/Admin/ScheduleManagement";
 import PaymentManagement from "./pages/Admin/PaymentManagement";
 import DiscountManagement from "./pages/Admin/DiscountManagement";
 import AdminNotifications from "./pages/Admin/AdminNotifications";
+import PortStaffManagement from "./pages/PortStaff/PortStaffManagement";
 import SuperadminDashboard from "./pages/SuperAdmin/SuperadminDashboard";
 import ReportsAnalytics from "./pages/SuperAdmin/ReportsAnalytics";
+import AdminLayout from "./pages/Admin/AdminLayout";
 import CreateAccount from "./pages/SuperAdmin/CreateAccount";
 import ManageAdmins from "./pages/SuperAdmin/ManageAdmins";
 import ManageQRScanners from "./pages/SuperAdmin/ManageQRScanners";
-import QRScanner from "./pages/scanner/QRScanner";
+import QRScanner from "./pages/PortStaff/QRScanner";
 import RoleRedirect from "./components/RoleRedirect";
 import { AuthProvider, useAuth } from "./hooks/AuthContext";
 import ProtectedRoute from "./hooks/ProtectedRoute";
@@ -44,10 +46,13 @@ const HIDDEN_NAVBAR_ROUTES = [
   "/payment-management",
   "/discount-management",
   "/admin-notifications",
+  "/port-staff-management",
+  "/port-staff-dashboard",
   "/superadmin-dashboard",
   "/superadmin-reports",
   "/create-account",
   "/manage-admins",
+  "/manage-port-staff",
   "/manage-qr-scanners",
   "/qr-scanner"
 ];
@@ -92,23 +97,26 @@ function AppWrapper() {
         <Route path="/redirect" element={<RoleRedirect />} />
 
         {/* Admin routes */}
-        <Route path="/admin-dashboard" element={<ProtectedRoute requiredRole="admin"><AdminDashboard /></ProtectedRoute>} />
+        <Route path="/admin-dashboard" element={<ProtectedRoute requiredRole={["admin", "portstaff"]}><AdminDashboard /></ProtectedRoute>} />
         <Route path="/admin-profile" element={<ProtectedRoute requiredRole="admin"><AdminProfile /></ProtectedRoute>} />
-        <Route path="/booking-management" element={<ProtectedRoute requiredRole="admin"><BookingManagement /></ProtectedRoute>} />
-        <Route path="/schedule-management" element={<ProtectedRoute requiredRole="admin"><ScheduleManagement /></ProtectedRoute>} />
-        <Route path="/payment-management" element={<ProtectedRoute requiredRole="admin"><PaymentManagement /></ProtectedRoute>} />
+        <Route path="/booking-management" element={<ProtectedRoute requiredRole={["admin", "portstaff"]}><BookingManagement /></ProtectedRoute>} />
+        <Route path="/schedule-management" element={<ProtectedRoute requiredRole={["admin", "portstaff"]}><ScheduleManagement /></ProtectedRoute>} />
+        <Route path="/payment-management" element={<ProtectedRoute requiredRole={["admin", "portstaff"]}><PaymentManagement /></ProtectedRoute>} />
         <Route path="/discount-management" element={<ProtectedRoute requiredRole="admin"><DiscountManagement /></ProtectedRoute>} />
         <Route path="/admin-notifications" element={<ProtectedRoute requiredRole="admin"><AdminNotifications /></ProtectedRoute>} />
+        <Route path="/port-staff-management" element={<ProtectedRoute requiredRole="admin"><PortStaffManagement /></ProtectedRoute>} />
+        <Route path="/port-staff-dashboard" element={<ProtectedRoute requiredRole="portstaff"><Navigate to="/admin-dashboard" replace /></ProtectedRoute>} />
 
         {/* Superadmin routes */}
         <Route path="/superadmin-dashboard" element={<ProtectedRoute requiredRole="superadmin"><SuperadminDashboard /></ProtectedRoute>} />
         <Route path="/superadmin-reports" element={<ProtectedRoute requiredRole="superadmin"><ReportsAnalytics /></ProtectedRoute>} />
         <Route path="/create-account" element={<ProtectedRoute requiredRole="superadmin"><CreateAccount /></ProtectedRoute>} />
         <Route path="/manage-admins" element={<ProtectedRoute requiredRole="superadmin"><ManageAdmins /></ProtectedRoute>} />
-        <Route path="/manage-qr-scanners" element={<ProtectedRoute requiredRole="superadmin"><ManageQRScanners /></ProtectedRoute>} />
+        <Route path="/manage-port-staff" element={<ProtectedRoute requiredRole="superadmin"><ManageQRScanners /></ProtectedRoute>} />
+        <Route path="/manage-qr-scanners" element={<Navigate to="/manage-port-staff" replace />} />
 
         {/* QR Scanner route */}
-        <Route path="/qr-scanner" element={<ProtectedRoute requiredRole="scanner"><QRScanner user={user} /></ProtectedRoute>} />
+        <Route path="/qr-scanner" element={<ProtectedRoute requiredRole="portstaff"><AdminLayout active="scan"><QRScanner user={user} embedded /></AdminLayout></ProtectedRoute>} />
         <Route path="/unauthorized" element={<div className="text-center mt-5"><h1>Unauthorized</h1><p>You do not have permission to view this page.</p></div>} />
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
