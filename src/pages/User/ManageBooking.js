@@ -141,6 +141,7 @@ function ManageBooking() {
                 paymentId: doc.id,
                 status: payment.status?.toLowerCase?.() || "",
                 paymentMode: payment.paymentMode || "",
+                paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
               };
             }
@@ -166,6 +167,7 @@ function ManageBooking() {
                 paymentId: paymentDoc.id,
                 status: payment.status?.toLowerCase?.() || "",
                 paymentMode: payment.paymentMode || "",
+                paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null,
               };
             }
@@ -239,6 +241,7 @@ function ManageBooking() {
             paymentId: paymentDoc.id,
             status: payment.status?.toLowerCase?.() || "",
             paymentMode: payment.paymentMode || "",
+            paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
             proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
           }
         }));
@@ -276,6 +279,18 @@ function ManageBooking() {
         paymentColor: paymentStatus === "completed" ? "#4caf50" : "#ff9800",
         canShowQr: false,
         actionLabel: "Already Boarded",
+        actionDisabled: true,
+      };
+    }
+
+    if (paymentStatus === "pending" && paymentInfo.paymongoStatus === "paid") {
+      return {
+        label: "Awaiting Confirmation",
+        color: "#ff9800",
+        paymentLabel: "Paid - Awaiting Confirmation",
+        paymentColor: "#ff9800",
+        canShowQr: false,
+        actionLabel: "Awaiting Port Confirmation",
         actionDisabled: true,
       };
     }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { doc, getDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import {
   getPayMongoPaymentStatus,
@@ -57,17 +57,20 @@ function PaymentQrPh() {
 
         if (paymentData.status === 'completed') {
           setStatus('success');
-          setMessage('Payment confirmed! Your booking is now active.');
+          setMessage('Payment and booking confirmed by port staff.');
           if (paymentData.bookingId) {
             notifyPaymentSuccess({
               paymentId,
               bookingId: paymentData.bookingId,
-              notifyAdmin: true,
-            }).catch((error) => console.warn('Payment success notification failed:', error));
+              notifyAdmin: false,
+            }).catch((error) => console.warn('Booking confirmation notification failed:', error));
           }
         } else if (paymentData.status === 'failed') {
           setStatus('error');
           setMessage('This payment expired and the booking was cancelled. Please book again.');
+        } else if (paymentData.paymongoStatus === 'paid') {
+          setStatus('success');
+          setMessage('Payment received. Your booking is waiting for confirmation by port staff.');
         } else {
           await checkPaymentExpiry(paymentId);
           const refreshedSnap = await getDoc(paymentRef);
@@ -93,32 +96,14 @@ function PaymentQrPh() {
       return undefined;
     }
 
-    const markPaid = async (paymentRef, paymentData) => {
-      if (paymentData.bookingId) {
-        const batch = writeBatch(db);
-        batch.update(paymentRef, {
-          status: 'completed',
-          paymongoStatus: 'paid',
-        });
-        batch.update(doc(db, 'bookings', paymentData.bookingId), {
-          status: 'confirmed',
-        });
-        await batch.commit();
-
-        notifyPaymentSuccess({
-          paymentId,
-          bookingId: paymentData.bookingId,
-          notifyAdmin: true,
-        }).catch((error) => console.warn('Payment success notification failed:', error));
-      } else {
-        await updateDoc(paymentRef, {
-          status: 'completed',
-          paymongoStatus: 'paid',
-        });
-      }
-
+    const markPaid = async (paymentRef) => {
+      await updateDoc(paymentRef, {
+        status: 'pending',
+        paymongoStatus: 'paid',
+        paidAt: new Date(),
+      });
       setStatus('success');
-      setMessage('Payment confirmed! Your booking is now active.');
+      setMessage('Payment received. Your booking is waiting for confirmation by port staff.');
     };
 
     const pollStatus = async () => {
@@ -133,20 +118,32 @@ function PaymentQrPh() {
         const paymentData = paymentSnap.data();
         if (paymentData.status === 'completed') {
           setStatus('success');
-          setMessage('Payment confirmed! Your booking is now active.');
+          setMessage('Payment and booking confirmed by port staff.');
           if (paymentData.bookingId) {
             notifyPaymentSuccess({
               paymentId,
               bookingId: paymentData.bookingId,
-              notifyAdmin: true,
-            }).catch((error) => console.warn('Payment success notification failed:', error));
+              notifyAdmin: false,
+            }).catch((error) => console.warn('Booking confirmation notification failed:', error));
           }
+          return;
+        }
+
+        if (paymentData.paymongoStatus === 'paid') {
+          setStatus('success');
+          setMessage('Payment received. Your booking is waiting for confirmation by port staff.');
           return;
         }
 
         if (paymentData.status === 'failed') {
           setStatus('error');
           setMessage('This payment expired and the booking was cancelled. Please book again.');
+          return;
+        }
+
+        const result = await getPayMongoPaymentStatus(paymentIntentId);
+        if (result.status === 'succeeded') {
+          await markPaid(paymentRef);
           return;
         }
 
@@ -162,10 +159,6 @@ function PaymentQrPh() {
           }
         }
 
-        const result = await getPayMongoPaymentStatus(paymentIntentId);
-        if (result.status === 'succeeded') {
-          await markPaid(paymentRef, paymentData);
-        }
       } catch (error) {
         console.error('QR Ph poll error:', error);
       }

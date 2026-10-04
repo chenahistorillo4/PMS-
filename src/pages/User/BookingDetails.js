@@ -58,6 +58,7 @@ function BookingDetails(props) {
   const [loading, setLoading] = useState(false);
   const [bookingId, setBookingId] = useState(null);
   const [availablePaymentMethods, setAvailablePaymentMethods] = useState([]);
+  const [isLoadingPaymentMethods, setIsLoadingPaymentMethods] = useState(true);
   const [selectedPaymentAccount, setSelectedPaymentAccount] = useState(null);
   const [paymentProof, setPaymentProof] = useState(null);
   const [paymentProofBase64, setPaymentProofBase64] = useState(null);
@@ -68,10 +69,6 @@ function BookingDetails(props) {
   const paymentAutoSelectedRef = useRef(false);
   const usesPayMongoGcash = isPayMongoGcash(form.payment);
   const isPayLater = form.payment === 'Pay Later';
-
-  useEffect(() => {
-    checkPayMongoReady().then(setPayMongoReady);
-  }, []);
 
   // Handle window resize
   useEffect(() => {
@@ -164,37 +161,68 @@ function BookingDetails(props) {
 
   // Fetch payment methods and validate user type for the selected boat
   useEffect(() => {
+    let isCurrent = true;
+
     const fetchPaymentMethods = async () => {
       try {
-        if (!trip?.boat) return;
-
-        // Find admin managing this boat
-        const adminsQuery = query(collection(db, 'admins'), where('assignedBoat', '==', trip.boat));
-        const adminsSnap = await getDocs(adminsQuery);
-
-        if (adminsSnap.empty) {
-          console.warn('No admin found for boat:', trip.boat);
+        setIsLoadingPaymentMethods(true);
+        if (!trip?.boat) {
+          setAvailablePaymentMethods([]);
+          setPayMongoReady(false);
+          setIsLoadingPaymentMethods(false);
           return;
         }
 
-        const adminId = adminsSnap.docs[0].id;
+        const payMongoConfigured = await checkPayMongoReady();
+        if (!isCurrent) return;
+        setPayMongoReady(payMongoConfigured);
 
-        // Fetch active payment accounts for this admin
-        const paymentQuery = query(
-          collection(db, 'paymentAccounts'),
-          where('adminId', '==', adminId),
-          where('isActive', '==', true)
-        );
-        const paymentSnap = await getDocs(paymentQuery);
+        let methods = [];
+        try {
+          // Keep legacy payment accounts, but PayMongo is configured once for the whole app.
+          const adminsQuery = query(
+            collection(db, 'admins'),
+            where('assignedBoat', '==', trip.boat)
+          );
+          const adminsSnap = await getDocs(adminsQuery);
 
-        const methods = paymentSnap.docs.map((doc) => ({
-          id: doc.id,
-          accountType: doc.data().accountType,
-          accountName: doc.data().accountName,
-          accountNumber: doc.data().accountNumber,
-          accountHolder: doc.data().accountHolder,
-        }));
+          if (adminsSnap.empty) {
+            console.warn('No admin found for boat:', trip.boat);
+          } else {
+            const adminId = adminsSnap.docs[0].id;
 
+            const paymentQuery = query(
+              collection(db, 'paymentAccounts'),
+              where('adminId', '==', adminId),
+              where('isActive', '==', true)
+            );
+            const paymentSnap = await getDocs(paymentQuery);
+
+            methods = paymentSnap.docs.map((paymentDoc) => ({
+              id: paymentDoc.id,
+              accountType: paymentDoc.data().accountType,
+              accountName: paymentDoc.data().accountName,
+              accountNumber: paymentDoc.data().accountNumber,
+              accountHolder: paymentDoc.data().accountHolder,
+            }));
+          }
+        } catch (error) {
+          console.error('Error fetching admin payment accounts:', error);
+        }
+
+        // GCash is processed through the shared PayMongo merchant account.
+        methods = methods.filter((method) => method.accountType !== 'gcash');
+        if (payMongoConfigured) {
+          methods.unshift({
+            id: null,
+            accountType: 'gcash',
+            accountName: 'PayMongo QR Ph',
+            accountNumber: null,
+            accountHolder: null,
+          });
+        }
+
+        if (!isCurrent) return;
         setAvailablePaymentMethods(methods);
 
         if (trip?.allowPayLater) {
@@ -207,12 +235,20 @@ function BookingDetails(props) {
           setSelectedPaymentAccount(methods[0]);
           paymentAutoSelectedRef.current = true;
         }
+        setIsLoadingPaymentMethods(false);
       } catch (error) {
         console.error('Error fetching payment methods:', error);
+        if (isCurrent) {
+          setAvailablePaymentMethods([]);
+          setIsLoadingPaymentMethods(false);
+        }
       }
     };
 
     fetchPaymentMethods();
+    return () => {
+      isCurrent = false;
+    };
   }, [trip?.allowPayLater, trip?.boat]);
 
   // Validate user type when boat discounts change
@@ -421,7 +457,7 @@ function BookingDetails(props) {
         if (!payMongoReady) {
           alert(
             isProductionDeployment()
-              ? 'Online payment is not ready. Make sure PAYMONGO_SECRET_KEY is set in server/.env on the server, then redeploy.'
+              ? 'Online payment is not ready. Configure PAYMONGO_SECRET_KEY in your hosting provider environment settings, then redeploy.'
               : 'Online GCash payment is not ready yet. Start the payment server (npm run server) and add your PAYMONGO_SECRET_KEY in server/.env, then refresh this page.'
           );
           setLoading(false);
@@ -1205,6 +1241,19 @@ function BookingDetails(props) {
                 Reserve this trip now. Payment of ₱{Number(finalPrice).toFixed(2)} is due manually
                 later and will remain pending until the admin confirms it.
               </div>
+            ) : isLoadingPaymentMethods ? (
+              <div
+                style={{
+                  padding: '15px',
+                  background: '#f5f5f5',
+                  border: '1px solid #ddd',
+                  borderRadius: '8px',
+                  color: '#555',
+                  fontSize: isMobile ? '0.75rem' : '0.9rem',
+                }}
+              >
+                Loading payment methods...
+              </div>
             ) : availablePaymentMethods.length === 0 ? (
               <div
                 style={{
@@ -1217,7 +1266,8 @@ function BookingDetails(props) {
                   fontWeight: 500,
                 }}
               >
-                No payment methods available for this boat.
+                Online payment is not configured for this boat. Please contact the administrator
+                to configure the shared PayMongo account.
               </div>
             ) : (
               <div style={{ display: 'flex', gap: '25px', flexWrap: 'wrap' }}>
@@ -1340,7 +1390,7 @@ function BookingDetails(props) {
                         }}
                       >
                         {isProductionDeployment()
-                          ? 'Online payment is not ready. Add PAYMONGO_SECRET_KEY to server/.env and redeploy.'
+                          ? 'Online payment is not ready. Configure PAYMONGO_SECRET_KEY in your hosting provider environment settings, then redeploy.'
                           : 'Payment server is not ready. Run `npm run server` and set PAYMONGO_SECRET_KEY in server/.env, then refresh.'}
                       </p>
                     )}
