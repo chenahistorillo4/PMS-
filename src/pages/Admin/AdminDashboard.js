@@ -10,10 +10,10 @@ import {
   summarizeBookings,
   buildReportFilterLabel,
   getUniqueRoutesFromBookings,
-  getUniqueTripNamesFromBookings,
   getBookingRouteLabel,
   computeDashboardMetrics,
-  isConfirmedBooking,
+  attachPaymentStatuses,
+  isReportableBooking,
   getBookingAmount,
 } from "../../utils/reportHelpers";
 import ReportPreview from "../../components/ReportPreview";
@@ -40,7 +40,6 @@ function AdminDashboard() {
   const [bookings, setBookings] = useState([]);
   const [filterDate, setFilterDate] = useState("");
   const [filterRoute, setFilterRoute] = useState("");
-  const [filterTripName, setFilterTripName] = useState("");
   const [reportPeriod, setReportPeriod] = useState("");
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [isTablet, setIsTablet] = useState(window.innerWidth <= 1024);
@@ -96,29 +95,20 @@ function AdminDashboard() {
       ]);
 
       // Convert Firestore Timestamp to YYYY-MM-DD string
-      const paymentStatusByBookingId = new Map();
-      paymentSnap.docs.forEach((paymentDoc) => {
-        const payment = paymentDoc.data();
-        if (!payment.bookingId) return;
-        const status = String(payment.status || "").toLowerCase();
-        const previousStatus = paymentStatusByBookingId.get(payment.bookingId);
-        if (!previousStatus || ["completed", "confirmed"].includes(status)) {
-          paymentStatusByBookingId.set(payment.bookingId, status);
-        }
-      });
-
-      const bookingsData = bookingSnap.docs.map((bookingDoc) => {
-        const data = bookingDoc.data();
-        const normalized = {
-          id: bookingDoc.id,
-          ...data,
-          paymentStatus: paymentStatusByBookingId.get(bookingDoc.id) || "",
-        };
-        if (normalized.date && normalized.date.toDate) {
-          normalized.date = normalized.date.toDate().toISOString().split("T")[0];
-        }
-        return normalized;
-      });
+      const bookingsData = attachPaymentStatuses(
+        bookingSnap.docs.map((bookingDoc) => {
+          const data = bookingDoc.data();
+          const normalized = {
+            id: bookingDoc.id,
+            ...data,
+          };
+          if (normalized.date && normalized.date.toDate) {
+            normalized.date = normalized.date.toDate().toISOString().split("T")[0];
+          }
+          return normalized;
+        }),
+        paymentSnap.docs.map((paymentDoc) => paymentDoc.data())
+      );
 
       setBookings(bookingsData);
     };
@@ -127,13 +117,7 @@ function AdminDashboard() {
 
   const reportableBookings = useMemo(
     () =>
-      bookings.filter((booking) => {
-        const paymentStatus = String(booking.paymentStatus || "").toLowerCase();
-        const paymentIsComplete = ["completed", "confirmed"].includes(paymentStatus);
-        const qrWasConfirmedByPortStaff =
-          String(booking.status || "").toLowerCase() === "scanned" || Boolean(booking.scannedAt);
-        return paymentIsComplete && qrWasConfirmedByPortStaff;
-      }),
+      bookings.filter(isReportableBooking),
     [bookings]
   );
 
@@ -142,9 +126,7 @@ function AdminDashboard() {
     [reportableBookings]
   );
 
-  // Only bookings paid and accepted by port staff are included in reporting.
   const groupedByRoute = reportableBookings.reduce((acc, b) => {
-    if (!isConfirmedBooking(b)) return acc;
     const route = getBookingRouteLabel(b);
     if (!acc[route]) {
       acc[route] = { revenue: 0, bookings: 0 };
@@ -248,26 +230,18 @@ function AdminDashboard() {
     if (filterRoute) {
       filtered = filtered.filter((booking) => getBookingRouteLabel(booking) === filterRoute);
     }
-    if (filterTripName) {
-      filtered = filtered.filter((booking) => booking.tripName === filterTripName);
-    }
     return filtered;
-  }, [reportableBookings, reportPeriod, filterDate, filterRoute, filterTripName]);
+  }, [reportableBookings, reportPeriod, filterDate, filterRoute]);
 
   const routeOptions = useMemo(() => {
     const fromBookings = getUniqueRoutesFromBookings(reportableBookings);
     const fromAdmin = adminData?.availableRoutes || [];
     return [...new Set([...fromAdmin, ...fromBookings])].sort();
   }, [reportableBookings, adminData?.availableRoutes]);
-  const tripNameOptions = useMemo(
-    () => getUniqueTripNamesFromBookings(reportableBookings),
-    [reportableBookings]
-  );
-
   const reportSummary = useMemo(() => summarizeBookings(filteredReportBookings), [filteredReportBookings]);
   const reportFilterLabel = useMemo(
-    () => buildReportFilterLabel({ reportPeriod, filterDate, filterRoute, filterTripName }),
-    [reportPeriod, filterDate, filterRoute, filterTripName]
+    () => buildReportFilterLabel({ reportPeriod, filterDate, filterRoute }),
+    [reportPeriod, filterDate, filterRoute]
   );
 
   const getReportLabel = () => {
@@ -286,7 +260,6 @@ function AdminDashboard() {
       // Build dynamic filename
       let filename = `admin-report-${reportDate}`;
       if (filterRoute) filename += `-${filterRoute}`;
-      if (filterTripName) filename += `-${filterTripName}`;
       filename += ".json";
 
       const reportData = {
@@ -307,8 +280,7 @@ function AdminDashboard() {
           periodLabel: reportPeriod ? getPeriodRange(reportPeriod)?.label : null,
           date: filterDate || null,
           route: filterRoute || null,
-          tripName: filterTripName || null,
-          hasFilters: !!(reportPeriod || filterDate || filterRoute || filterTripName)
+          hasFilters: !!(reportPeriod || filterDate || filterRoute)
         },
         summary: {
           totalBookings: summary.totalBookings,
@@ -350,7 +322,6 @@ function AdminDashboard() {
       const reportDate = getReportLabel();
       let reportFileName = `admin-report-${reportDate}`;
       if (filterRoute) reportFileName += `-${filterRoute}`;
-      if (filterTripName) reportFileName += `-${filterTripName}`;
       reportFileName += ".pdf";
 
       const pdf = new jsPDF({
@@ -403,7 +374,7 @@ function AdminDashboard() {
       yPosition += 30;
 
       // Filter Information
-      if (reportPeriod || filterDate || filterRoute || filterTripName) {
+      if (reportPeriod || filterDate || filterRoute) {
         pdf.setFillColor(255, 243, 205);
         pdf.rect(marginLeft, yPosition - 2, contentWidth, 16, "F");
         
@@ -529,7 +500,7 @@ function AdminDashboard() {
       const filteredRevenue = summary.totalRevenue;
       
       let filterInfo = "";
-      if (reportPeriod || filterDate || filterRoute || filterTripName) {
+      if (reportPeriod || filterDate || filterRoute) {
         filterInfo = `
           <div class="filter-info">
             <h3>Applied Filters:</h3>
@@ -537,7 +508,6 @@ function AdminDashboard() {
               ${reportPeriod ? `<li><strong>Period:</strong> ${getPeriodRange(reportPeriod)?.label || reportPeriod}</li>` : ""}
               ${filterDate ? `<li><strong>Date:</strong> ${filterDate}</li>` : ""}
               ${filterRoute ? `<li><strong>Route:</strong> ${filterRoute}</li>` : ""}
-              ${filterTripName ? `<li><strong>Trip name:</strong> ${filterTripName}</li>` : ""}
             </ul>
             <p style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddb500;">
               <strong>Filtered Revenue:</strong> PHP ${filteredRevenue.toLocaleString()}
@@ -821,7 +791,7 @@ function AdminDashboard() {
               }}>
                 Customize Your Report
               </h3>
-              {(reportPeriod || filterDate || filterRoute || filterTripName) && (
+              {(reportPeriod || filterDate || filterRoute) && (
                 <div style={{
                   backgroundColor: "#4a8bd4",
                   color: "white",
@@ -830,7 +800,7 @@ function AdminDashboard() {
                   fontSize: "0.85rem",
                   fontWeight: "600"
                 }}>
-                  {[reportPeriod, filterDate, filterRoute, filterTripName].filter(f => f).length} filter{[reportPeriod, filterDate, filterRoute, filterTripName].filter(f => f).length !== 1 ? "s" : ""} active
+                  {[reportPeriod, filterDate, filterRoute].filter(Boolean).length} filter{[reportPeriod, filterDate, filterRoute].filter(Boolean).length !== 1 ? "s" : ""} active
                 </div>
               )}
             </div>
@@ -986,59 +956,6 @@ function AdminDashboard() {
                 )}
               </div>
 
-              {/* Trip Name Filter */}
-              <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "6px" : "10px", minWidth: 0 }}>
-                <label style={{
-                  fontSize: isMobile ? "0.78rem" : "0.95rem",
-                  fontWeight: "600",
-                  color: "#2c3e50"
-                }}>
-                  Select Trip Name
-                </label>
-                <select
-                  value={filterTripName}
-                  onChange={(e) => setFilterTripName(e.target.value)}
-                  style={{
-                    boxSizing: "border-box",
-                    width: "100%",
-                    minWidth: 0,
-                    padding: isMobile ? "10px 8px" : "12px 14px",
-                    border: "2px solid #4a8bd4",
-                    borderRadius: "10px",
-                    fontSize: isMobile ? "0.78rem" : "0.95rem",
-                    fontFamily: "inherit",
-                    backgroundColor: "white",
-                    color: "#333",
-                    cursor: "pointer",
-                    transition: "all 0.3s ease",
-                    boxShadow: filterTripName ? "0 3px 8px rgba(74, 139, 212, 0.15)" : "none"
-                  }}
-                  onFocus={(e) => {
-                    e.currentTarget.style.boxShadow = "0 3px 12px rgba(74, 139, 212, 0.2)";
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.boxShadow = filterTripName ? "0 3px 8px rgba(74, 139, 212, 0.15)" : "none";
-                  }}
-                >
-                  <option value="">All Trip Names</option>
-                  {tripNameOptions.map((tripName) => (
-                    <option key={tripName} value={tripName}>
-                      {tripName}
-                    </option>
-                  ))}
-                </select>
-                {filterTripName && (
-                  <div style={{
-                    fontSize: "0.8rem",
-                    color: "#4a8bd4",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px"
-                  }}>
-                    ✓ Trip name selected: {filterTripName}
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Action Buttons */}
@@ -1048,13 +965,12 @@ function AdminDashboard() {
               justifyContent: "flex-start",
               flexWrap: "wrap"
             }}>
-              {(reportPeriod || filterDate || filterRoute || filterTripName) && (
+              {(reportPeriod || filterDate || filterRoute) && (
                 <button
                   onClick={() => {
                     setReportPeriod("");
                     setFilterDate("");
                     setFilterRoute("");
-                    setFilterTripName("");
                   }}
                   style={{
                     padding: "10px 18px",
@@ -1099,7 +1015,7 @@ function AdminDashboard() {
             title="Filtered Report Preview"
             filterLabel={reportFilterLabel}
             summary={reportSummary}
-            emptyMessage="No bookings match the selected filters. Try Weekly/Monthly or choose a different date, route, or trip name."
+            emptyMessage="No bookings match the selected filters. Try Weekly/Monthly or choose a different date or route."
           />
 
           {/* Export Options Header */}
@@ -1110,7 +1026,7 @@ function AdminDashboard() {
             margin: isMobile ? "22px 0 12px" : "32px 0 20px"
           }}>
             Export Your Data
-            {(reportPeriod || filterDate || filterRoute || filterTripName) && (
+            {(reportPeriod || filterDate || filterRoute) && (
               <span style={{
                 fontSize: isMobile ? "0.72rem" : "0.85rem",
                 fontWeight: "400",

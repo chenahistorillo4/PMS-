@@ -197,7 +197,7 @@ function BookingManagement() {
             // Keep pending reservations visible; cancelled bookings are excluded from active records.
             bookingsList = bookingsList.filter((booking) => {
               const status = String(booking.status || "").toLowerCase();
-              return status === "pending" || status === "confirmed" || status === "departed";
+              return ["pending", "confirmed", "departed", "boarded", "scanned"].includes(status);
             });
 
             // Sort by date descending (most recent first)
@@ -270,7 +270,7 @@ function BookingManagement() {
     let filtered = bookings.filter(
       (b) =>
         (!selectedDate || b.date === selectedDate) &&
-        ["pending", "confirmed", "departed"].includes(String(b.status || "").toLowerCase()) &&
+        ["pending", "confirmed", "departed", "boarded", "scanned"].includes(String(b.status || "").toLowerCase()) &&
         (selectedRoute === "all" ||
           !selectedRoute ||
           normalizeRoute(b.routeDirection || b.route) === normalizeRoute(selectedRoute))
@@ -302,7 +302,7 @@ function BookingManagement() {
     const bookingStatus = String(booking.status || "pending").toLowerCase();
     const paymentStatus = String(booking.paymentInfo?.status || "").toLowerCase();
 
-    if (["cancelled", "departed", "scanned"].includes(bookingStatus)) return bookingStatus;
+    if (["cancelled", "departed", "boarded", "scanned"].includes(bookingStatus)) return bookingStatus;
     if (["cancelled", "failed"].includes(paymentStatus)) return "cancelled";
     if (bookingStatus === "confirmed" || ["completed", "confirmed"].includes(paymentStatus)) {
       return "confirmed";
@@ -315,6 +315,7 @@ function BookingManagement() {
     if (status === "pending") return "#ff9800";
     if (status === "cancelled") return "#f44336";
     if (status === "departed") return "#9c27b0";
+    if (status === "boarded" || status === "scanned") return "#16845b";
     return "#999";
   };
 

@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../../firebase";
-import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc, getDocs } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc, getDocs, deleteDoc } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { isNotificationUnread } from "../../hooks/useUnreadNotificationCount";
 import { getNotificationCardStyles, NotificationDot } from "../../components/NotificationBadge";
 
 function AdminNotifications() {
+  const NOTIFICATIONS_PER_PAGE = 10;
   const normalizeBoatName = (boatName) => (boatName || "").trim().toLowerCase();
   const [adminData, setAdminData] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [notificationPage, setNotificationPage] = useState(1);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [showAnnounceForm, setShowAnnounceForm] = useState(false);
   const [authReady, setAuthReady] = useState(false);
@@ -19,6 +21,8 @@ function AdminNotifications() {
     message: ""
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [deleteActions, setDeleteActions] = useState({});
+  const gesture = useRef(null);
 
   useEffect(() => {
     const handleResize = () => {
@@ -100,6 +104,15 @@ function AdminNotifications() {
   }, [adminData?.assignedBoat]);
 
   const unreadCount = notifications.filter((notif) => isNotificationUnread(notif)).length;
+  const totalNotificationPages = Math.max(1, Math.ceil(notifications.length / NOTIFICATIONS_PER_PAGE));
+  const paginatedNotifications = notifications.slice(
+    (notificationPage - 1) * NOTIFICATIONS_PER_PAGE,
+    notificationPage * NOTIFICATIONS_PER_PAGE
+  );
+
+  useEffect(() => {
+    setNotificationPage((currentPage) => Math.min(currentPage, totalNotificationPages));
+  }, [totalNotificationPages]);
 
   const markAsRead = async (notificationId) => {
     try {
@@ -115,6 +128,66 @@ function AdminNotifications() {
     if (isNotificationUnread(notif)) {
       markAsRead(notif.id);
     }
+  };
+
+  const handleDeleteNotification = async (notif) => {
+    if (!window.confirm("Delete this notification?")) return;
+
+    try {
+      await deleteDoc(doc(db, "notifications", notif.id));
+      setDeleteActions((current) => {
+        const next = { ...current };
+        delete next[notif.id];
+        return next;
+      });
+    } catch (error) {
+      console.error("Error deleting admin notification:", error);
+      alert("Unable to delete this notification. Please try again.");
+    }
+  };
+
+  const revealDeleteActions = (notificationId) => {
+    setDeleteActions((current) => ({ ...current, [notificationId]: true }));
+  };
+
+  const restoreNotification = (notificationId) => {
+    setDeleteActions((current) => {
+      const next = { ...current };
+      delete next[notificationId];
+      return next;
+    });
+  };
+
+  const handlePointerDown = (event, notificationId) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    gesture.current = {
+      id: notificationId,
+      x: event.clientX,
+      y: event.clientY,
+      wasRevealed: Boolean(deleteActions[notificationId]),
+      moved: false
+    };
+  };
+
+  const handlePointerMove = (event) => {
+    if (!gesture.current) return;
+    const distanceX = event.clientX - gesture.current.x;
+    const distanceY = event.clientY - gesture.current.y;
+
+    if (Math.abs(distanceX) > Math.abs(distanceY) && Math.abs(distanceX) > 10) {
+      gesture.current.moved = true;
+      if (distanceX < -40) {
+        revealDeleteActions(gesture.current.id);
+      } else if (gesture.current.wasRevealed && distanceX > 25) {
+        restoreNotification(gesture.current.id);
+      }
+      event.preventDefault();
+    }
+  };
+
+  const handlePointerUp = () => {
+    gesture.current = null;
   };
 
   const handleSendAnnouncement = async (e) => {
@@ -456,26 +529,82 @@ function AdminNotifications() {
             <p style={{ fontSize: isMobile ? "0.85rem" : "1rem" }}>No notifications yet</p>
           </div>
         ) : (
-          notifications.map((notif) => {
+          paginatedNotifications.map((notif) => {
             const isUnread = isNotificationUnread(notif);
             const cardStyles = getNotificationCardStyles(!isUnread, isMobile);
+            const isDeleteRevealed = deleteActions[notif.id];
+            const actionWidth = isMobile ? 76 : 88;
 
             return (
-            <div
-              key={notif.id}
-              style={cardStyles.card}
-              onClick={() => handleNotificationClick(notif)}
-              onMouseEnter={(e) => {
-                if (isUnread) {
-                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
-                  e.currentTarget.style.transform = "translateY(-2px)";
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.boxShadow = isUnread ? "0 2px 8px rgba(0,0,0,0.06)" : "none";
-                e.currentTarget.style.transform = "translateY(0)";
-              }}
-            >
+            <div key={notif.id} style={{ position: "relative", overflow: "hidden", borderRadius: "12px", touchAction: "pan-y" }}>
+              <div style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: `${actionWidth}px`,
+                display: "flex",
+                flexDirection: "column",
+                zIndex: 0
+              }}>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    restoreNotification(notif.id);
+                  }}
+                  style={{
+                    flex: 1,
+                    border: 0,
+                    borderRadius: "0 12px 0 0",
+                    background: "#607d8b",
+                    color: "white",
+                    fontWeight: 700,
+                    cursor: "pointer"
+                  }}
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDeleteNotification(notif);
+                  }}
+                  style={{
+                    flex: 1,
+                    border: 0,
+                    borderRadius: "0 0 12px 0",
+                    background: "#f44336",
+                    color: "white",
+                    fontWeight: 700,
+                    cursor: "pointer"
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+              <div
+                style={{
+                  ...cardStyles.card,
+                  position: "relative",
+                  zIndex: 1,
+                  transform: isDeleteRevealed ? `translateX(-${actionWidth}px)` : "translateX(0)",
+                  transition: gesture.current ? "none" : "transform 0.2s ease"
+                }}
+                onClick={() => handleNotificationClick(notif)}
+                onDoubleClick={() => revealDeleteActions(notif.id)}
+                onPointerDown={(event) => handlePointerDown(event, notif.id)}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onMouseEnter={(e) => {
+                  if (isUnread) e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = isUnread ? "0 2px 8px rgba(0,0,0,0.06)" : "none";
+                }}
+              >
               {isUnread && (
                 <NotificationDot
                   size={10}
@@ -546,11 +675,63 @@ function AdminNotifications() {
                   </div>
                 </div>
               </div>
+              </div>
             </div>
           );
           })
         )}
       </div>
+
+      {notifications.length > NOTIFICATIONS_PER_PAGE && (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: isMobile ? "10px" : "16px",
+          marginTop: isMobile ? "18px" : "24px",
+          flexWrap: "wrap"
+        }}>
+          <button
+            type="button"
+            onClick={() => setNotificationPage((page) => Math.max(1, page - 1))}
+            disabled={notificationPage === 1}
+            style={{
+              padding: isMobile ? "8px 12px" : "9px 16px",
+              border: "1px solid #2196f3",
+              borderRadius: "6px",
+              background: notificationPage === 1 ? "#e0e0e0" : "#2196f3",
+              color: notificationPage === 1 ? "#888" : "white",
+              cursor: notificationPage === 1 ? "not-allowed" : "pointer",
+              fontWeight: 700
+            }}
+          >
+            Previous
+          </button>
+          <span style={{
+            color: "#666",
+            fontSize: isMobile ? "0.8rem" : "0.9rem",
+            fontWeight: 600
+          }}>
+            Page {notificationPage} of {totalNotificationPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setNotificationPage((page) => Math.min(totalNotificationPages, page + 1))}
+            disabled={notificationPage === totalNotificationPages}
+            style={{
+              padding: isMobile ? "8px 12px" : "9px 16px",
+              border: "1px solid #2196f3",
+              borderRadius: "6px",
+              background: notificationPage === totalNotificationPages ? "#e0e0e0" : "#2196f3",
+              color: notificationPage === totalNotificationPages ? "#888" : "white",
+              cursor: notificationPage === totalNotificationPages ? "not-allowed" : "pointer",
+              fontWeight: 700
+            }}
+          >
+            Next
+          </button>
+        </div>
+      )}
     </AdminLayout>
   );
 }

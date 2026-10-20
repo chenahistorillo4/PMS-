@@ -309,9 +309,83 @@ function PaymentManagement() {
     }
   };
 
+  const handleMarkRefunded = async (refundId) => {
+    const refund = refundRequests.find((item) => item.id === refundId);
+    if (!refund || refund.status !== 'approved') return;
+    if (!window.confirm('Confirm that you have manually sent this refund to the passenger?')) {
+      return;
+    }
+
+    const note =
+      window.prompt('Optional refund reference or note for the passenger:', '') || '';
+
+    try {
+      const processedAt = new Date();
+      await updateDoc(doc(db, 'refund_requests', refundId), {
+        status: 'refunded',
+        refundNote: note,
+        refundedAt: processedAt,
+        processedBy: adminData?.email || user?.email || 'admin',
+      });
+
+      setRefundRequests((current) =>
+        current.map((item) =>
+          item.id === refundId
+            ? { ...item, status: 'refunded', refundNote: note, refundedAt: processedAt }
+            : item
+        )
+      );
+
+      let passengerNotified = true;
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          userId: refund.userId,
+          type: 'refund_status',
+          title: 'Refund Sent',
+          message: `Your refund for ${refund.tripName || 'your trip'} has been marked as sent.`,
+          recipientType: 'user',
+          isRead: false,
+          createdAt: processedAt,
+        });
+      } catch (notificationError) {
+        passengerNotified = false;
+        console.error('Refund completion app notification failed:', notificationError);
+      }
+
+      try {
+        const emailResult = await notifyPassengerRefundStatus({
+          refund: { ...refund, refundNote: note },
+          status: 'refunded',
+          userEmail: refund.userEmail,
+          customerName: refund.userEmail,
+        });
+        if (
+          emailResult?.ok === false ||
+          emailResult?.result?.email?.error ||
+          emailResult?.result?.email?.skipped
+        ) {
+          passengerNotified = false;
+          console.warn('Refund completion email failed:', emailResult.error || emailResult.result);
+        }
+      } catch (notificationError) {
+        passengerNotified = false;
+        console.error('Refund completion email failed:', notificationError);
+      }
+
+      alert(
+        passengerNotified
+          ? 'Refund marked as sent. The passenger has been notified.'
+          : 'Refund marked as sent, but one or more passenger notifications could not be sent.'
+      );
+    } catch (error) {
+      console.error('Error marking refund as sent:', error);
+      alert('Could not mark the refund as sent: ' + error.message);
+    }
+  };
+
   return (
     <AdminLayout active="payment">
-      {refundRequests.filter((refund) => refund.status === 'pending').length > 0 && (
+      {refundRequests.some((refund) => ['pending', 'approved'].includes(refund.status)) && (
         <div
           style={{
             background: '#fff8e1',
@@ -322,10 +396,10 @@ function PaymentManagement() {
           }}
         >
           <h3 style={{ margin: '0 0 12px', color: '#5d4037', fontSize: '1.05rem' }}>
-            Pending Refund Requests
+            Refund Requests
           </h3>
           {refundRequests
-            .filter((refund) => refund.status === 'pending')
+            .filter((refund) => ['pending', 'approved'].includes(refund.status))
             .map((refund) => (
               <div
                 key={refund.id}
@@ -345,20 +419,34 @@ function PaymentManagement() {
                     {refund.userEmail} · ₱{Number(refund.amount || 0).toFixed(2)}
                   </div>
                   <div style={{ color: '#666', fontSize: '0.85rem' }}>{refund.reason}</div>
+                  <div style={{ color: '#5d4037', fontSize: '0.85rem', fontWeight: 700 }}>
+                    Status: {refund.status === 'approved' ? 'Approved — send refund manually' : 'Pending'}
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    className="btn btn-success btn-sm"
-                    onClick={() => handleRefundDecision(refund.id, 'approved')}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    className="btn btn-outline-danger btn-sm"
-                    onClick={() => handleRefundDecision(refund.id, 'rejected')}
-                  >
-                    Decline
-                  </button>
+                  {refund.status === 'pending' ? (
+                    <>
+                      <button
+                        className="btn btn-success btn-sm"
+                        onClick={() => handleRefundDecision(refund.id, 'approved')}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="btn btn-outline-danger btn-sm"
+                        onClick={() => handleRefundDecision(refund.id, 'rejected')}
+                      >
+                        Decline
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => handleMarkRefunded(refund.id)}
+                    >
+                      Mark as Refunded
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -394,10 +482,25 @@ function PaymentManagement() {
       {/* Payment history date search */}
       <div
         style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: isMobile ? '15px' : '25px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+          border: '1px solid #e0e8f0',
           marginBottom: isMobile ? '18px' : '30px',
           maxWidth: '1100px',
         }}
       >
+        <h3
+          style={{
+            fontSize: isMobile ? '0.85rem' : '1.05rem',
+            fontWeight: 800,
+            color: '#1e3a5f',
+            margin: `0 0 ${isMobile ? '10px' : '15px'}`,
+          }}
+        >
+          Search Payments by Customer, Date & Route
+        </h3>
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -407,20 +510,25 @@ function PaymentManagement() {
             setActivePaymentView('history');
           }}
           style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr)) auto',
-            gap: isMobile ? '8px' : '10px',
+            display: 'flex',
+            gap: isMobile ? '8px' : '15px',
+            alignItems: 'flex-start',
+            flexWrap: 'wrap',
             width: '100%',
           }}
         >
-          <div style={{ minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: isMobile ? '120px' : '200px' }}>
             <label
               htmlFor="payment-customer-search"
               style={{
                 display: 'block',
-                marginBottom: '6px',
-                color: '#444',
-                fontSize: isMobile ? '0.85rem' : '1rem',
+                minHeight: isMobile ? '14px' : '17px',
+                lineHeight: isMobile ? '14px' : '17px',
+                marginBottom: isMobile ? '4px' : '8px',
+                color: '#666',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
               }}
             >
               Search Customer Name
@@ -446,24 +554,28 @@ function PaymentManagement() {
                 boxSizing: 'border-box',
                 width: '100%',
                 minWidth: 0,
-                height: '44px',
-                padding: '8px 12px',
-                border: '1px solid #b8c9dc',
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 8px' : '10px 12px',
+                border: '1px solid #d0d0d0',
                 borderRadius: '6px',
                 background: '#fff',
                 color: '#333',
-                fontSize: '1rem',
+                fontSize: isMobile ? '0.8rem' : '1rem',
               }}
             />
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: isMobile ? '120px' : '200px' }}>
             <label
               htmlFor="payment-history-date"
               style={{
                 display: 'block',
-                marginBottom: '6px',
-                color: '#444',
-                fontSize: isMobile ? '0.85rem' : '1rem',
+                minHeight: isMobile ? '14px' : '17px',
+                lineHeight: isMobile ? '14px' : '17px',
+                marginBottom: isMobile ? '4px' : '8px',
+                color: '#666',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
               }}
             >
               Choose Date
@@ -477,24 +589,28 @@ function PaymentManagement() {
                 boxSizing: 'border-box',
                 width: '100%',
                 minWidth: 0,
-                height: '44px',
-                padding: '8px 12px',
-                border: '1px solid #b8c9dc',
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 8px' : '10px 12px',
+                border: '1px solid #d0d0d0',
                 borderRadius: '6px',
                 background: '#fff',
                 color: '#555',
-                fontSize: '1rem',
+                fontSize: isMobile ? '0.8rem' : '1rem',
               }}
             />
           </div>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: isMobile ? '100%' : '200px' }}>
             <label
               htmlFor="payment-history-route"
               style={{
                 display: 'block',
-                marginBottom: '6px',
-                color: '#444',
-                fontSize: isMobile ? '0.85rem' : '1rem',
+                minHeight: isMobile ? '14px' : '17px',
+                lineHeight: isMobile ? '14px' : '17px',
+                marginBottom: isMobile ? '4px' : '8px',
+                color: '#666',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
               }}
             >
               Select Route
@@ -507,13 +623,13 @@ function PaymentManagement() {
                 boxSizing: 'border-box',
                 width: '100%',
                 minWidth: 0,
-                height: '44px',
-                padding: '8px 12px',
-                border: '1px solid #b8c9dc',
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 8px' : '10px 12px',
+                border: '1px solid #d0d0d0',
                 borderRadius: '6px',
                 background: '#fff',
                 color: '#444',
-                fontSize: isMobile ? '0.95rem' : '1rem',
+                fontSize: isMobile ? '0.8rem' : '1rem',
               }}
             >
               <option value="all">All routes</option>
@@ -527,18 +643,21 @@ function PaymentManagement() {
           <button
             type="submit"
             style={{
-              height: '44px',
-              padding: isMobile ? '0 14px' : '0 18px',
+              height: isMobile ? '32px' : '42px',
+              padding: isMobile ? '6px 10px' : '10px 24px',
               border: 'none',
               borderRadius: '6px',
-              background: '#2876d2',
+              background: '#2196f3',
               color: '#fff',
-              fontSize: '1rem',
-              fontWeight: 700,
+              fontSize: isMobile ? '0.7rem' : '0.85rem',
+              fontWeight: 600,
               cursor: 'pointer',
               whiteSpace: 'nowrap',
-              width: isMobile ? '100%' : 'auto',
-              alignSelf: 'end',
+              width: isMobile ? '80px' : 'auto',
+              alignSelf: 'flex-start',
+              marginTop: isMobile ? '18px' : '25px',
+              marginLeft: isMobile ? 'auto' : '0',
+              boxSizing: 'border-box',
             }}
           >
             Search
@@ -629,7 +748,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Booking ID
@@ -639,7 +758,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Passenger
@@ -649,7 +768,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Trip
@@ -659,7 +778,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Date & Time
@@ -669,7 +788,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'right',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Amount
@@ -679,7 +798,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'center',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Method
@@ -689,7 +808,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'center',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Status
@@ -699,7 +818,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'center',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Actions
@@ -767,7 +886,7 @@ function PaymentManagement() {
                         style={{
                           padding: isMobile ? '8px 6px' : '12px',
                           color: '#666',
-                          fontSize: isMobile ? '0.65rem' : '0.85rem',
+                          fontSize: isMobile ? '0.7rem' : '0.85rem',
                         }}
                       >
                         {dateStr} {timeStr}
@@ -800,7 +919,7 @@ function PaymentManagement() {
                             color: 'white',
                             padding: isMobile ? '3px 5px' : '4px 8px',
                             borderRadius: '4px',
-                            fontSize: isMobile ? '0.6rem' : '0.75rem',
+                            fontSize: isMobile ? '0.65rem' : '0.75rem',
                             fontWeight: 700,
                             textTransform: 'uppercase',
                           }}
@@ -831,7 +950,7 @@ function PaymentManagement() {
                             color: 'white',
                             padding: isMobile ? '3px 6px' : '4px 10px',
                             borderRadius: '4px',
-                            fontSize: isMobile ? '0.6rem' : '0.75rem',
+                            fontSize: isMobile ? '0.65rem' : '0.75rem',
                             fontWeight: 700,
                             textTransform: 'uppercase',
                           }}
@@ -871,7 +990,7 @@ function PaymentManagement() {
                                   borderRadius: '4px',
                                   fontWeight: 700,
                                   cursor: 'pointer',
-                                  fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                  fontSize: isMobile ? '0.65rem' : '0.7rem',
                                   transition: 'all 0.3s ease',
                                 }}
                                 onMouseEnter={(e) => {
@@ -894,7 +1013,7 @@ function PaymentManagement() {
                                 borderRadius: '4px',
                                 fontWeight: 700,
                                 cursor: 'pointer',
-                                fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                fontSize: isMobile ? '0.65rem' : '0.7rem',
                                 transition: 'all 0.3s ease',
                               }}
                               onMouseEnter={(e) => {
@@ -916,7 +1035,7 @@ function PaymentManagement() {
                                 borderRadius: '4px',
                                 fontWeight: 700,
                                 cursor: 'pointer',
-                                fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                fontSize: isMobile ? '0.65rem' : '0.7rem',
                                 transition: 'all 0.3s ease',
                               }}
                               onMouseEnter={(e) => {
@@ -955,7 +1074,7 @@ function PaymentManagement() {
                                   borderRadius: '4px',
                                   fontWeight: 700,
                                   cursor: 'pointer',
-                                  fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                  fontSize: isMobile ? '0.65rem' : '0.7rem',
                                   transition: 'all 0.3s ease',
                                 }}
                                 onMouseEnter={(e) => {
@@ -984,7 +1103,7 @@ function PaymentManagement() {
                                 borderRadius: '4px',
                                 fontWeight: 700,
                                 cursor: 'pointer',
-                                fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                fontSize: isMobile ? '0.65rem' : '0.7rem',
                                 transition: 'all 0.3s ease',
                               }}
                               onMouseEnter={(e) => {

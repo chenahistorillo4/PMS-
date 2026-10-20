@@ -1,15 +1,16 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { signOut } from "firebase/auth";
-import { auth } from "../../firebase";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "../../firebase";
 import { useAdminUnreadNotificationCount } from "../../hooks/useUnreadNotificationCount";
 import { NavNotificationBadge } from "../../components/NotificationBadge";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 import { useAuth } from "../../hooks/AuthContext";
-import { getStaffAccount } from "../../utils/staffAccount";
 
 function AdminLayout({ children, active }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const contentAreaRef = useRef(null);
   const [adminData, setAdminData] = useState(null);
   const [adminId, setAdminId] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -21,16 +22,6 @@ function AdminLayout({ children, active }) {
     role === "portstaff" ? null : adminData?.assignedBoat,
     role === "portstaff" ? null : adminId
   );
-
-  const handlePortStaffSignOut = async () => {
-    try {
-      await signOut(auth);
-      navigate("/login", { replace: true });
-    } catch (error) {
-      console.error("Unable to sign out Port Staff:", error);
-      alert(`Unable to sign out: ${error.message}`);
-    }
-  };
 
   // Handle window resize
   useEffect(() => {
@@ -46,35 +37,39 @@ function AdminLayout({ children, active }) {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Fetch current admin info from Firestore
   useEffect(() => {
     if (!authReady) return;
 
-    const fetchAdminData = async () => {
-      if (!user) {
-        setAdminId(null);
-        setAdminData(null);
-        return;
-      }
+    if (!user) {
+      setAdminId(null);
+      setAdminData(null);
+      return;
+    }
 
-      setAdminId(user.uid);
-
-      try {
-        const account = await getStaffAccount(user.uid);
-        if (account) {
-          setAdminData(account.data);
+    setAdminId(user.uid);
+    const profileCollection = role === "portstaff" ? "port_staff" : "admins";
+    return onSnapshot(
+      doc(db, profileCollection, user.uid),
+      (profileSnapshot) => {
+        if (profileSnapshot.exists()) {
+          setAdminData(profileSnapshot.data());
         } else {
           console.error("Staff account document not found");
           setAdminData(null);
         }
-      } catch (error) {
+      },
+      (error) => {
         console.error("Error fetching staff account data:", error);
         setAdminData(null);
       }
-    };
+    );
+  }, [authReady, user, reloadKey, role]);
 
-    fetchAdminData();
-  }, [authReady, user, reloadKey]);
+  useEffect(() => {
+    if (role === "portstaff" && location.pathname === "/port-staff-profile") {
+      contentAreaRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    }
+  }, [location.pathname, role]);
 
 
 
@@ -168,7 +163,7 @@ function AdminLayout({ children, active }) {
       )
     },
     {
-      to: "/qr-scanner",
+      to: "/port-staff-dashboard",
       label: "Scan QR",
       key: "scan",
       icon: (
@@ -179,17 +174,31 @@ function AdminLayout({ children, active }) {
           <path d="M14 14h3v3h-3zM20 14v2M14 20h2M20 19v2"></path>
         </svg>
       )
+    },
+    {
+      to: "/walk-in-booking",
+      label: "Walk-in Booking",
+      key: "walk-in",
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
+          <path d="M19 8v6"></path>
+          <path d="M22 11h-6"></path>
+        </svg>
+      )
     }
   ];
   const visibleMenuItems = role === "portstaff"
-    ? menuItems.filter((item) => ["reports", "booking", "payment", "schedule", "scan"].includes(item.key))
-    : menuItems;
+    ? menuItems.filter((item) => ["booking", "payment", "schedule", "scan", "walk-in"].includes(item.key))
+    : menuItems.filter((item) => !["scan", "walk-in"].includes(item.key));
 
   return (
     <div style={{ display: "flex", height: "100vh", minHeight: 0, background: "#f5f9fc", overflow: "hidden" }}>
       {/* Mobile Sidebar Overlay */}
       {isMobile && sidebarOpen && (
         <div
+          ref={contentAreaRef}
           style={{
             position: "fixed",
             top: 0,
@@ -372,26 +381,6 @@ function AdminLayout({ children, active }) {
                   )}
                 </Link>
               ))}
-              {role === "portstaff" && (
-                <button
-                  type="button"
-                  onClick={handlePortStaffSignOut}
-                  style={{
-                    marginTop: 8,
-                    padding: "12px 15px",
-                    border: "1px solid rgba(255,255,255,0.35)",
-                    borderRadius: 8,
-                    background: "rgba(255,255,255,0.12)",
-                    color: "white",
-                    fontWeight: 700,
-                    fontSize: "0.95rem",
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
-                >
-                  Sign Out
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -461,9 +450,10 @@ function AdminLayout({ children, active }) {
           <h2 style={{ fontSize: isMobile ? "1.05rem" : "1.3rem", fontWeight: 800, color: "#2c5aa0", margin: 0, flex: 1 }}>
             {role === "portstaff" ? "Port Staff Portal" : "Admin Dashboard"}
           </h2>
-          {role !== "portstaff" && <button
-            onClick={() => navigate("/admin-profile")}
+          <button
+            onClick={() => navigate(role === "portstaff" ? "/port-staff-profile" : "/admin-profile")}
             title="Account"
+            aria-label="Open profile"
             style={{
               display: "flex",
               alignItems: "center",
@@ -487,7 +477,11 @@ function AdminLayout({ children, active }) {
             }}
           >
             <img 
-              src={adminData?.profilePicture || "/profile.png"} 
+              src={
+                role === "portstaff"
+                  ? adminData?.photoURL || "/profile.png"
+                  : adminData?.profilePicture || adminData?.photoURL || "/profile.png"
+              }
               alt="Profile"
               style={{
                 width: "100%",
@@ -496,7 +490,7 @@ function AdminLayout({ children, active }) {
                 objectFit: "cover"
               }}
             />
-          </button>}
+          </button>
         </div>
 
         {/* Content Area */}

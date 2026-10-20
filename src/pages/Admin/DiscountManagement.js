@@ -1,20 +1,19 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { db } from "../../firebase";
-import { doc, updateDoc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 
 function DiscountManagement() {
   const [adminData, setAdminData] = useState(null);
   const [boat, setBoat] = useState(null);
-  const [editMode, setEditMode] = useState(false);
+  const [editingDiscount, setEditingDiscount] = useState(null);
   const [newDiscountType, setNewDiscountType] = useState("");
   const [newDiscountValue, setNewDiscountValue] = useState("");
   const [notif, setNotif] = useState("");
   const [loading, setLoading] = useState(true);
   const [showAddDiscountModal, setShowAddDiscountModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const initializedRef = useRef(false);
   const { user, authReady } = useAuthUser();
   const reloadKey = useAuthReloadKey();
 
@@ -96,39 +95,31 @@ function DiscountManagement() {
     fetchBoatDiscount();
   }, [adminData]);
 
-  // Auto-enable edit mode only when no discounts exist on initial load (only on first load)
-  useEffect(() => {
-    if (!boat || initializedRef.current) return;
-    
-    const discountsObj = boat.discounts || {};
-    const discountKeys = Object.keys(discountsObj);
-    const hasDiscounts = discountKeys.length > 0;
-    
-    if (!hasDiscounts) {
-      // No discounts - enable edit mode
-      setEditMode(true);
-    } else {
-      // Has discounts - disable edit mode to show view (only on first load)
-      setEditMode(false);
+  const persistDiscounts = async (discounts) => {
+    if (!boat?.id || !boat?.boatName) {
+      throw new Error("Discount record is missing the assigned boat.");
     }
-    
-    initializedRef.current = true;
-  }, [boat]); // Include boat as dependency, but ref prevents re-running after initialization
 
-  const handleAddDiscount = () => {
+    const boatRef = doc(db, "discounts", boat.id);
+    await setDoc(boatRef, {
+      boatName: boat.boatName,
+      discounts
+    }, { merge: true });
+  };
+
+  const handleAddDiscount = async () => {
     if (!newDiscountType || !newDiscountValue || !boat) return;
     
     try {
-      // Create new discounts object instead of mutating
       const updatedDiscounts = {
         ...boat.discounts,
         [newDiscountType.toLowerCase()]: parseFloat(newDiscountValue)
       };
 
-      // Just update local state, don't save to Firebase yet
+      await persistDiscounts(updatedDiscounts);
       setBoat({ ...boat, discounts: updatedDiscounts });
       
-      setNotif(`Added "${newDiscountType}" discount (click Save Discounts to save)`);
+      setNotif(`Added "${newDiscountType}" discount successfully.`);
       setTimeout(() => setNotif(""), 3000);
       setNewDiscountType("");
       setNewDiscountValue("");
@@ -140,29 +131,20 @@ function DiscountManagement() {
     }
   };
 
-  const handleDeleteDiscount = (field) => {
+  const handleDeleteDiscount = async (field) => {
     if (window.confirm(`Are you sure you want to delete "${field}" discount?`) && boat) {
-      // Just update local state, don't save immediately
-      const updatedDiscounts = { ...boat.discounts };
-      delete updatedDiscounts[field];
-      setBoat({ ...boat, discounts: updatedDiscounts });
-    }
-  };
-
-  const handleSaveDiscounts = async () => {
-    if (!boat) return;
-    
-    try {
-      const boatRef = doc(db, "discounts", boat.id);
-      await updateDoc(boatRef, { discounts: boat.discounts });
-      
-      setNotif("Discounts saved successfully!");
-      setTimeout(() => setNotif(""), 2000);
-      setEditMode(false);
-    } catch (error) {
-      console.error("Error saving discounts:", error);
-      setNotif("Failed to save discounts. Please try again.");
-      setTimeout(() => setNotif(""), 3000);
+      try {
+        const updatedDiscounts = { ...boat.discounts };
+        delete updatedDiscounts[field];
+        await persistDiscounts(updatedDiscounts);
+        setBoat({ ...boat, discounts: updatedDiscounts });
+        setNotif(`"${field}" discount deleted successfully.`);
+        setTimeout(() => setNotif(""), 3000);
+      } catch (error) {
+        console.error("Error deleting discount:", error);
+        setNotif("Failed to delete discount. Please try again.");
+        setTimeout(() => setNotif(""), 3000);
+      }
     }
   };
 
@@ -359,7 +341,7 @@ function DiscountManagement() {
                       e.currentTarget.style.background = "#f5f5f5";
                     }}
                   >
-                    Cancel
+                    Close
                   </button>
                   <button
                     onClick={() => handleAddDiscount()}
@@ -421,83 +403,6 @@ function DiscountManagement() {
               }}>
                 {boat.boatName}
               </h2>
-              <div style={{
-                display: "flex",
-                gap: isMobile ? "6px" : "10px",
-                justifyContent: "flex-end",
-                flexShrink: 0,
-                flexWrap: "wrap"
-              }}>
-                <button
-                  onClick={() => {
-                    if (editMode) {
-                      handleSaveDiscounts();
-                    } else {
-                      setEditMode(true);
-                    }
-                  }}
-                  style={{
-                    background: editMode ? "#4caf50" : "#ffc107",
-                    color: "white",
-                    border: "none",
-                    padding: isMobile ? "6px 12px" : "10px 20px",
-                    borderRadius: "8px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontSize: isMobile ? "0.7rem" : "0.85rem",
-                    transition: "all 0.3s ease"
-                  }}
-                  onMouseEnter={(e) => {
-                    const bgColor = editMode ? "#45a049" : "#ffa000";
-                    e.currentTarget.style.background = bgColor;
-                    e.currentTarget.style.boxShadow = "0 4px 12px rgba(255,193,7,0.3)";
-                  }}
-                  onMouseLeave={(e) => {
-                    const bgColor = editMode ? "#4caf50" : "#ffc107";
-                    e.currentTarget.style.background = bgColor;
-                    e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
-                  }}
-                >
-                  {editMode ? "Save" : (!boat.discounts || Object.keys(boat.discounts).length === 0 ? "Add" : "Edit")}
-                </button>
-                {editMode && (
-                  <button
-                    onClick={() => {
-                      setEditMode(false);
-                      // Reload the boat data to discard changes
-                      const boatName = adminData.assignedBoat;
-                      const discountsRef = collection(db, "discounts");
-                      const q = query(discountsRef, where("boatName", "==", boatName));
-                      getDocs(q).then(querySnapshot => {
-                        if (!querySnapshot.empty) {
-                          const docSnap = querySnapshot.docs[0];
-                          const data = docSnap.data();
-                          setBoat({ id: docSnap.id, ...data });
-                        }
-                      });
-                    }}
-                    style={{
-                      background: "#f5f5f5",
-                      color: "#333",
-                      border: "1px solid #ddd",
-                      padding: isMobile ? "6px 12px" : "10px 20px",
-                      borderRadius: "8px",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      fontSize: isMobile ? "0.7rem" : "0.85rem",
-                      transition: "all 0.3s ease"
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "#e0e0e0";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "#f5f5f5";
-                    }}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
             </div>
 
             {/* Existing Discounts */}
@@ -506,7 +411,7 @@ function DiscountManagement() {
                 display: "grid",
                 gridTemplateColumns: "1fr",
                 gap: isMobile ? "10px" : "15px",
-                marginBottom: editMode ? isMobile ? "20px" : "30px" : "0"
+                marginBottom: isMobile ? "20px" : "30px"
               }}
               className="responsive-grid"
               >
@@ -554,8 +459,13 @@ function DiscountManagement() {
                             [key]: newValue
                           };
                           setBoat({ ...boat, discounts: updatedDiscounts });
+                          persistDiscounts(updatedDiscounts).catch((error) => {
+                            console.error("Error updating discount:", error);
+                            setNotif("Failed to update discount. Please try again.");
+                            setTimeout(() => setNotif(""), 3000);
+                          });
                         }}
-                        disabled={!editMode}
+                        disabled={editingDiscount !== key}
                         style={{
                           flex: 1,
                           minWidth: isMobile ? "70px" : "100px",
@@ -564,38 +474,59 @@ function DiscountManagement() {
                           borderRadius: "8px",
                           fontSize: isMobile ? "0.8rem" : "0.85rem",
                           fontFamily: "inherit",
-                          background: editMode ? "white" : "#f0f0f0",
-                          cursor: editMode ? "pointer" : "not-allowed",
+                          background: editingDiscount === key ? "white" : "#f0f0f0",
+                          cursor: editingDiscount === key ? "pointer" : "not-allowed",
                           color: "#333"
                         }}
                       />
-                      {editMode && (
-                        <button
-                          onClick={() => handleDeleteDiscount(key)}
-                          style={{
-                            background: "#f44336",
-                            color: "white",
-                            border: "none",
-                            padding: isMobile ? "6px 10px" : "10px 15px",
-                            borderRadius: "6px",
-                            fontWeight: 700,
-                            cursor: "pointer",
-                            fontSize: isMobile ? "0.65rem" : "0.75rem",
-                            transition: "all 0.3s ease",
-                            whiteSpace: "nowrap"
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = "#d32f2f";
-                            e.currentTarget.style.boxShadow = "0 4px 12px rgba(244,67,54,0.3)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = "#f44336";
-                            e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
-                          }}
-                        >
-                          Delete
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setEditingDiscount(editingDiscount === key ? null : key)}
+                        style={{
+                          background: "#ffc107",
+                          color: "white",
+                          border: "none",
+                          padding: isMobile ? "6px 10px" : "10px 15px",
+                          borderRadius: "6px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          fontSize: isMobile ? "0.65rem" : "0.75rem",
+                          transition: "all 0.3s ease",
+                          whiteSpace: "nowrap"
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#ffa000";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "#ffc107";
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDiscount(key)}
+                        style={{
+                          background: "#f44336",
+                          color: "white",
+                          border: "none",
+                          padding: isMobile ? "6px 10px" : "10px 15px",
+                          borderRadius: "6px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          fontSize: isMobile ? "0.65rem" : "0.75rem",
+                          transition: "all 0.3s ease",
+                          whiteSpace: "nowrap"
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#d32f2f";
+                          e.currentTarget.style.boxShadow = "0 4px 12px rgba(244,67,54,0.3)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "#f44336";
+                          e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
+                        }}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -608,10 +539,9 @@ function DiscountManagement() {
                 background: "#f9f9f9",
                 borderRadius: "8px",
                 border: "1px solid #e0e0e0",
-                marginBottom: editMode ? isMobile ? "20px" : "30px" : "0"
+                marginBottom: "0"
               }}>
                 <p style={{ margin: "0", fontSize: isMobile ? "0.9rem" : "0.95rem", fontWeight: 600, color: "#666" }}>No discounts configured yet.</p>
-                {editMode && <p style={{ margin: "6px 0 0 0", fontSize: isMobile ? "0.8rem" : "0.85rem", color: "#999" }}>Add a discount below to get started.</p>}
               </div>
             )}
 
