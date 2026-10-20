@@ -25,16 +25,15 @@
     "web-vitals": "^4.2.4"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "concurrently -k \"npm run server\" \"react-scripts start\"",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "server": "npm --prefix server start",
     "server:install": "npm --prefix server install",
     "predev": "npx --yes kill-port 5001",
-    "dev": "npm run server:install && concurrently \"npm run server\" \"npm start\""
+    "dev": "npm run server:install && npm start"
   },
-  "proxy": "http://localhost:5001",
   "eslintConfig": {
     "extends": [
       "react-app",

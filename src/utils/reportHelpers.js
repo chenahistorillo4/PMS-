@@ -126,7 +126,7 @@ export function summarizeBookings(bookings) {
   const normalized = bookings.map(normalizeBookingForReport);
   const totalRevenue = normalized.reduce((sum, b) => sum + b.paymentAmount, 0);
   const completedBookings = normalized.filter(
-    (b) => ['confirmed', 'completed', 'departed', 'scanned'].includes(b.status)
+    (b) => ['confirmed', 'completed', 'departed', 'scanned', 'boarded'].includes(b.status)
   ).length;
   const pendingBookings = normalized.filter((b) => b.status === 'pending').length;
   const cancelledBookings = normalized.filter((b) => b.status === 'cancelled').length;
@@ -155,9 +155,55 @@ export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
 }
 
+export function attachPaymentStatuses(bookings, payments) {
+  const paymentPriority = (payment) => {
+    const status = String(payment.status || '').toLowerCase();
+    const paymongoStatus = String(payment.paymongoStatus || '').toLowerCase();
+    if (['completed', 'confirmed'].includes(status)) return 3;
+    if (paymongoStatus === 'paid' || status === 'paid') return 2;
+    if (status === 'pending') return 1;
+    return 0;
+  };
+  const paymentsByBookingId = new Map();
+
+  payments.forEach((payment) => {
+    if (!payment.bookingId) return;
+    const existingPayment = paymentsByBookingId.get(payment.bookingId);
+    if (!existingPayment || paymentPriority(payment) > paymentPriority(existingPayment)) {
+      paymentsByBookingId.set(payment.bookingId, payment);
+    }
+  });
+
+  return bookings.map((booking) => {
+    const payment = paymentsByBookingId.get(booking.id);
+    return payment
+      ? {
+          ...booking,
+          paymentStatus: payment.status || booking.paymentStatus || '',
+          paymongoStatus: payment.paymongoStatus || booking.paymongoStatus || '',
+        }
+      : booking;
+  });
+}
+
 export function isConfirmedBooking(booking) {
   const status = String(booking?.status || 'pending').toLowerCase();
-  return ['confirmed', 'completed', 'departed', 'scanned'].includes(status);
+  return ['confirmed', 'completed', 'departed', 'scanned', 'boarded'].includes(status);
+}
+
+export function isReportableBooking(booking) {
+  const bookingStatus = String(booking?.status || '').toLowerCase();
+  if (['cancelled', 'canceled', 'failed'].includes(bookingStatus)) return false;
+
+  const paymentStatus = String(booking?.paymentStatus || '').toLowerCase();
+  const paymongoStatus = String(booking?.paymongoStatus || '').toLowerCase();
+  const paymentIsComplete =
+    ['paid', 'completed', 'confirmed'].includes(paymentStatus) ||
+    paymongoStatus === 'paid';
+  const passengerQrWasScanned =
+    ['scanned', 'boarded'].includes(bookingStatus) || Boolean(booking?.scannedAt);
+
+  return paymentIsComplete && passengerQrWasScanned;
 }
 
 function bookingCreatedInRange(booking, range) {
@@ -175,7 +221,7 @@ export function computeDashboardMetrics(bookings = []) {
   const monthRange = getPeriodRange('monthly');
   const todayRange = { start: todayStart, end: todayEnd };
 
-  const revenueBookings = bookings.filter(isConfirmedBooking);
+  const revenueBookings = bookings.filter(isReportableBooking);
   const sumAmount = (list) => list.reduce((total, booking) => total + getBookingAmount(booking), 0);
 
   const createdToday = revenueBookings.filter((booking) => bookingCreatedInRange(booking, todayRange));

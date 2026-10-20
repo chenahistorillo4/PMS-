@@ -45,13 +45,16 @@ async function markPaymentCompletedByIntentId(paymongoPaymentIntentId) {
   const paymentData = paymentDoc.data();
 
   const batch = db.batch();
+  const isQrPhPayment = paymentData.paymongoFlow === 'qrph';
   batch.update(paymentDoc.ref, {
-    status: 'completed',
+    status: isQrPhPayment ? 'pending' : 'completed',
     paymongoStatus: 'paid',
-    confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...(isQrPhPayment
+      ? { paidAt: admin.firestore.FieldValue.serverTimestamp() }
+      : { confirmedAt: admin.firestore.FieldValue.serverTimestamp() }),
   });
 
-  if (paymentData.bookingId) {
+  if (paymentData.bookingId && !isQrPhPayment) {
     batch.update(db.collection('bookings').doc(paymentData.bookingId), {
       status: 'confirmed',
     });

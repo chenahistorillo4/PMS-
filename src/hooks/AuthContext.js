@@ -9,7 +9,6 @@ const ROLE_COLLECTIONS = [
   ["superadmin", "superadmin"],
   ["admin", "admins"],
   ["portstaff", "port_staff"],
-  ["portstaff", "qr_scanners"],
   ["user", "users"],
 ];
 
@@ -24,8 +23,8 @@ async function getUserRole(user) {
     console.warn("Could not read Firebase role claim; checking Firestore role documents.", error);
   }
 
-  if (["superadmin", "admin", "portstaff", "scanner", "qrscanner", "user"].includes(claimRole)) {
-    return ["scanner", "qrscanner"].includes(claimRole) ? "portstaff" : claimRole;
+  if (["superadmin", "admin", "portstaff", "user"].includes(claimRole)) {
+    return claimRole;
   }
 
   for (const [roleName, collectionName] of ROLE_COLLECTIONS) {

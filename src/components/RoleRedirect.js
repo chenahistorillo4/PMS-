@@ -35,15 +35,7 @@ function RoleRedirect() {
         const portStaffRef = doc(db, "port_staff", user.uid);
         const portStaffSnap = await getDoc(portStaffRef);
         if (portStaffSnap.exists()) {
-          navigate("/admin-dashboard");
-          return;
-        }
-
-        // Check SCANNER
-        const scannerRef = doc(db, "qr_scanners", user.uid);
-        const scannerSnap = await getDoc(scannerRef);
-        if (scannerSnap.exists()) {
-          navigate("/admin-dashboard");
+          navigate("/port-staff-dashboard");
           return;
         }
 

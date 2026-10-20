@@ -130,7 +130,7 @@ async function sendPassengerBoardingReminder({ to, customerName, booking }) {
 
 async function sendPassengerPaymentPendingReminder({ to, customerName, booking, paymentUrl }) {
   const notice =
-    'Your booking will only be confirmed once payment is received. QR codes are valid for 30 minutes. If payment is not completed within this time, your booking will be automatically cancelled.';
+    'Port staff will confirm your booking after payment is received. QR codes are valid for 30 minutes. If payment is not completed within this time, your booking will be automatically cancelled.';
 
   const html = layout(
     'Complete Your Payment',
@@ -179,21 +179,24 @@ async function sendPassengerPaymentExpired({ to, customerName, booking }) {
 
 async function sendPassengerRefundStatus({ to, customerName, refund, status }) {
   const approved = status === 'approved';
+  const refunded = status === 'refunded';
+  const statusLabel = refunded ? 'sent' : approved ? 'approved' : 'declined';
   const html = layout(
-    approved ? 'Refund Approved' : 'Refund Update',
+    refunded ? 'Refund Sent' : approved ? 'Refund Approved' : 'Refund Update',
     `
       <p>Hello ${escapeHtml(customerName || 'Passenger')},</p>
-      <p>Your refund request for <strong>${escapeHtml(refund?.tripName || 'your trip')}</strong> has been <strong>${approved ? 'approved' : 'declined'}</strong>.</p>
+      <p>Your refund request for <strong>${escapeHtml(refund?.tripName || 'your trip')}</strong> has been <strong>${refunded ? 'marked as sent by the admin' : statusLabel}</strong>.</p>
       <p><strong>Amount:</strong> ₱${escapeHtml(Number(refund?.amount || 0).toFixed(2))}</p>
-      ${refund?.adminNote ? `<p><strong>Note:</strong> ${escapeHtml(refund.adminNote)}</p>` : ''}
+      ${refund?.adminNote ? `<p><strong>Admin note:</strong> ${escapeHtml(refund.adminNote)}</p>` : ''}
+      ${refund?.refundNote ? `<p><strong>Refund reference:</strong> ${escapeHtml(refund.refundNote)}</p>` : ''}
       <p><a href="${APP_URL}/notifications" style="display:inline-block;background:#1565c0;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none;">View Notifications</a></p>
     `
   );
 
   return sendMail({
     to,
-    subject: `${APP_NAME} – Refund ${approved ? 'Approved' : 'Update'}`,
-    text: `Refund ${approved ? 'approved' : 'declined'} for ${refund?.tripName || 'trip'}. Amount PHP ${Number(refund?.amount || 0).toFixed(2)}.`,
+    subject: `${APP_NAME} – Refund ${refunded ? 'Sent' : approved ? 'Approved' : 'Update'}`,
+    text: `Refund ${statusLabel} for ${refund?.tripName || 'trip'}. Amount PHP ${Number(refund?.amount || 0).toFixed(2)}.${refund?.refundNote ? ` Reference: ${refund.refundNote}.` : ''}`,
     html,
   });
 }
@@ -354,10 +357,19 @@ async function dispatchEmailNotification({ type, to, adminEmails, payload = {} }
       return sendAdminNewBooking({ to: admins, booking: payload.booking });
 
     case 'admin_refund_request':
-      if (admins.length === 0) {
-        return { skipped: true, reason: 'missing_admin_email' };
+      {
+        const refundAdmins = [
+          ...new Set((Array.isArray(adminEmails) ? adminEmails : []).filter(Boolean)),
+        ];
+        if (refundAdmins.length === 0) {
+          return { skipped: true, reason: 'missing_boat_admin_email' };
+        }
+
+        return sendAdminRefundRequest({
+          to: refundAdmins,
+          refund: payload.refund,
+        });
       }
-      return sendAdminRefundRequest({ to: admins, refund: payload.refund });
 
     case 'admin_trip_alert':
       if (admins.length === 0) {
