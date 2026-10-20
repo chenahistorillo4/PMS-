@@ -37,8 +37,8 @@ const FEATURE_CARDS = [
 ];
 
 const CONTACT_CARDS = [
-  ["@", "Email", "support@pmsferry.com"],
-  ["☎", "Phone", "+63 912 345 6789"],
+  ["@", "Email", "pmsport2026@gmail.com"],
+  ["☎", "Phone", "+63 966 029 7260"],
   ["◐", "Hours", "24/7 Available for You"]
 ];
 
