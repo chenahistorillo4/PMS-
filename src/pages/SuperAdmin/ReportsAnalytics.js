@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../../firebase";
 import jsPDF from "jspdf";
@@ -10,6 +10,8 @@ import {
   getBookingCreatedAt,
   getBookingTripDate,
   getBookingRouteLabel,
+  attachPaymentStatuses,
+  isReportableBooking,
   summarizeBookings,
 } from "../../utils/reportHelpers";
 
@@ -22,23 +24,32 @@ function ReportsAnalytics() {
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [reportPage, setReportPage] = useState(0);
+  const reportGesture = useRef(null);
+  const reportPageRefs = useRef([]);
+  const [carouselHeight, setCarouselHeight] = useState(null);
+  const [dragOffset, setDragOffset] = useState(0);
 
   useEffect(() => {
     const fetchReportData = async () => {
       try {
-        const [boatsSnapshot, bookingsSnapshot] = await Promise.all([
+        const [boatsSnapshot, bookingsSnapshot, paymentsSnapshot] = await Promise.all([
           getDocs(collection(db, "boats")),
           getDocs(collection(db, "bookings")),
+          getDocs(collection(db, "payments")),
         ]);
 
         setBoats(boatsSnapshot.docs.map((boatDoc) => ({
           id: boatDoc.id,
           ...boatDoc.data(),
         })));
-        setBookings(bookingsSnapshot.docs.map((bookingDoc) => ({
-          id: bookingDoc.id,
-          ...bookingDoc.data(),
-        })));
+        setBookings(attachPaymentStatuses(
+          bookingsSnapshot.docs.map((bookingDoc) => ({
+            id: bookingDoc.id,
+            ...bookingDoc.data(),
+          })),
+          paymentsSnapshot.docs.map((paymentDoc) => paymentDoc.data())
+        ));
       } catch (error) {
         console.error("Error fetching boat reports:", error);
         setErrorMessage("Unable to load boat reports right now.");
@@ -58,13 +69,18 @@ function ReportsAnalytics() {
       .map((boat) => boat.name);
   }, [boats, searchTerm]);
 
+  const reportableBookings = useMemo(
+    () => bookings.filter(isReportableBooking),
+    [bookings]
+  );
+
   const filteredBookings = useMemo(
-    () => filterBookingsByPeriod(bookings, reportPeriod).filter((booking) => {
+    () => filterBookingsByPeriod(reportableBookings, reportPeriod).filter((booking) => {
       if (reportRoute === "all" || searchedBoatNames.length === 0) return true;
       const boatName = booking.boat || "Unassigned boat";
       return !searchedBoatNames.includes(boatName) || getBookingRouteLabel(booking) === reportRoute;
     }),
-    [bookings, reportPeriod, reportRoute, searchedBoatNames]
+    [reportableBookings, reportPeriod, reportRoute, searchedBoatNames]
   );
 
   const boatReports = useMemo(() => {
@@ -149,7 +165,7 @@ function ReportsAnalytics() {
       }
     });
 
-    const routeBookings = bookings.filter((booking) => {
+    const routeBookings = reportableBookings.filter((booking) => {
       const boatName = booking.boat || "Unassigned boat";
       const selectedRoute = boatRouteSelections[boatName] || "all";
       return selectedRoute === "all" || getBookingRouteLabel(booking) === selectedRoute;
@@ -176,13 +192,32 @@ function ReportsAnalytics() {
           summary: summarizeBookings(dayBookings),
         })),
       }));
-  }, [boats, bookings, boatRouteSelections]);
+  }, [boats, reportableBookings, boatRouteSelections]);
   const visibleDailyBoatReports = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     if (!normalizedSearch) return dailyBoatReports;
     return dailyBoatReports.filter((boatReport) => boatReport.name.toLowerCase().includes(normalizedSearch));
   }, [dailyBoatReports, searchTerm]);
   const filterLabel = buildReportFilterLabel({ reportPeriod });
+  const reportPageCount = 3;
+
+  const changeReportPage = (direction) => {
+    setReportPage((currentPage) => Math.max(0, Math.min(reportPageCount - 1, currentPage + direction)));
+  };
+
+  useLayoutEffect(() => {
+    const activePage = reportPageRefs.current[reportPage];
+    if (!activePage) return undefined;
+
+    const updateCarouselHeight = () => {
+      setCarouselHeight(activePage.scrollHeight);
+    };
+
+    updateCarouselHeight();
+    const observer = new ResizeObserver(updateCarouselHeight);
+    observer.observe(activePage);
+    return () => observer.disconnect();
+  }, [reportPage, loading, searchTerm, reportPeriod, reportRoute, boatRouteSelections, visibleDailyBoatReports, visibleBoatReports]);
 
   const getReportExportData = () => ({
     generatedAt: new Date().toISOString(),
@@ -260,7 +295,7 @@ function ReportsAnalytics() {
         <div className="reports-header">
           <div>
             <h1 className="reports-title">Reports & Analytics</h1>
-            <p className="reports-subtitle">Compare booking performance and revenue across every boat.</p>
+            <p className="reports-subtitle">Only paid bookings with a scanned passenger QR are included in performance and revenue totals.</p>
           </div>
         </div>
 
@@ -295,6 +330,51 @@ function ReportsAnalytics() {
           </div>
         </div>
 
+        <div
+          className="reports-carousel"
+          style={carouselHeight ? { height: `${carouselHeight}px` } : undefined}
+          onPointerDown={(event) => {
+            if (event.pointerType === "mouse" && event.button !== 0) return;
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            reportGesture.current = {
+              x: event.clientX,
+              y: event.clientY,
+              moved: false
+            };
+            setDragOffset(0);
+          }}
+          onPointerMove={(event) => {
+            if (!reportGesture.current) return;
+            const distanceX = event.clientX - reportGesture.current.x;
+            const distanceY = event.clientY - reportGesture.current.y;
+            if (Math.abs(distanceX) > Math.abs(distanceY) && Math.abs(distanceX) > 10) {
+              reportGesture.current.moved = true;
+              setDragOffset(distanceX);
+              event.preventDefault();
+            }
+          }}
+          onPointerUp={(event) => {
+            if (!reportGesture.current) return;
+            const distance = event.clientX - reportGesture.current.x;
+            if (reportGesture.current.moved && Math.abs(distance) > 35) {
+              changeReportPage(distance < 0 ? 1 : -1);
+            }
+            reportGesture.current = null;
+            setDragOffset(0);
+          }}
+          onPointerCancel={() => {
+            reportGesture.current = null;
+            setDragOffset(0);
+          }}
+        >
+          <div
+            className="reports-carousel-track"
+            style={{
+              transform: `translateX(calc(-${reportPage * 100}% + ${dragOffset}px))`,
+              transition: reportGesture.current ? "none" : undefined
+            }}
+          >
+            <section className="reports-carousel-page" ref={(element) => { reportPageRefs.current[0] = element; }}>
         <div className="reports-overview">
           {[
             ["Total bookings", totalSummary.totalBookings],
@@ -309,6 +389,8 @@ function ReportsAnalytics() {
           ))}
         </div>
 
+            </section>
+            <section className="reports-carousel-page" ref={(element) => { reportPageRefs.current[1] = element; }}>
         <div className="reports-section-heading">
           <h2>Daily comparison per boat</h2>
           <span>Monday to Sunday · {visibleDailyBoatReports.length} boat{visibleDailyBoatReports.length !== 1 ? "s" : ""}</span>
@@ -371,6 +453,8 @@ function ReportsAnalytics() {
           })}
         </div>
 
+            </section>
+            <section className="reports-carousel-page" ref={(element) => { reportPageRefs.current[2] = element; }}>
         <div className="reports-section-heading">
           <h2>Boat performance</h2>
           <span>{filterLabel} · {visibleBoatReports.length} boat{visibleBoatReports.length !== 1 ? "s" : ""}</span>
@@ -411,6 +495,22 @@ function ReportsAnalytics() {
         {!loading && !errorMessage && boatReports.length > 0 && visibleBoatReports.length === 0 && (
           <div className="reports-empty">No boat reports match your search.</div>
         )}
+            </section>
+          </div>
+        </div>
+        <div className="reports-carousel-dots" aria-label="Report pages">
+          {["Overview", "Daily comparison", "Boat performance"].map((label, index) => (
+            <button
+              type="button"
+              key={label}
+              className={`reports-carousel-dot${reportPage === index ? " active" : ""}`}
+              onClick={() => setReportPage(index)}
+              aria-label={`Go to ${label}`}
+              aria-current={reportPage === index ? "page" : undefined}
+            />
+          ))}
+        </div>
+
       </div>
     </SuperadminLayout>
   );

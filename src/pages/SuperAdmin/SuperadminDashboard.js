@@ -4,9 +4,11 @@ import { db } from "../../firebase";
 import SuperadminLayout from "./SuperadminLayout";
 import jsPDF from "jspdf";
 import {
+  attachPaymentStatuses,
   filterBookingsByPeriod,
   getBookingRouteLabel,
   getPeriodRange,
+  isReportableBooking,
   summarizeBookings,
 } from "../../utils/reportHelpers";
 
@@ -43,9 +45,12 @@ function SuperadminDashboard() {
         const adminsSnapshot = await getDocs(collection(db, "admins"));
         const portStaffSnapshot = await getDocs(collection(db, "port_staff"));
         const boatsSnapshot = await getDocs(collection(db, "boats"));
-        const bookingsSnapshot = await getDocs(collection(db, "bookings"));
+        const [bookingsSnapshot, paymentsSnapshot] = await Promise.all([
+          getDocs(collection(db, "bookings")),
+          getDocs(collection(db, "payments")),
+        ]);
 
-        setBookings(
+        setBookings(attachPaymentStatuses(
           bookingsSnapshot.docs.map((bookingDoc) => {
             const data = bookingDoc.data();
             const normalized = { id: bookingDoc.id, ...data };
@@ -53,8 +58,9 @@ function SuperadminDashboard() {
               normalized.date = normalized.date.toDate().toISOString().split("T")[0];
             }
             return normalized;
-          })
-        );
+          }),
+          paymentsSnapshot.docs.map((paymentDoc) => paymentDoc.data())
+        ));
         setBoats(boatsSnapshot.docs.map((boatDoc) => ({
           id: boatDoc.id,
           ...boatDoc.data(),
@@ -101,17 +107,21 @@ function SuperadminDashboard() {
     }
   };
 
+  const reportableBookings = useMemo(
+    () => bookings.filter(isReportableBooking),
+    [bookings]
+  );
   const filteredReportBookings = useMemo(
-    () => filterBookingsByPeriod(bookings, reportPeriod || "weekly"),
-    [bookings, reportPeriod]
+    () => filterBookingsByPeriod(reportableBookings, reportPeriod || "weekly"),
+    [reportableBookings, reportPeriod]
   );
   const reportSummary = useMemo(
     () => summarizeBookings(filteredReportBookings),
     [filteredReportBookings]
   );
   const overviewBookings = useMemo(
-    () => filterBookingsByPeriod(bookings, overviewPeriod),
-    [bookings, overviewPeriod]
+    () => filterBookingsByPeriod(reportableBookings, overviewPeriod),
+    [reportableBookings, overviewPeriod]
   );
   const overviewFilteredBookings = useMemo(
     () => overviewBookings.filter((booking) => {

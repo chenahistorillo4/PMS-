@@ -5,6 +5,14 @@ import { createUserWithEmailAndPassword, deleteUser } from "firebase/auth";
 import SuperadminLayout from "./SuperadminLayout";
 import "./ManageQRScanners.css";
 
+async function fetchPortStaffAccounts() {
+  const snapshot = await getDocs(collection(db, "port_staff"));
+  return snapshot.docs.map((accountDoc) => ({
+    id: accountDoc.id,
+    ...accountDoc.data()
+  }));
+}
+
 function ManageQRScanners() {
   const [portStaff, setPortStaff] = useState([]);
   const [boats, setBoats] = useState([]);
@@ -32,16 +40,11 @@ function ManageQRScanners() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Fetch Port Staff accounts
+  // Load Port Staff accounts.
   useEffect(() => {
     const fetchPortStaff = async () => {
       try {
-        const querySnapshot = await getDocs(collection(db, "port_staff"));
-        const staffList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setPortStaff(staffList);
+        setPortStaff(await fetchPortStaffAccounts());
       } catch (error) {
         console.error("Error fetching Port Staff:", error);
         alert("Error loading Port Staff accounts");
@@ -60,16 +63,16 @@ function ManageQRScanners() {
   }, []);
 
   // Delete Port Staff account
-  const handleDelete = (id) => {
-    setDeletingId(id);
+  const handleDelete = (member) => {
+    setDeletingId(member);
     setDeleteConfirm(true);
   };
 
   const confirmDelete = async () => {
     setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, "port_staff", deletingId));
-      setPortStaff(portStaff.filter((member) => member.id !== deletingId));
+      await deleteDoc(doc(db, "port_staff", deletingId.id));
+      setPortStaff(portStaff.filter((member) => member.id !== deletingId.id));
       alert("Port Staff account deleted successfully");
       setDeleteConfirm(false);
       setDeletingId(null);
@@ -87,14 +90,14 @@ function ManageQRScanners() {
   };
 
   // Toggle status
-  const handleToggleStatus = async (id, currentStatus) => {
+  const handleToggleStatus = async (member) => {
     try {
-      const newStatus = currentStatus === "active" ? "inactive" : "active";
-      await updateDoc(doc(db, "port_staff", id), {
+      const newStatus = member.status === "active" ? "inactive" : "active";
+      await updateDoc(doc(db, "port_staff", member.id), {
         status: newStatus
       });
-      setPortStaff(portStaff.map((member) =>
-        member.id === id ? { ...member, status: newStatus } : member
+      setPortStaff(portStaff.map((account) =>
+        account === member ? { ...account, status: newStatus } : account
       ));
     } catch (error) {
       alert("Error updating Port Staff status: " + error.message);
@@ -153,8 +156,7 @@ function ManageQRScanners() {
       setNewStaffData({ name: "", email: "", password: "", boat: "", phone: "" });
       
       // Refresh Port Staff list
-      const querySnapshot = await getDocs(collection(db, "port_staff"));
-      setPortStaff(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setPortStaff(await fetchPortStaffAccounts());
     } catch (error) {
       if (error.code === "auth/email-already-in-use") {
         alert("Email is already in use");
@@ -258,14 +260,14 @@ function ManageQRScanners() {
                   <td data-label="Actions">
                     <div className="action-buttons" style={{ gap: "4px" }}>
                       <button
-                        onClick={() => handleToggleStatus(member.id, member.status)}
+                        onClick={() => handleToggleStatus(member)}
                         className={member.status === "active" ? "deactivate-btn" : "activate-btn"}
                         style={{ flex: 1 }}
                       >
                         {member.status === "active" ? "Deactivate" : "Activate"}
                       </button>
                       <button
-                        onClick={() => handleDelete(member.id)}
+                        onClick={() => handleDelete(member)}
                         className="delete-btn"
                         style={{ flex: 1 }}
                       >
