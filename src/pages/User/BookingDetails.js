@@ -44,6 +44,23 @@ function BookingDetails(props) {
     userId = auth.currentUser.uid;
   }
 
+  const isTripDateInPast = (tripDate) => {
+    if (!tripDate) return false;
+
+    const parsedDate = tripDate?.toDate ? tripDate.toDate() : new Date(String(tripDate));
+    if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+      return false;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const tripDay = new Date(parsedDate);
+    tripDay.setHours(0, 0, 0, 0);
+
+    return tripDay < today;
+  };
+
   const [form, setForm] = useState({
     bookingType: 'passenger_cargo', // "passenger_cargo" or "cargo_only"
     customerName: '',
@@ -355,6 +372,16 @@ function BookingDetails(props) {
     if (!trip) {
       alert('Trip data is missing. Please select a trip again.');
       navigate('/booking');
+      return;
+    }
+
+    if (isTripDateInPast(trip.date)) {
+      alert('This trip date has already passed. Please select an available schedule.');
+      if (onCloseModal) {
+        onCloseModal();
+      } else {
+        navigate('/booking');
+      }
       return;
     }
 

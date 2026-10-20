@@ -3,6 +3,22 @@ import { db } from "../../firebase";
 import { collection, getDocs } from "firebase/firestore";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 
+function getDateKey(value) {
+  if (!value) return "";
+
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = value?.toDate ? value.toDate() : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function Schedule() {
   const [selectedRoute, setSelectedRoute] = useState("All Routes");
   const [selectedDate, setSelectedDate] = useState("");
@@ -39,12 +55,13 @@ function Schedule() {
     fetchTrips();
   }, []);
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = getDateKey(new Date());
 
   const filteredTrips = trips.filter((trip) => {
-    const isCurrentOrFutureTrip = trip.date >= today;
+    const tripDate = getDateKey(trip.date);
+    const isCurrentOrFutureTrip = tripDate && tripDate >= today;
     const routeMatch = selectedRoute === "All Routes" || trip.routeDirection === selectedRoute;
-    const dateMatch = !selectedDate || trip.date === selectedDate;
+    const dateMatch = !selectedDate || tripDate === selectedDate;
     return isCurrentOrFutureTrip && routeMatch && dateMatch;
   });
 

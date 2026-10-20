@@ -12,12 +12,25 @@ function ManageBooking() {
   const navigate = useNavigate();
   const reloadKey = useAuthReloadKey();
   const [bookings, setBookings] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
   const [paymentStatuses, setPaymentStatuses] = useState({});
+  const [refundRequestsByBooking, setRefundRequestsByBooking] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [proofModal, setProofModal] = useState({ isOpen: false, bookingId: null, proofImage: null });
   const [qrModal, setQrModal] = useState({ isOpen: false, bookingId: null, referenceCode: null });
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
   const [expandedDetails, setExpandedDetails] = useState({});
+  const bookingsPerPage = 5;
+  const totalPages = Math.ceil(bookings.length / bookingsPerPage);
+  const pageStartIndex = (currentPage - 1) * bookingsPerPage;
+  const visibleBookings = bookings.slice(pageStartIndex, pageStartIndex + bookingsPerPage);
+
+  useEffect(() => {
+    const lastPage = Math.max(1, totalPages);
+    if (currentPage > lastPage) {
+      setCurrentPage(lastPage);
+    }
+  }, [currentPage, totalPages]);
 
   // Scroll to top on mount
   useEffect(() => {
@@ -204,6 +217,52 @@ function ManageBooking() {
   }, [reloadKey]);
 
   useEffect(() => {
+    let unsubscribeRefundRequests = () => {};
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      unsubscribeRefundRequests();
+
+      if (!user) {
+        setRefundRequestsByBooking({});
+        return;
+      }
+
+      const refundRequestsQuery = query(
+        collection(db, "refund_requests"),
+        where("userId", "==", user.uid)
+      );
+      unsubscribeRefundRequests = onSnapshot(
+        refundRequestsQuery,
+        (snapshot) => {
+          const requestsByBooking = {};
+          snapshot.docs.forEach((refundDoc) => {
+            const refund = refundDoc.data();
+            if (!refund.bookingId) return;
+
+            const createdAt = refund.createdAt?.toDate?.() || new Date(refund.createdAt || 0);
+            const previousRequest = requestsByBooking[refund.bookingId];
+            const previousCreatedAt = previousRequest?.createdAt || new Date(0);
+
+            if (createdAt >= previousCreatedAt) {
+              requestsByBooking[refund.bookingId] = {
+                status: refund.status || "pending",
+                createdAt,
+              };
+            }
+          });
+          setRefundRequestsByBooking(requestsByBooking);
+        },
+        (error) => console.error("Error watching refund requests:", error)
+      );
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeRefundRequests();
+    };
+  }, [reloadKey]);
+
+  useEffect(() => {
     if (!qrModal.isOpen || !qrModal.bookingId) return undefined;
 
     const bookingRef = doc(db, "bookings", qrModal.bookingId);
@@ -271,7 +330,7 @@ function ManageBooking() {
       };
     }
 
-    if (bookingStatus === "scanned") {
+    if (["scanned", "boarded"].includes(bookingStatus)) {
       return {
         label: "Boarded",
         color: "#4caf50",
@@ -426,10 +485,11 @@ function ManageBooking() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "10px" : "16px" }}>
-          {bookings.map((booking) => (
+          {visibleBookings.map((booking) => (
             <div key={booking.id} style={{ display: "flex", flexDirection: "column", gap: "0" }}>
               {(() => {
                 const paymentInfo = paymentStatuses[booking.id] || {};
+                const refundRequest = refundRequestsByBooking[booking.id];
                 const displayState = getBookingDisplayState(booking, paymentInfo);
                 const passengerText = booking.customerName || booking.name || "Guest";
                 const routeText = booking.routeDirection || booking.tripName || "Ferry Route";
@@ -600,6 +660,28 @@ function ManageBooking() {
                     <div style={{ fontSize: isMobile ? "0.68rem" : "0.82rem", color: "#5f7287", fontWeight: 600 }}>
                       Payment Status: <span style={{ color: displayState.paymentColor, fontWeight: 700 }}>{displayState.paymentLabel}</span>
                     </div>
+                    {refundRequest && (
+                      <div
+                        role="status"
+                        style={{
+                          color: ["approved", "refunded"].includes(refundRequest.status)
+                            ? "#2e7d32"
+                            : refundRequest.status === "rejected"
+                              ? "#c62828"
+                              : "#9a6700",
+                          fontSize: isMobile ? "0.68rem" : "0.82rem",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {refundRequest.status === "refunded"
+                          ? "Refunded"
+                          : refundRequest.status === "approved"
+                          ? "Refund Approved"
+                          : refundRequest.status === "rejected"
+                            ? "Refund Declined"
+                            : "Refund Already Requested"}
+                      </div>
+                    )}
                   </div>
 
                   {/* Action Button */}
@@ -684,6 +766,45 @@ function ManageBooking() {
               })()}
             </div>
           ))}
+          {totalPages > 1 && (
+            <nav
+              aria-label="Booking pages"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: isMobile ? "8px" : "16px",
+                flexWrap: "wrap",
+                marginTop: "6px",
+                padding: "13px",
+                border: "1px solid #e0e8f0",
+                borderRadius: "11px",
+                background: "rgba(255, 255, 255, 0.94)"
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                disabled={currentPage === 1}
+                style={paginationButtonStyle(currentPage === 1)}
+              >
+                Previous
+              </button>
+              <span aria-live="polite" style={{ color: "#52677d", fontSize: "0.88rem", fontWeight: 600, textAlign: "center" }}>
+                {pageStartIndex + 1}–{Math.min(pageStartIndex + bookingsPerPage, bookings.length)}
+                {" of "}
+                {bookings.length} · Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                disabled={currentPage === totalPages}
+                style={paginationButtonStyle(currentPage === totalPages)}
+              >
+                Next
+              </button>
+            </nav>
+          )}
         </div>
       )}
 
@@ -873,7 +994,7 @@ function ManageBooking() {
                   : null;
                 const isPaidAndValid =
                   displayState?.paymentLabel === "Paid" && booking?.status === "confirmed";
-                const qrStatusLabel = booking?.status === "scanned"
+                const qrStatusLabel = ["scanned", "boarded"].includes(booking?.status?.toLowerCase?.())
                   ? "Already boarded"
                   : booking?.status === "cancelled"
                     ? "Cancelled"
@@ -881,7 +1002,8 @@ function ManageBooking() {
                       ? "Paid / Valid for boarding"
                       : "Pending payment / Not valid for boarding";
                 const qrStatusIsInvalid =
-                  booking?.status === "scanned" || booking?.status === "cancelled";
+                  ["scanned", "boarded"].includes(booking?.status?.toLowerCase?.()) ||
+                  booking?.status === "cancelled";
 
                 return (
                   <div
@@ -997,6 +1119,19 @@ function ManageBooking() {
       </div>
     </div>
   );
+}
+
+function paginationButtonStyle(disabled) {
+  return {
+    padding: "6px 10px",
+    border: "1px solid #cbd8e6",
+    borderRadius: "7px",
+    background: disabled ? "#f3f6f9" : "#fff",
+    color: disabled ? "#9aa8b6" : "#2c5f9c",
+    fontWeight: 700,
+    fontSize: "0.78rem",
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
 }
 
 export default ManageBooking;

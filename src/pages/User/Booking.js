@@ -96,6 +96,23 @@ function Booking({ userId, userType }) {
     };
   }, [trips]);
 
+  const isTripDateInPast = (tripDate) => {
+    if (!tripDate) return false;
+
+    const parsedDate = tripDate?.toDate ? tripDate.toDate() : new Date(String(tripDate));
+    if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+      return false;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const tripDay = new Date(parsedDate);
+    tripDay.setHours(0, 0, 0, 0);
+
+    return tripDay < today;
+  };
+
   const filteredTrips = trips.filter((trip) => {
     const matchesSearch =
       trip.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -107,10 +124,15 @@ function Booking({ userId, userType }) {
       trip.status?.toLowerCase() !== "cancelled" &&
       trip.status?.toLowerCase() !== "boarding";
 
-    return matchesSearch && isBookable;
+    return matchesSearch && isBookable && !isTripDateInPast(trip.date);
   });
 
   const handleBookClick = (trip) => {
+    if (isTripDateInPast(trip?.date)) {
+      alert("This trip date has already passed. Please select an available schedule.");
+      return;
+    }
+
     setSelectedTrip(trip);
     setShowModal(true);
   };
