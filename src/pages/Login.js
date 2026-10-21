@@ -61,17 +61,7 @@ function Login() {
 
       if (portStaffDocSnap.exists()) {
         console.log("✓ Found PORT STAFF role");
-        navigate("/admin-dashboard");
-        return;
-      }
-
-      // Check SCANNERS collection
-      const scannerDocRef = doc(db, "qr_scanners", user.uid);
-      const scannerDocSnap = await getDoc(scannerDocRef);
-
-      if (scannerDocSnap.exists()) {
-        console.log("✓ Found PORT STAFF role");
-        navigate("/admin-dashboard");
+        navigate("/port-staff-dashboard");
         return;
       }
 
