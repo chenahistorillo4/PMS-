@@ -1,17 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { auth, db } from "../../firebase";
-import { collection, query, where, onSnapshot, updateDoc, doc, addDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, updateDoc, doc, addDoc, deleteDoc } from "firebase/firestore";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { useNavigate } from "react-router-dom";
 import { notifyRefundRequest } from "../../utils/notificationHelper";
 import { isNotificationUnread } from "../../hooks/useUnreadNotificationCount";
 import { getNotificationCardStyles, NotificationDot } from "../../components/NotificationBadge";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
+import "./Notifications.css";
 
 function UserNotifications() {
   const [notifications, setNotifications] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [processingAction, setProcessingAction] = useState({});
+  const [deleteActions, setDeleteActions] = useState({});
+  const gesture = useRef(null);
+  const suppressClick = useRef(false);
   const navigate = useNavigate();
   const { user, authReady } = useAuthUser();
   const reloadKey = useAuthReloadKey();
@@ -63,12 +68,93 @@ function UserNotifications() {
   };
 
   const handleNotificationClick = (notif) => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
     if (isNotificationUnread(notif)) {
       markAsRead(notif.id);
     }
   };
 
-  const unreadCount = notifications.filter((notif) => isNotificationUnread(notif)).length;
+  const showDeleteAction = (notificationId) => {
+    setDeleteActions((current) => ({ ...current, [notificationId]: true }));
+  };
+
+  const hideDeleteAction = (notificationId) => {
+    setDeleteActions((current) => {
+      const next = { ...current };
+      delete next[notificationId];
+      return next;
+    });
+  };
+
+  const handleDeleteNotification = async (notif) => {
+    if (!window.confirm("Delete this notification?")) return;
+
+    try {
+      await deleteDoc(doc(db, "notifications", notif.id));
+      setDeleteActions((current) => {
+        const next = { ...current };
+        delete next[notif.id];
+        return next;
+      });
+    } catch (error) {
+      console.error("Error deleting notification:", error);
+      alert("Unable to delete this notification. Please try again.");
+    }
+  };
+
+  const handlePointerDown = (event, notificationId) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    gesture.current = {
+      id: notificationId,
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+      wasRevealed: Boolean(deleteActions[notificationId])
+    };
+  };
+
+  const handlePointerMove = (event) => {
+    if (!gesture.current) return;
+
+    const deltaX = event.clientX - gesture.current.x;
+    const deltaY = event.clientY - gesture.current.y;
+
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
+      gesture.current.moved = true;
+      if (deltaX < -40) {
+        showDeleteAction(gesture.current.id);
+      } else if (gesture.current.wasRevealed && deltaX > 25) {
+        hideDeleteAction(gesture.current.id);
+      }
+      event.preventDefault();
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (gesture.current?.moved) {
+      suppressClick.current = true;
+    }
+    gesture.current = null;
+  };
+
+  const notificationsPerPage = 10;
+  const totalPages = Math.ceil(notifications.length / notificationsPerPage);
+  const pageStartIndex = (currentPage - 1) * notificationsPerPage;
+  const visibleNotifications = notifications.slice(
+    pageStartIndex,
+    pageStartIndex + notificationsPerPage
+  );
+
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleRefundRequest = async (notif) => {
     try {
@@ -123,10 +209,10 @@ function UserNotifications() {
         actionTimestamp: new Date()
       });
 
-      navigate("/schedule");
+      navigate("/booking");
     } catch (error) {
       console.error("Error:", error);
-      navigate("/schedule");
+      navigate("/booking");
     }
   };
 
@@ -174,92 +260,69 @@ function UserNotifications() {
   };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed",
-      paddingTop: isMobile ? "72px" : "0",
-      padding: isMobile ? "14px 10px" : "40px 20px"
-    }}>
-      <div style={{
-        maxWidth: "900px",
-        margin: "0 auto"
-      }}>
-        <h1 style={{
-          textAlign: "center",
-          fontSize: isMobile ? "1.2rem" : "2.2rem",
-          fontWeight: 800,
-          marginBottom: isMobile ? "6px" : "10px",
-          color: "#1a1a1a",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: "10px",
-          flexWrap: "wrap",
-        }}>
-          Notifications
-          {unreadCount > 0 && (
-            <span style={{
-              fontSize: isMobile ? "0.7rem" : "0.8rem",
-              fontWeight: 700,
-              color: "#f44336",
-              background: "#ffebee",
-              padding: "4px 10px",
-              borderRadius: "999px",
-            }}>
-              {unreadCount} new
-            </span>
-          )}
-        </h1>
-        <p style={{
-          textAlign: "center",
-          fontSize: isMobile ? "0.76rem" : "0.98rem",
-          color: "#666",
-          marginBottom: isMobile ? "16px" : "32px",
-          fontWeight: 500
-        }}>
-          Stay updated with trip changes and announcements
-        </p>
+    <main className={`user-notifications-page${isMobile ? " mobile" : ""}`}>
+      <div className="user-notifications-shell">
 
         {/* Notifications List */}
-        <div style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: isMobile ? "10px" : "15px"
-        }}>
+        <div className="notifications-list">
           {notifications.length === 0 ? (
-            <div style={{
-              background: "white",
-              padding: isMobile ? "30px 15px" : "60px 30px",
-              borderRadius: "12px",
-              border: "1px solid #e0e0e0",
-              textAlign: "center",
-              color: "#999"
-            }}>
-              <div style={{ fontSize: "3rem", marginBottom: "15px" }}></div>
-              <p style={{ fontSize: isMobile ? "0.85rem" : "1rem" }}>No notifications yet</p>
-              <p style={{ fontSize: isMobile ? "0.75rem" : "0.9rem", marginTop: "8px" }}>
+            <div className="notifications-empty">
+              <span className="notifications-empty-icon" aria-hidden="true">✉</span>
+              <h2>No notifications yet</h2>
+              <p>
                 You'll receive notifications when trip details change
               </p>
             </div>
           ) : (
-            notifications.map((notif) => {
+            visibleNotifications.map((notif) => {
               const isUnread = isNotificationUnread(notif);
+              const refundAlreadyRequested = notif.userAction === "refund_requested";
               const cardStyles = getNotificationCardStyles(!isUnread, isMobile);
 
               return (
-              <div
-                key={notif.id}
-                style={cardStyles.card}
-                onClick={() => handleNotificationClick(notif)}
+              <div className="notification-swipe-wrapper" key={notif.id}>
+                <button
+                  type="button"
+                  className="notification-restore-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setDeleteActions((current) => {
+                      const next = { ...current };
+                      delete next[notif.id];
+                      return next;
+                    });
+                  }}
+                  aria-label={`Keep notification: ${notif.title}`}
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  className="notification-delete-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDeleteNotification(notif);
+                  }}
+                  aria-label={`Delete notification: ${notif.title}`}
+                >
+                  Delete
+                </button>
+                <div
+                  className={`notification-card${isUnread ? " unread" : ""}${deleteActions[notif.id] ? " delete-revealed" : ""}`}
+                  style={cardStyles.card}
+                  onClick={() => handleNotificationClick(notif)}
+                  onDoubleClick={() => showDeleteAction(notif.id)}
+                  onPointerDown={(event) => handlePointerDown(event, notif.id)}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={handlePointerUp}
                 onMouseEnter={(e) => {
                   if (isUnread) {
                     e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.1)";
-                    e.currentTarget.style.transform = "translateY(-2px)";
                   }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.boxShadow = isUnread ? "0 2px 8px rgba(0,0,0,0.06)" : "none";
-                  e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
                 {isUnread && (
@@ -274,8 +337,8 @@ function UserNotifications() {
                   />
                 )}
                 
-                <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", opacity: isUnread ? 1 : 0.88 }}>
-                  <div style={{
+                <div className="notification-card-body" style={{ opacity: isUnread ? 1 : 0.88 }}>
+                  <div className="notification-icon" style={{
                     fontSize: "1.5rem",
                     minWidth: "30px",
                     textAlign: "center",
@@ -288,7 +351,7 @@ function UserNotifications() {
                     {getNotificationIcon(notif.type)}
                   </div>
                   
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="notification-card-content">
                     <h4 style={cardStyles.title}>
                       {notif.title}
                     </h4>
@@ -298,7 +361,7 @@ function UserNotifications() {
                     </p>
 
                     {notif.tripDetails && (
-                      <div style={{
+                      <div className="notification-trip-details" style={{
                         background: isUnread ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.02)",
                         padding: "10px 12px",
                         borderRadius: "8px",
@@ -314,7 +377,7 @@ function UserNotifications() {
                       </div>
                     )}
 
-                    <div style={{
+                    <div className="notification-timestamp" style={{
                       ...cardStyles.timestamp,
                       marginBottom: notif.type === "trip_cancelled" ? "12px" : "0"
                     }}>
@@ -325,36 +388,44 @@ function UserNotifications() {
                     </div>
 
                     {notif.type === "trip_cancelled" && (
-                      <div style={{
+                      <div className="notification-actions" style={{
                         display: "flex",
                         gap: "8px",
                         marginTop: "12px",
                         flexWrap: "wrap"
                       }}>
                         <button
+                          className="notification-action-button refund"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleRefundRequest(notif);
+                            if (!refundAlreadyRequested) {
+                              handleRefundRequest(notif);
+                            }
                           }}
-                          disabled={processingAction[notif.id]}
+                          disabled={processingAction[notif.id] || refundAlreadyRequested}
                           style={{
                             flex: isMobile ? "1 1 calc(50% - 4px)" : "0 1 auto",
                             padding: "8px 14px",
-                            background: processingAction[notif.id] ? "#ccc" : "#f44336",
+                            background: processingAction[notif.id] || refundAlreadyRequested ? "#9e9e9e" : "#f44336",
                             color: "white",
                             border: "none",
                             borderRadius: "6px",
                             fontWeight: 600,
                             fontSize: isMobile ? "0.75rem" : "0.85rem",
-                            cursor: processingAction[notif.id] ? "not-allowed" : "pointer",
+                            cursor: processingAction[notif.id] || refundAlreadyRequested ? "not-allowed" : "pointer",
                             transition: "background 0.3s"
                           }}
-                          onMouseEnter={(e) => !processingAction[notif.id] && (e.target.style.background = "#d32f2f")}
-                          onMouseLeave={(e) => !processingAction[notif.id] && (e.target.style.background = "#f44336")}
+                          onMouseEnter={(e) => !processingAction[notif.id] && !refundAlreadyRequested && (e.target.style.background = "#d32f2f")}
+                          onMouseLeave={(e) => !processingAction[notif.id] && !refundAlreadyRequested && (e.target.style.background = "#f44336")}
                         >
-                          {processingAction[notif.id] ? "Processing..." : "Request Refund"}
+                          {processingAction[notif.id]
+                            ? "Processing..."
+                            : refundAlreadyRequested
+                              ? "Refund Requested"
+                              : "Request Refund"}
                         </button>
                         <button
+                          className="notification-action-button book-again"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleBookAnother(notif);
@@ -381,14 +452,54 @@ function UserNotifications() {
                     )}
                   </div>
                 </div>
+                </div>
               </div>
             );
             })
           )}
         </div>
+
+        {totalPages > 1 && (
+          <nav className="notifications-pagination" aria-label="Notification pages">
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+              style={paginationButtonStyle(currentPage === 1)}
+            >
+              Previous
+            </button>
+            <span aria-live="polite">
+              {pageStartIndex + 1}–{Math.min(pageStartIndex + notificationsPerPage, notifications.length)}
+              {" of "}
+              {notifications.length} · Page {currentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={currentPage === totalPages}
+              style={paginationButtonStyle(currentPage === totalPages)}
+            >
+              Next
+            </button>
+          </nav>
+        )}
       </div>
-    </div>
+    </main>
   );
+}
+
+function paginationButtonStyle(disabled) {
+  return {
+    padding: "6px 10px",
+    border: "1px solid #cbd8e6",
+    borderRadius: "7px",
+    background: disabled ? "#f3f6f9" : "#fff",
+    color: disabled ? "#9aa8b6" : "#2c5f9c",
+    fontWeight: 700,
+    fontSize: "0.78rem",
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
 }
 
 export default UserNotifications;

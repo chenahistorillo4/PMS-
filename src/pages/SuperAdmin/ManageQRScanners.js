@@ -1,12 +1,21 @@
 import { useState, useEffect } from "react";
-import { db, auth } from "../../firebase";
+import { db, accountCreationAuth } from "../../firebase";
 import { collection, getDocs, deleteDoc, doc, updateDoc, setDoc } from "firebase/firestore";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, deleteUser } from "firebase/auth";
 import SuperadminLayout from "./SuperadminLayout";
 import "./ManageQRScanners.css";
 
+async function fetchPortStaffAccounts() {
+  const snapshot = await getDocs(collection(db, "port_staff"));
+  return snapshot.docs.map((accountDoc) => ({
+    id: accountDoc.id,
+    ...accountDoc.data()
+  }));
+}
+
 function ManageQRScanners() {
-  const [scanners, setScanners] = useState([]);
+  const [portStaff, setPortStaff] = useState([]);
+  const [boats, setBoats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -14,10 +23,12 @@ function ManageQRScanners() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const [newScannerData, setNewScannerData] = useState({
+  const [newStaffData, setNewStaffData] = useState({
     name: "",
     email: "",
-    password: ""
+    password: "",
+    boat: "",
+    phone: ""
   });
   const [isCreating, setIsCreating] = useState(false);
 
@@ -29,43 +40,44 @@ function ManageQRScanners() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Fetch QR Scanners
+  // Load Port Staff accounts.
   useEffect(() => {
-    const fetchScanners = async () => {
+    const fetchPortStaff = async () => {
       try {
-        const querySnapshot = await getDocs(collection(db, "qr_scanners"));
-        const scannerList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setScanners(scannerList);
+        setPortStaff(await fetchPortStaffAccounts());
       } catch (error) {
-        console.error("Error fetching QR Scanners:", error);
-        alert("Error loading QR Scanners");
+        console.error("Error fetching Port Staff:", error);
+        alert("Error loading Port Staff accounts");
       } finally {
         setLoading(false);
       }
     };
 
-    fetchScanners();
+    const fetchBoats = async () => {
+      const querySnapshot = await getDocs(collection(db, "boats"));
+      setBoats(querySnapshot.docs.map((boatDoc) => ({ id: boatDoc.id, ...boatDoc.data() })));
+    };
+
+    fetchPortStaff();
+    fetchBoats();
   }, []);
 
-  // Delete scanner
-  const handleDelete = (id) => {
-    setDeletingId(id);
+  // Delete Port Staff account
+  const handleDelete = (member) => {
+    setDeletingId(member);
     setDeleteConfirm(true);
   };
 
   const confirmDelete = async () => {
     setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, "qr_scanners", deletingId));
-      setScanners(scanners.filter(s => s.id !== deletingId));
-      alert("QR Scanner account deleted successfully");
+      await deleteDoc(doc(db, "port_staff", deletingId.id));
+      setPortStaff(portStaff.filter((member) => member.id !== deletingId.id));
+      alert("Port Staff account deleted successfully");
       setDeleteConfirm(false);
       setDeletingId(null);
     } catch (error) {
-      alert("Error deleting QR Scanner: " + error.message);
+      alert("Error deleting Port Staff account: " + error.message);
       setIsDeleting(false);
       setDeleteConfirm(false);
       setDeletingId(null);
@@ -78,80 +90,98 @@ function ManageQRScanners() {
   };
 
   // Toggle status
-  const handleToggleStatus = async (id, currentStatus) => {
+  const handleToggleStatus = async (member) => {
     try {
-      const newStatus = currentStatus === "active" ? "inactive" : "active";
-      await updateDoc(doc(db, "qr_scanners", id), {
+      const newStatus = member.status === "active" ? "inactive" : "active";
+      await updateDoc(doc(db, "port_staff", member.id), {
         status: newStatus
       });
-      setScanners(scanners.map(s =>
-        s.id === id ? { ...s, status: newStatus } : s
+      setPortStaff(portStaff.map((account) =>
+        account === member ? { ...account, status: newStatus } : account
       ));
     } catch (error) {
-      alert("Error updating status: " + error.message);
+      alert("Error updating Port Staff status: " + error.message);
     }
   };
 
-  const handleCreateScanner = async (e) => {
+  const handleCreatePortStaff = async (e) => {
     e.preventDefault();
     
-    if (!newScannerData.name.trim() || !newScannerData.email.trim() || !newScannerData.password.trim()) {
+    if (!newStaffData.name.trim() || !newStaffData.email.trim() || !newStaffData.password.trim()) {
       alert("Please fill in all required fields");
       return;
     }
 
-    if (newScannerData.password.length < 6) {
+    if (newStaffData.password.length < 6) {
       alert("Password must be at least 6 characters");
+      return;
+    }
+
+    if (!newStaffData.boat) {
+      alert("Please select the boat assigned to this Port Staff member");
       return;
     }
 
     setIsCreating(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, newScannerData.email, newScannerData.password);
+      const userCredential = await createUserWithEmailAndPassword(accountCreationAuth, newStaffData.email.trim(), newStaffData.password);
       const uid = userCredential.user.uid;
 
-      await setDoc(doc(db, "qr_scanners", uid), {
-        uid,
-        name: newScannerData.name,
-        email: newScannerData.email,
-        role: "qr_scanner",
-        permissions: ["scan_qr"],
-        status: "active",
-        createdAt: new Date(),
-        lastLogin: null
-      });
+      try {
+        await setDoc(doc(db, "port_staff", uid), {
+          uid,
+          name: newStaffData.name.trim(),
+          email: newStaffData.email.trim(),
+          role: "port_staff",
+          status: "active",
+          adminName: "Super Admin",
+          assignedBoat: newStaffData.boat,
+          assignedRoute: boats.find((boat) => boat.name === newStaffData.boat)?.route || null,
+          phone: newStaffData.phone.trim() || null,
+          permissions: ["scan_qr"],
+          createdAt: new Date(),
+          lastLogin: null
+        });
+      } catch (error) {
+        try {
+          await deleteUser(userCredential.user);
+        } catch (cleanupError) {
+          console.error("Failed to remove the Auth account that was not written to Firestore:", cleanupError);
+        }
+        throw error;
+      }
 
-      alert("QR Scanner account created successfully!");
+      alert("Port Staff account created successfully!");
       setShowCreateModal(false);
-      setNewScannerData({ name: "", email: "", password: "" });
+      setNewStaffData({ name: "", email: "", password: "", boat: "", phone: "" });
       
-      // Refresh scanners list
-      const querySnapshot = await getDocs(collection(db, "qr_scanners"));
-      setScanners(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      // Refresh Port Staff list
+      setPortStaff(await fetchPortStaffAccounts());
     } catch (error) {
       if (error.code === "auth/email-already-in-use") {
         alert("Email is already in use");
       } else if (error.code === "auth/invalid-email") {
         alert("Invalid email address");
       } else {
-        alert("Error creating QR Scanner: " + error.message);
+        alert("Error creating Port Staff account: " + error.message);
       }
     } finally {
       setIsCreating(false);
     }
   };
 
-  // Filter scanners
-  const filteredScanners = scanners.filter(scanner =>
-    scanner.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    scanner.email.toLowerCase().includes(searchTerm.toLowerCase())
+  // Filter Port Staff accounts
+  const filteredPortStaff = portStaff.filter((member) =>
+    (member.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (member.email || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (member.assignedBoat || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <SuperadminLayout active="manage-qr-scanners">
+    <SuperadminLayout active="manage-port-staff">
       <div className="manage-scanners-container">
         <div className="manage-scanners-header">
-          <h3 className="manage-scanners-title">Manage QR Scanner Accounts</h3>
+          <h3 className="manage-scanners-title">Manage Port Staff</h3>
         </div>
 
         {/* Search Bar and Add Button */}
@@ -169,34 +199,36 @@ function ManageQRScanners() {
             onClick={() => setShowCreateModal(true)}
             className="add-scanner-btn"
           >
-            + Add New Scanner
+            + Add Port Staff
           </button>
         </div>
 
         {/* Loading State */}
         {loading && (
           <div className="loading-state">
-            Loading QR Scanner accounts...
+            Loading Port Staff accounts...
           </div>
         )}
 
         {/* Empty State */}
-        {!loading && filteredScanners.length === 0 && (
+        {!loading && filteredPortStaff.length === 0 && (
           <div className="empty-state">
             <p>
-              {scanners.length === 0 ? "No QR Scanner accounts created yet" : "No matching results found"}
+              {portStaff.length === 0 ? "No Port Staff accounts created yet" : "No matching results found"}
             </p>
           </div>
         )}
 
-        {/* Scanners Table */}
-        {!loading && filteredScanners.length > 0 && (
+        {/* Port Staff Table */}
+        {!loading && filteredPortStaff.length > 0 && (
           <div className="scanners-table-wrapper">
             <table className="scanners-table">
             <thead>
               <tr>
                 <th>Name</th>
                 <th>Email</th>
+                <th>Contact Details</th>
+                <th>Assigned Boat</th>
                 <th>Status</th>
                 <th>Created</th>
                 <th>Last Login</th>
@@ -204,36 +236,38 @@ function ManageQRScanners() {
               </tr>
             </thead>
             <tbody>
-              {filteredScanners.map((scanner) => (
-                <tr key={scanner.id}>
-                  <td data-label="Name">{scanner.name}</td>
-                  <td data-label="Email">{scanner.email}</td>
+              {filteredPortStaff.map((member) => (
+                <tr key={member.id}>
+                  <td data-label="Name">{member.name}</td>
+                  <td data-label="Email">{member.email}</td>
+                  <td data-label="Contact Details">{member.phone || "Not provided"}</td>
+                  <td data-label="Assigned Boat">{member.assignedBoat || "Not assigned"}</td>
                   <td data-label="Status">
-                    <span className={`status-badge ${scanner.status === "active" ? "active" : "inactive"}`}>
-                      {scanner.status === "active" ? "✓ Active" : "✗ Inactive"}
+                    <span className={`status-badge ${member.status === "active" ? "active" : "inactive"}`}>
+                      {member.status === "active" ? " Active" : " Inactive"}
                     </span>
                   </td>
                   <td data-label="Created">
-                    {scanner.createdAt?.toDate?.()?.toLocaleDateString?.() || "Unknown"}
+                    {member.createdAt?.toDate?.()?.toLocaleDateString?.() || "Unknown"}
                   </td>
                   <td data-label="Last Login">
-                    {scanner.lastLogin ? 
-                      (typeof scanner.lastLogin.toDate === 'function' 
-                        ? scanner.lastLogin.toDate().toLocaleDateString()
-                        : new Date(scanner.lastLogin).toLocaleDateString())
+                    {member.lastLogin ?
+                      (typeof member.lastLogin.toDate === 'function'
+                        ? member.lastLogin.toDate().toLocaleDateString()
+                        : new Date(member.lastLogin).toLocaleDateString())
                       : "Never"}
                   </td>
                   <td data-label="Actions">
                     <div className="action-buttons" style={{ gap: "4px" }}>
                       <button
-                        onClick={() => handleToggleStatus(scanner.id, scanner.status)}
-                        className={scanner.status === "active" ? "deactivate-btn" : "activate-btn"}
+                        onClick={() => handleToggleStatus(member)}
+                        className={member.status === "active" ? "deactivate-btn" : "activate-btn"}
                         style={{ flex: 1 }}
                       >
-                        {scanner.status === "active" ? "Deactivate" : "Activate"}
+                        {member.status === "active" ? "Deactivate" : "Activate"}
                       </button>
                       <button
-                        onClick={() => handleDelete(scanner.id)}
+                        onClick={() => handleDelete(member)}
                         className="delete-btn"
                         style={{ flex: 1 }}
                       >
@@ -248,7 +282,7 @@ function ManageQRScanners() {
           </div>
         )}
 
-        {/* Create QR Scanner Modal */}
+        {/* Create Port Staff Modal */}
         {showCreateModal && (
           <div style={{
             position: "fixed",
@@ -281,10 +315,10 @@ function ManageQRScanners() {
                 fontSize: isMobile ? "0.8rem" : "1.5rem",
                 fontWeight: "700"
               }}>
-                Create QR Scanner Account
+                Create Port Staff Account
               </h3>
 
-              <form onSubmit={handleCreateScanner}>
+              <form onSubmit={handleCreatePortStaff}>
                 {/* Name Field */}
                 <div style={{ marginBottom: isMobile ? "10px" : "20px" }}>
                   <label style={{
@@ -299,8 +333,8 @@ function ManageQRScanners() {
                   <input
                     type="text"
                     placeholder="Enter full name"
-                    value={newScannerData.name}
-                    onChange={(e) => setNewScannerData({ ...newScannerData, name: e.target.value })}
+                    value={newStaffData.name}
+                    onChange={(e) => setNewStaffData({ ...newStaffData, name: e.target.value })}
                     style={{
                       width: "100%",
                       padding: isMobile ? "4px 5px" : "12px",
@@ -330,8 +364,8 @@ function ManageQRScanners() {
                   <input
                     type="email"
                     placeholder="Enter email address"
-                    value={newScannerData.email}
-                    onChange={(e) => setNewScannerData({ ...newScannerData, email: e.target.value })}
+                    value={newStaffData.email}
+                    onChange={(e) => setNewStaffData({ ...newStaffData, email: e.target.value })}
                     style={{
                       width: "100%",
                       padding: isMobile ? "4px 5px" : "12px",
@@ -361,8 +395,8 @@ function ManageQRScanners() {
                   <input
                     type="password"
                     placeholder="Enter password (min. 6 characters)"
-                    value={newScannerData.password}
-                    onChange={(e) => setNewScannerData({ ...newScannerData, password: e.target.value })}
+                    value={newStaffData.password}
+                    onChange={(e) => setNewStaffData({ ...newStaffData, password: e.target.value })}
                     style={{
                       width: "100%",
                       padding: isMobile ? "4px 5px" : "12px",
@@ -381,20 +415,32 @@ function ManageQRScanners() {
                   </small>
                 </div>
 
-                {/* Info Box */}
-                <div style={{
-                  backgroundColor: "#e3f2fd",
-                  border: "1px solid #90caf9",
-                  borderRadius: "6px",
-                  padding: isMobile ? "8px" : "15px",
-                  marginBottom: isMobile ? "12px" : "25px",
-                  fontSize: isMobile ? "0.55rem" : "0.9rem",
-                  color: "#1565c0",
-                  lineHeight: isMobile ? "1.2" : "1.5"
-                }}>
-                  <strong>ℹ️ Information:</strong><br />
-                  • This account can only scan QR codes<br />
-                  • No access to other admin features
+                <div style={{ marginBottom: isMobile ? "10px" : "20px" }}>
+                  <label style={{ display: "block", marginBottom: isMobile ? "3px" : "8px", fontWeight: "600", color: "#333", fontSize: isMobile ? "0.6rem" : "0.95rem" }}>
+                    Assigned Boat *
+                  </label>
+                  <select
+                    value={newStaffData.boat}
+                    onChange={(e) => setNewStaffData({ ...newStaffData, boat: e.target.value })}
+                    required
+                    style={{ width: "100%", padding: isMobile ? "4px 5px" : "12px", borderRadius: "6px", border: "1px solid #ddd", fontSize: isMobile ? "11px" : "1rem", boxSizing: "border-box" }}
+                  >
+                    <option value="">Select boat</option>
+                    {boats.map((boat) => <option key={boat.id} value={boat.name}>{boat.name}</option>)}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: isMobile ? "10px" : "20px" }}>
+                  <label style={{ display: "block", marginBottom: isMobile ? "3px" : "8px", fontWeight: "600", color: "#333", fontSize: isMobile ? "0.6rem" : "0.95rem" }}>
+                    Contact Details
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="Enter contact number"
+                    value={newStaffData.phone}
+                    onChange={(e) => setNewStaffData({ ...newStaffData, phone: e.target.value })}
+                    style={{ width: "100%", padding: isMobile ? "4px 5px" : "12px", borderRadius: "6px", border: "1px solid #ddd", fontSize: isMobile ? "11px" : "1rem", boxSizing: "border-box" }}
+                  />
                 </div>
 
                 {/* Action Buttons */}
@@ -466,7 +512,7 @@ function ManageQRScanners() {
                       }
                     }}
                   >
-                    {isCreating ? "Creating..." : "Create Scanner"}
+                    {isCreating ? "Creating..." : "Create Port Staff"}
                   </button>
                 </div>
               </form>
@@ -515,7 +561,7 @@ function ManageQRScanners() {
                 lineHeight: "1.6",
                 fontWeight: "400"
               }}>
-                Are you sure you want to delete this QR Scanner account?
+                Are you sure you want to delete this Port Staff account?
               </p>
               <div style={{
                 display: "flex",

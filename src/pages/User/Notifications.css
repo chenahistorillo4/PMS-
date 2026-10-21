@@ -1,0 +1,345 @@
+.user-notifications-page {
+  min-height: 100vh;
+  padding: 36px 20px 52px;
+  background: linear-gradient(135deg, #f7fbff 0%, #edf5fc 52%, #f8fbff 100%);
+}
+
+.user-notifications-shell {
+  width: min(100%, 860px);
+  margin: 0 auto;
+}
+
+.notifications-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 24px;
+  padding: 22px 26px;
+  border: 1px solid rgba(213, 226, 239, 0.9);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 8px 24px rgba(31, 73, 112, 0.08);
+}
+
+.notifications-eyebrow {
+  margin: 0 0 5px;
+  color: #3977b9;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+}
+
+.notifications-page-title {
+  margin: 0;
+  color: #18324b;
+  font-size: clamp(1.55rem, 4vw, 2rem);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.notifications-page-description {
+  margin: 7px 0 0;
+  color: #66798b;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.notifications-unread-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid #ffd9d5;
+  border-radius: 999px;
+  background: #fff2f0;
+  color: #b42318;
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.notification-card {
+  width: 100%;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+
+.notification-swipe-wrapper {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.notification-card.delete-revealed {
+  position: relative;
+  z-index: 1;
+  transform: translateX(-88px) !important;
+}
+
+.notification-delete-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 88px;
+  margin: 0;
+  padding: 7px;
+  border: 0;
+  border-radius: 0 0 12px 0;
+  background: #f44336;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.notification-restore-button {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 88px;
+  height: 50%;
+  margin: 0;
+  padding: 7px;
+  border: 0;
+  border-radius: 0 12px 0 0;
+  background: #607d8b;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.notification-restore-button:hover {
+  background: #455a64;
+}
+
+.notification-delete-button:hover {
+  background: #d32f2f;
+}
+
+.notification-card-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  min-width: 0;
+}
+
+.notification-icon {
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  margin-top: 1px;
+  border: 1px solid #e2ebf3;
+  border-radius: 12px;
+  background: #f5f9fd;
+}
+
+.notification-card-content {
+  flex: 1;
+  min-width: 0;
+  padding-right: 10px;
+}
+
+.notification-trip-details {
+  display: grid;
+  gap: 5px;
+  line-height: 1.5;
+}
+
+.notification-timestamp {
+  line-height: 1.4;
+}
+
+.notification-actions {
+  align-items: center;
+}
+
+.notification-action-button {
+  min-height: 34px;
+  padding: 6px 10px !important;
+  border-radius: 7px !important;
+  font-size: 0.76rem !important;
+}
+
+.notification-action-button:disabled {
+  cursor: wait !important;
+  opacity: 0.65;
+}
+
+.notifications-empty {
+  padding: 54px 24px;
+  border: 1px dashed #cbd9e7;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #66798b;
+  text-align: center;
+}
+
+.notifications-empty-icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  background: #eef6fd;
+  color: #3977b9;
+  font-size: 1.6rem;
+}
+
+.notifications-empty h2 {
+  margin: 0;
+  color: #263e55;
+  font-size: 1.12rem;
+}
+
+.notifications-empty p {
+  margin: 7px 0 0;
+  font-size: 0.92rem;
+}
+
+.notifications-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 22px;
+  padding: 13px;
+  border: 1px solid #e0e8f0;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.notifications-pagination > span {
+  color: #52677d;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.notifications-pagination button:not(:disabled):hover {
+  border-color: #3b7ecc;
+  background: #f1f7fd;
+}
+
+@media (max-width: 768px) {
+  .user-notifications-page {
+    padding: 88px 12px 28px;
+  }
+
+  .notifications-page-header {
+    align-items: flex-start;
+    margin-bottom: 16px;
+    padding: 17px 16px;
+    border-radius: 13px;
+  }
+
+  .notifications-page-description {
+    max-width: 34ch;
+    font-size: 0.83rem;
+  }
+
+  .notifications-unread-count {
+    min-height: 30px;
+    padding: 5px 9px;
+    font-size: 0.74rem;
+  }
+
+  .notifications-list {
+    gap: 10px;
+  }
+
+  .notification-card {
+    padding: 13px !important;
+    border-radius: 12px !important;
+  }
+
+  .notification-card-body {
+    gap: 10px;
+  }
+
+  .notification-icon {
+    flex-basis: 36px;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .notification-card-content {
+    padding-right: 8px;
+  }
+
+  .notification-delete-button {
+    width: 76px;
+    padding: 6px;
+    font-size: 0.72rem;
+  }
+
+  .notification-restore-button {
+    width: 76px;
+    padding: 6px;
+    font-size: 0.72rem;
+  }
+
+  .notification-card.delete-revealed {
+    transform: translateX(-76px) !important;
+  }
+
+  .notification-actions {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 7px !important;
+  }
+
+  .notification-action-button {
+    width: auto;
+    min-height: 32px;
+    flex: 0 1 auto !important;
+    padding: 6px 9px !important;
+    font-size: 0.72rem !important;
+  }
+
+  .notifications-pagination button {
+    padding: 6px 9px !important;
+    font-size: 0.74rem !important;
+  }
+
+  .notifications-empty {
+    padding: 38px 18px;
+  }
+
+  .notifications-pagination {
+    gap: 8px;
+    margin-top: 15px;
+    padding: 10px 8px;
+  }
+
+  .notifications-pagination > span {
+    flex: 1;
+    font-size: 0.75rem;
+  }
+
+  .notifications-pagination button {
+    padding: 6px 8px !important;
+    font-size: 0.72rem !important;
+  }
+}
+
+@media (max-width: 380px) {
+  .notifications-page-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { auth, db } from "../../firebase";
-import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import { formatTime12Hour } from "../../utils/timeFormatter";
@@ -12,12 +12,25 @@ function ManageBooking() {
   const navigate = useNavigate();
   const reloadKey = useAuthReloadKey();
   const [bookings, setBookings] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
   const [paymentStatuses, setPaymentStatuses] = useState({});
+  const [refundRequestsByBooking, setRefundRequestsByBooking] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [proofModal, setProofModal] = useState({ isOpen: false, bookingId: null, proofImage: null });
   const [qrModal, setQrModal] = useState({ isOpen: false, bookingId: null, referenceCode: null });
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
   const [expandedDetails, setExpandedDetails] = useState({});
+  const bookingsPerPage = 5;
+  const totalPages = Math.ceil(bookings.length / bookingsPerPage);
+  const pageStartIndex = (currentPage - 1) * bookingsPerPage;
+  const visibleBookings = bookings.slice(pageStartIndex, pageStartIndex + bookingsPerPage);
+
+  useEffect(() => {
+    const lastPage = Math.max(1, totalPages);
+    if (currentPage > lastPage) {
+      setCurrentPage(lastPage);
+    }
+  }, [currentPage, totalPages]);
 
   // Scroll to top on mount
   useEffect(() => {
@@ -140,6 +153,8 @@ function ManageBooking() {
               paymentMap[payment.bookingId] = {
                 paymentId: doc.id,
                 status: payment.status?.toLowerCase?.() || "",
+                paymentMode: payment.paymentMode || "",
+                paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
               };
             }
@@ -148,7 +163,10 @@ function ManageBooking() {
 
         await Promise.all(
           Object.entries(paymentMap)
-            .filter(([, payment]) => payment.status === 'pending')
+            .filter(
+              ([, payment]) =>
+                payment.status === 'pending' && payment.paymentMode !== 'pay_later'
+            )
             .map(([, payment]) => checkPaymentExpiry(payment.paymentId))
         );
 
@@ -161,6 +179,8 @@ function ManageBooking() {
               refreshedPaymentMap[payment.bookingId] = {
                 paymentId: paymentDoc.id,
                 status: payment.status?.toLowerCase?.() || "",
+                paymentMode: payment.paymentMode || "",
+                paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null,
               };
             }
@@ -196,6 +216,104 @@ function ManageBooking() {
     return () => unsubscribe();
   }, [reloadKey]);
 
+  useEffect(() => {
+    let unsubscribeRefundRequests = () => {};
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      unsubscribeRefundRequests();
+
+      if (!user) {
+        setRefundRequestsByBooking({});
+        return;
+      }
+
+      const refundRequestsQuery = query(
+        collection(db, "refund_requests"),
+        where("userId", "==", user.uid)
+      );
+      unsubscribeRefundRequests = onSnapshot(
+        refundRequestsQuery,
+        (snapshot) => {
+          const requestsByBooking = {};
+          snapshot.docs.forEach((refundDoc) => {
+            const refund = refundDoc.data();
+            if (!refund.bookingId) return;
+
+            const createdAt = refund.createdAt?.toDate?.() || new Date(refund.createdAt || 0);
+            const previousRequest = requestsByBooking[refund.bookingId];
+            const previousCreatedAt = previousRequest?.createdAt || new Date(0);
+
+            if (createdAt >= previousCreatedAt) {
+              requestsByBooking[refund.bookingId] = {
+                status: refund.status || "pending",
+                createdAt,
+              };
+            }
+          });
+          setRefundRequestsByBooking(requestsByBooking);
+        },
+        (error) => console.error("Error watching refund requests:", error)
+      );
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeRefundRequests();
+    };
+  }, [reloadKey]);
+
+  useEffect(() => {
+    if (!qrModal.isOpen || !qrModal.bookingId) return undefined;
+
+    const bookingRef = doc(db, "bookings", qrModal.bookingId);
+    const unsubscribeBooking = onSnapshot(
+      bookingRef,
+      (snapshot) => {
+        if (!snapshot.exists()) return;
+        const booking = { id: snapshot.id, ...snapshot.data() };
+        if (booking.date?.toDate) {
+          booking.date = booking.date.toDate().toLocaleDateString("en-PH", {
+            year: "numeric",
+            month: "long",
+            day: "numeric"
+          });
+        }
+        setBookings((previous) =>
+          previous.map((item) => (item.id === booking.id ? { ...item, ...booking } : item))
+        );
+      },
+      (error) => console.error("Error watching booking status:", error)
+    );
+    const paymentQuery = query(
+      collection(db, "payments"),
+      where("bookingId", "==", qrModal.bookingId)
+    );
+    const unsubscribePayment = onSnapshot(
+      paymentQuery,
+      (snapshot) => {
+        const paymentDoc = snapshot.docs[0];
+        if (!paymentDoc) return;
+        const payment = paymentDoc.data();
+        setPaymentStatuses((previous) => ({
+          ...previous,
+          [qrModal.bookingId]: {
+            paymentId: paymentDoc.id,
+            status: payment.status?.toLowerCase?.() || "",
+            paymentMode: payment.paymentMode || "",
+            paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
+            proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
+          }
+        }));
+      },
+      (error) => console.error("Error watching payment status:", error)
+    );
+
+    return () => {
+      unsubscribeBooking();
+      unsubscribePayment();
+    };
+  }, [qrModal.isOpen, qrModal.bookingId]);
+
   const getBookingDisplayState = (booking, paymentInfo = {}) => {
     const bookingStatus = booking.status?.toLowerCase?.() || "";
     const paymentStatus = paymentInfo.status?.toLowerCase?.() || "";
@@ -212,11 +330,33 @@ function ManageBooking() {
       };
     }
 
+    if (["scanned", "boarded"].includes(bookingStatus)) {
+      return {
+        label: "Boarded",
+        color: "#4caf50",
+        paymentLabel: paymentStatus === "completed" ? "Paid" : "Pending",
+        paymentColor: paymentStatus === "completed" ? "#4caf50" : "#ff9800",
+        canShowQr: false,
+        actionLabel: "Already Boarded",
+        actionDisabled: true,
+      };
+    }
+
+    if (paymentStatus === "pending" && paymentInfo.paymongoStatus === "paid") {
+      return {
+        label: "Awaiting Confirmation",
+        color: "#ff9800",
+        paymentLabel: "Paid - Awaiting Confirmation",
+        paymentColor: "#ff9800",
+        canShowQr: false,
+        actionLabel: "Awaiting Port Confirmation",
+        actionDisabled: true,
+      };
+    }
+
     if (
       paymentStatus === "completed" ||
-      paymentStatus === "confirmed" ||
-      bookingStatus === "confirmed" ||
-      bookingStatus === "departed"
+      paymentStatus === "confirmed"
     ) {
       return {
         label: bookingStatus === "departed" ? "Departed" : "Confirmed",
@@ -229,15 +369,27 @@ function ManageBooking() {
       };
     }
 
-    if (paymentStatus === "pending" && paymentInfo.proofOfPaymentBase64) {
+    if (paymentStatus === "failed") {
       return {
-        label: "Not Paid",
-        color: "#ff9800",
-        paymentLabel: "Pending Approval",
-        paymentColor: "#ff9800",
+        label: "Cancelled",
+        color: "#f44336",
+        paymentLabel: "Payment Failed",
+        paymentColor: "#f44336",
         canShowQr: false,
-        actionLabel: "Waiting for Approval",
+        actionLabel: "Payment Failed",
         actionDisabled: true,
+      };
+    }
+
+    if (paymentStatus === "pending" || paymentInfo.paymentId) {
+      return {
+        label: "Pending",
+        color: "#ff9800",
+        paymentLabel: paymentInfo.proofOfPaymentBase64 ? "Pending Approval" : "Pending",
+        paymentColor: "#ff9800",
+        canShowQr: Boolean(paymentInfo.paymentId),
+        actionLabel: "View QR (Pending)",
+        actionDisabled: !paymentInfo.paymentId,
       };
     }
 
@@ -333,10 +485,11 @@ function ManageBooking() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "10px" : "16px" }}>
-          {bookings.map((booking) => (
+          {visibleBookings.map((booking) => (
             <div key={booking.id} style={{ display: "flex", flexDirection: "column", gap: "0" }}>
               {(() => {
                 const paymentInfo = paymentStatuses[booking.id] || {};
+                const refundRequest = refundRequestsByBooking[booking.id];
                 const displayState = getBookingDisplayState(booking, paymentInfo);
                 const passengerText = booking.customerName || booking.name || "Guest";
                 const routeText = booking.routeDirection || booking.tripName || "Ferry Route";
@@ -507,6 +660,28 @@ function ManageBooking() {
                     <div style={{ fontSize: isMobile ? "0.68rem" : "0.82rem", color: "#5f7287", fontWeight: 600 }}>
                       Payment Status: <span style={{ color: displayState.paymentColor, fontWeight: 700 }}>{displayState.paymentLabel}</span>
                     </div>
+                    {refundRequest && (
+                      <div
+                        role="status"
+                        style={{
+                          color: ["approved", "refunded"].includes(refundRequest.status)
+                            ? "#2e7d32"
+                            : refundRequest.status === "rejected"
+                              ? "#c62828"
+                              : "#9a6700",
+                          fontSize: isMobile ? "0.68rem" : "0.82rem",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {refundRequest.status === "refunded"
+                          ? "Refunded"
+                          : refundRequest.status === "approved"
+                          ? "Refund Approved"
+                          : refundRequest.status === "rejected"
+                            ? "Refund Declined"
+                            : "Refund Already Requested"}
+                      </div>
+                    )}
                   </div>
 
                   {/* Action Button */}
@@ -591,6 +766,45 @@ function ManageBooking() {
               })()}
             </div>
           ))}
+          {totalPages > 1 && (
+            <nav
+              aria-label="Booking pages"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: isMobile ? "8px" : "16px",
+                flexWrap: "wrap",
+                marginTop: "6px",
+                padding: "13px",
+                border: "1px solid #e0e8f0",
+                borderRadius: "11px",
+                background: "rgba(255, 255, 255, 0.94)"
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                disabled={currentPage === 1}
+                style={paginationButtonStyle(currentPage === 1)}
+              >
+                Previous
+              </button>
+              <span aria-live="polite" style={{ color: "#52677d", fontSize: "0.88rem", fontWeight: 600, textAlign: "center" }}>
+                {pageStartIndex + 1}–{Math.min(pageStartIndex + bookingsPerPage, bookings.length)}
+                {" of "}
+                {bookings.length} · Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                disabled={currentPage === totalPages}
+                style={paginationButtonStyle(currentPage === totalPages)}
+              >
+                Next
+              </button>
+            </nav>
+          )}
         </div>
       )}
 
@@ -772,6 +986,50 @@ function ManageBooking() {
               <div style={{ background: "white", padding: isMobile ? "10px" : "12px", borderRadius: "12px", border: "1px solid #e0e8f0", display: "inline-block", marginBottom: "14px" }}>
                 <QRCodeCanvas value={qrModal.referenceCode || qrModal.bookingId || ""} size={isMobile ? 180 : 220} />
               </div>
+              {(() => {
+                const booking = bookings.find((item) => item.id === qrModal.bookingId);
+                const paymentInfo = paymentStatuses[qrModal.bookingId] || {};
+                const displayState = booking
+                  ? getBookingDisplayState(booking, paymentInfo)
+                  : null;
+                const isPaidAndValid =
+                  displayState?.paymentLabel === "Paid" && booking?.status === "confirmed";
+                const qrStatusLabel = ["scanned", "boarded"].includes(booking?.status?.toLowerCase?.())
+                  ? "Already boarded"
+                  : booking?.status === "cancelled"
+                    ? "Cancelled"
+                    : isPaidAndValid
+                      ? "Paid / Valid for boarding"
+                      : "Pending payment / Not valid for boarding";
+                const qrStatusIsInvalid =
+                  ["scanned", "boarded"].includes(booking?.status?.toLowerCase?.()) ||
+                  booking?.status === "cancelled";
+
+                return (
+                  <div
+                    role="status"
+                    style={{
+                      marginBottom: "14px",
+                      padding: "10px",
+                      borderRadius: "8px",
+                      background: isPaidAndValid
+                        ? "#e8f5e9"
+                        : qrStatusIsInvalid
+                          ? "#ffebee"
+                          : "#fff3e0",
+                      color: isPaidAndValid
+                        ? "#2e7d32"
+                        : qrStatusIsInvalid
+                          ? "#c62828"
+                          : "#e65100",
+                      fontWeight: 800,
+                      fontSize: isMobile ? "0.78rem" : "0.9rem"
+                    }}
+                  >
+                    {qrStatusLabel}
+                  </div>
+                );
+              })()}
               <div style={{ fontSize: isMobile ? "0.62rem" : "0.7rem", fontWeight: 800, color: "#7b8da1", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                 Reference Code
               </div>
@@ -861,6 +1119,19 @@ function ManageBooking() {
       </div>
     </div>
   );
+}
+
+function paginationButtonStyle(disabled) {
+  return {
+    padding: "6px 10px",
+    border: "1px solid #cbd8e6",
+    borderRadius: "7px",
+    background: disabled ? "#f3f6f9" : "#fff",
+    color: disabled ? "#9aa8b6" : "#2c5f9c",
+    fontWeight: 700,
+    fontSize: "0.78rem",
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
 }
 
 export default ManageBooking;

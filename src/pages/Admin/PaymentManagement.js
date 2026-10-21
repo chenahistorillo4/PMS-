@@ -7,41 +7,36 @@ import {
   addDoc,
   getDocs,
   updateDoc,
-  deleteDoc,
   query,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import AdminLayout from './AdminLayout';
 import { QRCodeCanvas } from 'qrcode.react';
 import { notifyPaymentSuccess, notifyPassengerRefundStatus } from '../../utils/notificationHelper';
 import { useAuthReloadKey, useAuthUser } from '../../hooks/useAuthUser';
+import { getStaffAccount } from '../../utils/staffAccount';
 
 function PaymentManagement() {
-  const getEmptyAccountForm = () => ({
-    accountName: '',
-    accountType: '',
-    accountNumber: '',
-    accountHolder: '',
-    isActive: true,
-  });
-
   const [adminData, setAdminData] = useState(null);
-  const [paymentAccounts, setPaymentAccounts] = useState([]);
   const [payments, setPayments] = useState([]);
   const [refundRequests, setRefundRequests] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [proofModal, setProofModal] = useState({
     isOpen: false,
     paymentId: null,
     proofImage: null,
   });
   const [qrModal, setQrModal] = useState({ isOpen: false, paymentId: null, bookingId: null });
-  const [newAccount, setNewAccount] = useState(getEmptyAccountForm());
-  const [showForm, setShowForm] = useState(false);
-  const [showManagePaymentAccounts, setShowManagePaymentAccounts] = useState(false);
   const [currentPaymentPage, setCurrentPaymentPage] = useState(1);
-  const [showHistoryView, setShowHistoryView] = useState(false);
   const [currentHistoryPage, setCurrentHistoryPage] = useState(1);
+  const [historyDate, setHistoryDate] = useState('');
+  const [historyRoute, setHistoryRoute] = useState('all');
+  const [searchedHistoryDate, setSearchedHistoryDate] = useState('');
+  const [searchedHistoryRoute, setSearchedHistoryRoute] = useState('all');
+  const [transactionNameSearch, setTransactionNameSearch] = useState('');
+  const [historyNameSearch, setHistoryNameSearch] = useState('');
+  const [activePaymentView, setActivePaymentView] = useState('transactions');
+  const [routeOptions, setRouteOptions] = useState([]);
   const [isMobile, setIsMobile] = useState(false);
   const { user, authReady } = useAuthUser();
   const reloadKey = useAuthReloadKey();
@@ -50,20 +45,54 @@ function PaymentManagement() {
   const itemsPerPage = 10;
 
   // For transactions: exclude completed payments
-  const transactionPayments = payments.filter((p) => p.status !== 'completed');
+  const matchesCustomerName = (payment, searchTerm) =>
+    !searchTerm.trim() ||
+    String(payment.customerName || payment.passengerName || '')
+      .toLowerCase()
+      .includes(searchTerm.trim().toLowerCase());
+  const transactionPayments = payments.filter(
+    (payment) =>
+      payment.status !== 'completed' && matchesCustomerName(payment, transactionNameSearch)
+  );
   const totalPaymentPages = Math.ceil(transactionPayments.length / itemsPerPage);
   const startIndex = (currentPaymentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const paginatedPayments = transactionPayments.slice(startIndex, endIndex);
+  const isHistorySearch = activePaymentView === 'history';
 
-  // History logic - filter completed payments
-  const completedPayments = payments.filter((p) => p.status === 'completed');
+  // History logic - show completed payments, optionally filtered by date and route
+  const completedPayments = payments.filter((payment) => {
+    if (payment.status !== 'completed') return false;
+    if (!matchesCustomerName(payment, historyNameSearch)) return false;
+    if (
+      searchedHistoryRoute !== 'all' &&
+      (payment.routeDirection || payment.route) !== searchedHistoryRoute
+    ) {
+      return false;
+    }
+    if (!searchedHistoryDate) return true;
+
+    const rawDate = payment.createdAt?.toDate?.() || payment.createdAt;
+    const createdDate = rawDate ? new Date(rawDate) : null;
+    if (!createdDate || Number.isNaN(createdDate.getTime())) return false;
+
+    const dateKey = [
+      createdDate.getFullYear(),
+      String(createdDate.getMonth() + 1).padStart(2, '0'),
+      String(createdDate.getDate()).padStart(2, '0'),
+    ].join('-');
+    return dateKey === searchedHistoryDate;
+  });
   const totalHistoryPages = Math.ceil(completedPayments.length / itemsPerPage);
   const historyStartIndex = (currentHistoryPage - 1) * itemsPerPage;
   const historyEndIndex = historyStartIndex + itemsPerPage;
   const paginatedHistory = completedPayments.slice(historyStartIndex, historyEndIndex);
 
-  const getPaymentStatusLabel = (status) => {
+  const getPaymentStatusLabel = (payment) => {
+    if (payment.paymongoStatus === 'paid' && payment.status === 'pending') {
+      return 'Paid - Awaiting Port Confirmation';
+    }
+    const { status } = payment;
     if (status === 'completed') return 'confirmed';
     return status || 'pending';
   };
@@ -88,28 +117,56 @@ function PaymentManagement() {
         setAdminData(null);
         setPayments([]);
         setRefundRequests([]);
-        setPaymentAccounts([]);
+        setRouteOptions([]);
         return;
       }
 
       try {
           console.log('Current user:', user.uid);
 
-          // Fetch admin data
-          const docRef = doc(db, 'admins', user.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            console.log('Admin data found:', docSnap.data());
-            setAdminData(docSnap.data());
+          // Fetch the assigned boat for either an admin or Port Staff account.
+          const account = await getStaffAccount(user.uid);
+          if (account) {
+            console.log('Staff account data found:', account.data);
+            setAdminData(account.data);
 
             // Fetch payments for this boat
-            const boatName = docSnap.data().assignedBoat;
-            const paymentsQuery = query(collection(db, 'payments'), where('boat', '==', boatName));
-            const paymentsSnap = await getDocs(paymentsQuery);
+            const boatName = account.data.assignedBoat;
+            if (!boatName) {
+              setPayments([]);
+              setRefundRequests([]);
+              setRouteOptions([]);
+              console.warn('Staff account has no assigned boat; payment data was not loaded.');
+              return;
+            }
+            const [paymentsSnap, bookingsSnap] = await Promise.all([
+              getDocs(query(collection(db, 'payments'), where('boat', '==', boatName))),
+              getDocs(query(collection(db, 'bookings'), where('boat', '==', boatName))),
+            ]);
+            const bookingsById = new Map(
+              bookingsSnap.docs.map((bookingDoc) => [bookingDoc.id, bookingDoc.data()])
+            );
+            const bookingRoutes = bookingsSnap.docs
+              .map((bookingDoc) => bookingDoc.data().routeDirection || bookingDoc.data().route)
+              .filter(Boolean);
+            setRouteOptions(
+              [...new Set([...(account.data.availableRoutes || []), ...bookingRoutes])].sort()
+            );
             const paymentsList = paymentsSnap.docs
               .map((doc) => ({
                 id: doc.id,
                 ...doc.data(),
+                customerName:
+                  doc.data().customerName ||
+                  bookingsById.get(doc.data().bookingId)?.customerName ||
+                  bookingsById.get(doc.data().bookingId)?.bookedByName ||
+                  '',
+                routeDirection:
+                  doc.data().routeDirection ||
+                  bookingsById.get(doc.data().bookingId)?.routeDirection ||
+                  bookingsById.get(doc.data().bookingId)?.route ||
+                  doc.data().route ||
+                  '',
               }))
               .sort((a, b) => b.createdAt - a.createdAt);
             setPayments(paymentsList);
@@ -132,134 +189,13 @@ function PaymentManagement() {
             console.warn('⚠️ No admin data found for user:', user.uid);
           }
 
-          // Fetch payment accounts
-          console.log('Fetching payment accounts for adminId:', user.uid);
-          const accountsQuery = query(
-            collection(db, 'paymentAccounts'),
-            where('adminId', '==', user.uid)
-          );
-          const accountsSnap = await getDocs(accountsQuery);
-          console.log('Payment accounts found:', accountsSnap.docs.length);
-
-          const accounts = accountsSnap.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }));
-
-          console.log('Accounts data:', accounts);
-          setPaymentAccounts(accounts);
       } catch (error) {
         console.error('Error fetching data:', error.code, error.message);
-        alert('Error loading payment accounts:\n' + error.message);
+        alert('Error loading payment data:\n' + error.message);
       }
     };
     fetchAdminData();
   }, [authReady, user, reloadKey]);
-
-  const handleAddAccount = async (e) => {
-    e.preventDefault();
-    if (!newAccount.accountName || !newAccount.accountType || !newAccount.accountNumber) {
-      alert('Please fill all required fields');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      console.log('Adding payment account:', newAccount);
-      console.log('👤 Admin ID:', user.uid);
-
-      const accountsRef = collection(db, 'paymentAccounts');
-      const docRef = await addDoc(accountsRef, {
-        adminId: user.uid,
-        ...newAccount,
-        createdAt: new Date(),
-      });
-
-      console.log('Account added successfully! ID:', docRef.id);
-
-      // Refresh the list
-      const accountsQuery = query(
-        collection(db, 'paymentAccounts'),
-        where('adminId', '==', user.uid)
-      );
-      const accountsSnap = await getDocs(accountsQuery);
-      const accounts = accountsSnap.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      console.log('Updated accounts list:', accounts);
-      setPaymentAccounts(accounts);
-
-      // Reset form
-      setNewAccount(getEmptyAccountForm());
-      setShowForm(false);
-      alert('Payment account added successfully!');
-      setLoading(false);
-    } catch (error) {
-      console.error('❌ Error adding account:', error.code, error.message);
-      alert('Error adding account: ' + error.message);
-      setLoading(false);
-    }
-  };
-
-  const handleToggleStatus = async (accountId, currentStatus) => {
-    try {
-      const accountRef = doc(db, 'paymentAccounts', accountId);
-      await updateDoc(accountRef, {
-        isActive: !currentStatus,
-      });
-
-      // Update local state
-      setPaymentAccounts(
-        paymentAccounts.map((acc) =>
-          acc.id === accountId ? { ...acc, isActive: !currentStatus } : acc
-        )
-      );
-    } catch (error) {
-      console.error('Error updating account:', error);
-      alert('Error updating account: ' + error.message);
-    }
-  };
-
-  const handleEditAccount = async (accountId) => {
-    const account = paymentAccounts.find((acc) => acc.id === accountId);
-    if (account) {
-      setNewAccount({
-        accountName: account.accountName,
-        accountType: account.accountType,
-        accountNumber: account.accountNumber,
-        accountHolder: account.accountHolder,
-        isActive: account.isActive,
-      });
-      setShowForm(true);
-      // Note: Edit functionality can be enhanced to update existing account
-      console.log('Edit account:', account);
-    }
-  };
-
-  const handleToggleForm = () => {
-    if (showForm) {
-      setShowForm(false);
-      setNewAccount(getEmptyAccountForm());
-      return;
-    }
-
-    setNewAccount(getEmptyAccountForm());
-    setShowForm(true);
-  };
-
-  const handleDeleteAccount = async (accountId) => {
-    if (window.confirm('Are you sure you want to delete this payment account?')) {
-      try {
-        await deleteDoc(doc(db, 'paymentAccounts', accountId));
-        setPaymentAccounts(paymentAccounts.filter((acc) => acc.id !== accountId));
-        alert('Payment account deleted successfully!');
-      } catch (error) {
-        console.error('Error deleting account:', error);
-        alert('Error deleting account: ' + error.message);
-      }
-    }
-  };
 
   const handleConfirmPayment = async (paymentId) => {
     try {
@@ -270,13 +206,16 @@ function PaymentManagement() {
         return;
       }
 
-      // Update payment status to completed
       const paymentRef = doc(db, 'payments', paymentId);
-      await updateDoc(paymentRef, { status: 'completed' });
-
-      // Update corresponding booking status to confirmed
+      if (!payment.bookingId) {
+        alert('This payment is not linked to a booking.');
+        return;
+      }
       const bookingRef = doc(db, 'bookings', payment.bookingId);
-      await updateDoc(bookingRef, { status: 'confirmed' });
+      const batch = writeBatch(db);
+      batch.update(paymentRef, { status: 'completed' });
+      batch.update(bookingRef, { status: 'confirmed' });
+      await batch.commit();
 
       const bookingSnap = await getDoc(bookingRef);
       if (bookingSnap.exists()) {
@@ -296,22 +235,25 @@ function PaymentManagement() {
     }
   };
 
-  const handleRejectPayment = async (paymentId) => {
-    if (window.confirm('Are you sure you want to reject this payment?')) {
+  const handleCancelBooking = async (paymentId) => {
+    if (window.confirm('Cancel this booking because payment was not received? The seat will be released.')) {
       try {
         const payment = payments.find((p) => p.id === paymentId);
-        const paymentRef = doc(db, 'payments', paymentId);
-        await updateDoc(paymentRef, { status: 'failed' });
-
-        if (payment?.bookingId) {
-          await updateDoc(doc(db, 'bookings', payment.bookingId), { status: 'cancelled' });
+        if (!payment?.bookingId) {
+          alert('This payment is not linked to a booking.');
+          return;
         }
+        const paymentRef = doc(db, 'payments', paymentId);
+        const batch = writeBatch(db);
+        batch.update(paymentRef, { status: 'cancelled' });
+        batch.update(doc(db, 'bookings', payment.bookingId), { status: 'cancelled' });
+        await batch.commit();
 
-        setPayments(payments.map((p) => (p.id === paymentId ? { ...p, status: 'failed' } : p)));
-        alert('Payment rejected!');
+        setPayments(payments.map((p) => (p.id === paymentId ? { ...p, status: 'cancelled' } : p)));
+        alert('Booking cancelled. Its seat is now available again.');
       } catch (error) {
-        console.error('Error rejecting payment:', error);
-        alert('Error rejecting payment: ' + error.message);
+        console.error('Error cancelling booking:', error);
+        alert('Error cancelling booking: ' + error.message);
       }
     }
   };
@@ -367,9 +309,83 @@ function PaymentManagement() {
     }
   };
 
+  const handleMarkRefunded = async (refundId) => {
+    const refund = refundRequests.find((item) => item.id === refundId);
+    if (!refund || refund.status !== 'approved') return;
+    if (!window.confirm('Confirm that you have manually sent this refund to the passenger?')) {
+      return;
+    }
+
+    const note =
+      window.prompt('Optional refund reference or note for the passenger:', '') || '';
+
+    try {
+      const processedAt = new Date();
+      await updateDoc(doc(db, 'refund_requests', refundId), {
+        status: 'refunded',
+        refundNote: note,
+        refundedAt: processedAt,
+        processedBy: adminData?.email || user?.email || 'admin',
+      });
+
+      setRefundRequests((current) =>
+        current.map((item) =>
+          item.id === refundId
+            ? { ...item, status: 'refunded', refundNote: note, refundedAt: processedAt }
+            : item
+        )
+      );
+
+      let passengerNotified = true;
+      try {
+        await addDoc(collection(db, 'notifications'), {
+          userId: refund.userId,
+          type: 'refund_status',
+          title: 'Refund Sent',
+          message: `Your refund for ${refund.tripName || 'your trip'} has been marked as sent.`,
+          recipientType: 'user',
+          isRead: false,
+          createdAt: processedAt,
+        });
+      } catch (notificationError) {
+        passengerNotified = false;
+        console.error('Refund completion app notification failed:', notificationError);
+      }
+
+      try {
+        const emailResult = await notifyPassengerRefundStatus({
+          refund: { ...refund, refundNote: note },
+          status: 'refunded',
+          userEmail: refund.userEmail,
+          customerName: refund.userEmail,
+        });
+        if (
+          emailResult?.ok === false ||
+          emailResult?.result?.email?.error ||
+          emailResult?.result?.email?.skipped
+        ) {
+          passengerNotified = false;
+          console.warn('Refund completion email failed:', emailResult.error || emailResult.result);
+        }
+      } catch (notificationError) {
+        passengerNotified = false;
+        console.error('Refund completion email failed:', notificationError);
+      }
+
+      alert(
+        passengerNotified
+          ? 'Refund marked as sent. The passenger has been notified.'
+          : 'Refund marked as sent, but one or more passenger notifications could not be sent.'
+      );
+    } catch (error) {
+      console.error('Error marking refund as sent:', error);
+      alert('Could not mark the refund as sent: ' + error.message);
+    }
+  };
+
   return (
     <AdminLayout active="payment">
-      {refundRequests.filter((refund) => refund.status === 'pending').length > 0 && (
+      {refundRequests.some((refund) => ['pending', 'approved'].includes(refund.status)) && (
         <div
           style={{
             background: '#fff8e1',
@@ -380,10 +396,10 @@ function PaymentManagement() {
           }}
         >
           <h3 style={{ margin: '0 0 12px', color: '#5d4037', fontSize: '1.05rem' }}>
-            Pending Refund Requests
+            Refund Requests
           </h3>
           {refundRequests
-            .filter((refund) => refund.status === 'pending')
+            .filter((refund) => ['pending', 'approved'].includes(refund.status))
             .map((refund) => (
               <div
                 key={refund.id}
@@ -403,20 +419,34 @@ function PaymentManagement() {
                     {refund.userEmail} · ₱{Number(refund.amount || 0).toFixed(2)}
                   </div>
                   <div style={{ color: '#666', fontSize: '0.85rem' }}>{refund.reason}</div>
+                  <div style={{ color: '#5d4037', fontSize: '0.85rem', fontWeight: 700 }}>
+                    Status: {refund.status === 'approved' ? 'Approved — send refund manually' : 'Pending'}
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    className="btn btn-success btn-sm"
-                    onClick={() => handleRefundDecision(refund.id, 'approved')}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    className="btn btn-outline-danger btn-sm"
-                    onClick={() => handleRefundDecision(refund.id, 'rejected')}
-                  >
-                    Decline
-                  </button>
+                  {refund.status === 'pending' ? (
+                    <>
+                      <button
+                        className="btn btn-success btn-sm"
+                        onClick={() => handleRefundDecision(refund.id, 'approved')}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="btn btn-outline-danger btn-sm"
+                        onClick={() => handleRefundDecision(refund.id, 'rejected')}
+                      >
+                        Decline
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => handleMarkRefunded(refund.id)}
+                    >
+                      Mark as Refunded
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -449,604 +479,227 @@ function PaymentManagement() {
         </p>
       )}
 
-      {/* View Manage Payment Accounts & History Buttons */}
+      {/* Payment history date search */}
       <div
         style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: isMobile ? '15px' : '25px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+          border: '1px solid #e0e8f0',
           marginBottom: isMobile ? '18px' : '30px',
+          maxWidth: '1100px',
+        }}
+      >
+        <h3
+          style={{
+            fontSize: isMobile ? '0.85rem' : '1.05rem',
+            fontWeight: 800,
+            color: '#1e3a5f',
+            margin: `0 0 ${isMobile ? '10px' : '15px'}`,
+          }}
+        >
+          Search Payments by Customer, Date & Route
+        </h3>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setSearchedHistoryDate(historyDate);
+            setSearchedHistoryRoute(historyRoute);
+            setCurrentHistoryPage(1);
+            setActivePaymentView('history');
+          }}
+          style={{
+            display: 'flex',
+            gap: isMobile ? '8px' : '15px',
+            alignItems: 'flex-start',
+            flexWrap: 'wrap',
+            width: '100%',
+          }}
+        >
+          <div style={{ flex: 1, minWidth: isMobile ? '120px' : '200px' }}>
+            <label
+              htmlFor="payment-customer-search"
+              style={{
+                display: 'block',
+                minHeight: isMobile ? '14px' : '17px',
+                lineHeight: isMobile ? '14px' : '17px',
+                marginBottom: isMobile ? '4px' : '8px',
+                color: '#666',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+              }}
+            >
+              Search Customer Name
+            </label>
+            <input
+              id="payment-customer-search"
+              type="search"
+              value={isHistorySearch ? historyNameSearch : transactionNameSearch}
+              onChange={(event) => {
+                if (isHistorySearch) {
+                  setHistoryNameSearch(event.target.value);
+                  setCurrentHistoryPage(1);
+                } else {
+                  setTransactionNameSearch(event.target.value);
+                  setCurrentPaymentPage(1);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.preventDefault();
+              }}
+              placeholder="Enter customer name..."
+              style={{
+                boxSizing: 'border-box',
+                width: '100%',
+                minWidth: 0,
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 8px' : '10px 12px',
+                border: '1px solid #d0d0d0',
+                borderRadius: '6px',
+                background: '#fff',
+                color: '#333',
+                fontSize: isMobile ? '0.8rem' : '1rem',
+              }}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: isMobile ? '120px' : '200px' }}>
+            <label
+              htmlFor="payment-history-date"
+              style={{
+                display: 'block',
+                minHeight: isMobile ? '14px' : '17px',
+                lineHeight: isMobile ? '14px' : '17px',
+                marginBottom: isMobile ? '4px' : '8px',
+                color: '#666',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+              }}
+            >
+              Choose Date
+            </label>
+            <input
+              id="payment-history-date"
+              type="date"
+              value={historyDate}
+              onChange={(event) => setHistoryDate(event.target.value)}
+              style={{
+                boxSizing: 'border-box',
+                width: '100%',
+                minWidth: 0,
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 8px' : '10px 12px',
+                border: '1px solid #d0d0d0',
+                borderRadius: '6px',
+                background: '#fff',
+                color: '#555',
+                fontSize: isMobile ? '0.8rem' : '1rem',
+              }}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: isMobile ? '100%' : '200px' }}>
+            <label
+              htmlFor="payment-history-route"
+              style={{
+                display: 'block',
+                minHeight: isMobile ? '14px' : '17px',
+                lineHeight: isMobile ? '14px' : '17px',
+                marginBottom: isMobile ? '4px' : '8px',
+                color: '#666',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+              }}
+            >
+              Select Route
+            </label>
+            <select
+              id="payment-history-route"
+              value={historyRoute}
+              onChange={(event) => setHistoryRoute(event.target.value)}
+              style={{
+                boxSizing: 'border-box',
+                width: '100%',
+                minWidth: 0,
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 8px' : '10px 12px',
+                border: '1px solid #d0d0d0',
+                borderRadius: '6px',
+                background: '#fff',
+                color: '#444',
+                fontSize: isMobile ? '0.8rem' : '1rem',
+              }}
+            >
+              <option value="all">All routes</option>
+              {routeOptions.map((route) => (
+                <option key={route} value={route}>
+                  {route}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="submit"
+            style={{
+              height: isMobile ? '32px' : '42px',
+              padding: isMobile ? '6px 10px' : '10px 24px',
+              border: 'none',
+              borderRadius: '6px',
+              background: '#2196f3',
+              color: '#fff',
+              fontSize: isMobile ? '0.7rem' : '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              width: isMobile ? '80px' : 'auto',
+              alignSelf: 'flex-start',
+              marginTop: isMobile ? '18px' : '25px',
+              marginLeft: isMobile ? 'auto' : '0',
+              boxSizing: 'border-box',
+            }}
+          >
+            Search
+          </button>
+        </form>
+      </div>
+
+      <div
+        role="tablist"
+        aria-label="Payment views"
+        style={{
           display: 'flex',
-          gap: isMobile ? '8px' : '12px',
+          gap: '10px',
+          marginBottom: isMobile ? '14px' : '20px',
           flexWrap: 'wrap',
         }}
       >
-        <button
-          onClick={() => setShowManagePaymentAccounts(!showManagePaymentAccounts)}
-          style={{
-            background: showManagePaymentAccounts ? '#f44336' : '#2196f3',
-            color: 'white',
-            border: 'none',
-            padding: isMobile ? '10px 8px' : '10px 18px',
-            borderRadius: '8px',
-            fontWeight: 700,
-            cursor: 'pointer',
-            fontSize: isMobile ? '0.65rem' : '0.85rem',
-            transition: 'all 0.3s ease',
-            boxShadow: '0 2px 8px rgba(33,150,243,0.2)',
-            flex: isMobile ? '1' : '0 1 auto',
-            minWidth: isMobile ? '0' : '200px',
-            whiteSpace: isMobile ? 'normal' : 'normal',
-            lineHeight: isMobile ? '1.3' : '1.5',
-            wordBreak: isMobile ? 'break-word' : 'normal',
-            minHeight: isMobile ? '40px' : 'auto',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.boxShadow = '0 8px 20px rgba(33,150,243,0.35)';
-            e.currentTarget.style.transform = 'translateY(-2px)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.boxShadow = '0 2px 8px rgba(33,150,243,0.2)';
-            e.currentTarget.style.transform = 'translateY(0)';
-          }}
-        >
-          {showManagePaymentAccounts ? '✕ Hide' : ' View'} Manage Payment Accounts
-        </button>
-
-        <button
-          onClick={() => setShowHistoryView(!showHistoryView)}
-          style={{
-            background: showHistoryView ? '#f44336' : '#4caf50',
-            color: 'white',
-            border: 'none',
-            padding: isMobile ? '10px 8px' : '10px 18px',
-            borderRadius: '8px',
-            fontWeight: 700,
-            cursor: 'pointer',
-            fontSize: isMobile ? '0.65rem' : '0.85rem',
-            transition: 'all 0.3s ease',
-            boxShadow: '0 2px 8px rgba(76,175,80,0.2)',
-            flex: isMobile ? '1' : '0 1 auto',
-            minWidth: isMobile ? '0' : '150px',
-            whiteSpace: isMobile ? 'normal' : 'normal',
-            lineHeight: isMobile ? '1.3' : '1.5',
-            wordBreak: isMobile ? 'break-word' : 'normal',
-            minHeight: isMobile ? '40px' : 'auto',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.boxShadow = '0 8px 20px rgba(76,175,80,0.35)';
-            e.currentTarget.style.transform = 'translateY(-2px)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.boxShadow = '0 2px 8px rgba(76,175,80,0.2)';
-            e.currentTarget.style.transform = 'translateY(0)';
-          }}
-        >
-          {showHistoryView ? '✕ Hide' : ' View'} Payment History
-        </button>
+        {[
+          { id: 'transactions', label: 'Payment Transactions' },
+          { id: 'history', label: 'Payment History' },
+        ].map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            role="tab"
+            aria-selected={activePaymentView === view.id}
+            onClick={() => setActivePaymentView(view.id)}
+            style={{
+              padding: isMobile ? '9px 12px' : '11px 18px',
+              border: activePaymentView === view.id ? '2px solid #2876d2' : '1px solid #b8c9dc',
+              borderRadius: '7px',
+              background: activePaymentView === view.id ? '#eaf3fc' : '#fff',
+              color: activePaymentView === view.id ? '#1b5fa7' : '#444',
+              fontWeight: 700,
+              fontSize: isMobile ? '0.8rem' : '0.95rem',
+              cursor: 'pointer',
+            }}
+          >
+            {view.label}
+          </button>
+        ))}
       </div>
-
-      {/* Manage Payment Accounts Section - Conditionally Rendered */}
-      {showManagePaymentAccounts && (
-        <div
-          style={{
-            background: 'white',
-            borderRadius: '12px',
-            padding: '30px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-            border: '2px solid #2196f3',
-            marginBottom: '30px',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: isMobile ? '18px' : '25px',
-              gap: isMobile ? '12px' : '0',
-              flexWrap: isMobile ? 'wrap' : 'nowrap',
-            }}
-          >
-            <h2
-              style={{
-                fontSize: isMobile ? '1rem' : '1.2rem',
-                fontWeight: 800,
-                color: '#1a1a1a',
-                marginBottom: '0',
-                order: isMobile ? 1 : 0,
-              }}
-            >
-              Manage Payment Accounts
-            </h2>
-            <button
-              onClick={handleToggleForm}
-              style={{
-                background: showForm ? '#f44336' : '#4caf50',
-                color: 'white',
-                border: 'none',
-                padding: isMobile ? '7px 10px' : '10px 20px',
-                borderRadius: '8px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                fontSize: isMobile ? '0.7rem' : '0.9rem',
-                transition: 'all 0.3s ease',
-                order: isMobile ? 2 : 0,
-                width: isMobile ? 'auto' : 'auto',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.boxShadow = '0 4px 12px rgba(76,175,80,0.3)';
-                e.currentTarget.style.transform = 'translateY(-2px)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }}
-            >
-              {showForm ? '✕ Cancel' : '+ Add Account'}
-            </button>
-          </div>
-
-          {/* Add Account Form */}
-          {showForm && (
-            <div
-              style={{
-                background: '#f8f9fa',
-                border: '2px solid #2196f3',
-                borderRadius: '10px',
-                padding: isMobile ? '15px' : '25px',
-                marginBottom: '20px',
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: isMobile ? '0.95rem' : '1.1rem',
-                  fontWeight: 800,
-                  color: '#1a1a1a',
-                  marginBottom: isMobile ? '15px' : '20px',
-                }}
-              >
-                Add New Payment Account
-              </h3>
-              <form onSubmit={handleAddAccount}>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(250px, 1fr))',
-                    gap: isMobile ? '12px' : '20px',
-                    marginBottom: '20px',
-                  }}
-                >
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontSize: isMobile ? '0.8rem' : '0.9rem',
-                        fontWeight: 700,
-                        color: '#333',
-                        marginBottom: isMobile ? '6px' : '8px',
-                      }}
-                    >
-                      Account Name *
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Main GCash, John's PayMaya"
-                      value={newAccount.accountName}
-                      onChange={(e) =>
-                        setNewAccount({ ...newAccount, accountName: e.target.value })
-                      }
-                      style={{
-                        width: '100%',
-                        padding: isMobile ? '8px 10px' : '10px 12px',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                        fontSize: isMobile ? '0.85rem' : '0.9rem',
-                        fontFamily: 'inherit',
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontSize: isMobile ? '0.8rem' : '0.9rem',
-                        fontWeight: 700,
-                        color: '#333',
-                        marginBottom: isMobile ? '6px' : '8px',
-                      }}
-                    >
-                      Account Type *
-                    </label>
-                    <select
-                      value={newAccount.accountType}
-                      onChange={(e) =>
-                        setNewAccount({ ...newAccount, accountType: e.target.value })
-                      }
-                      style={{
-                        width: '100%',
-                        padding: isMobile ? '8px 10px' : '10px 12px',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                        fontSize: isMobile ? '0.85rem' : '0.9rem',
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      <option
-                        value=""
-                        disabled
-                      >
-                        Select account type
-                      </option>
-                      <option value="gcash">GCash</option>
-                      <option value="paymaya">PayMaya</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontSize: isMobile ? '0.8rem' : '0.9rem',
-                        fontWeight: 700,
-                        color: '#333',
-                        marginBottom: isMobile ? '6px' : '8px',
-                      }}
-                    >
-                      Account Number/ID *
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., 09123456789 or Account #"
-                      value={newAccount.accountNumber}
-                      onChange={(e) =>
-                        setNewAccount({ ...newAccount, accountNumber: e.target.value })
-                      }
-                      style={{
-                        width: '100%',
-                        padding: isMobile ? '8px 10px' : '10px 12px',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                        fontSize: isMobile ? '0.85rem' : '0.9rem',
-                        fontFamily: 'inherit',
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontSize: isMobile ? '0.8rem' : '0.9rem',
-                        fontWeight: 700,
-                        color: '#333',
-                        marginBottom: isMobile ? '6px' : '8px',
-                      }}
-                    >
-                      Account Holder Name
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Full name"
-                      value={newAccount.accountHolder}
-                      onChange={(e) =>
-                        setNewAccount({ ...newAccount, accountHolder: e.target.value })
-                      }
-                      style={{
-                        width: '100%',
-                        padding: isMobile ? '8px 10px' : '10px 12px',
-                        border: '1px solid #ddd',
-                        borderRadius: '8px',
-                        fontSize: isMobile ? '0.85rem' : '0.9rem',
-                        fontFamily: 'inherit',
-                      }}
-                    />
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  style={{
-                    background: loading ? '#ccc' : '#4caf50',
-                    color: 'white',
-                    border: 'none',
-                    padding: isMobile ? '8px 16px' : '10px 24px',
-                    borderRadius: '8px',
-                    fontWeight: 700,
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    fontSize: isMobile ? '0.85rem' : '0.9rem',
-                    transition: 'all 0.3s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!loading) {
-                      e.currentTarget.style.background = '#45a049';
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(76,175,80,0.3)';
-                      e.currentTarget.style.transform = 'translateY(-2px)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!loading) {
-                      e.currentTarget.style.background = '#4caf50';
-                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
-                      e.currentTarget.style.transform = 'translateY(0)';
-                    }
-                  }}
-                >
-                  {loading ? 'Saving...' : 'Save Account'}
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* Payment Accounts Table */}
-          <div
-            style={{
-              overflowX: 'auto',
-            }}
-          >
-            <table
-              style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                marginTop: '0',
-              }}
-            >
-              <thead>
-                <tr
-                  style={{
-                    background: 'linear-gradient(135deg, #2196f3 0%, #1976d2 100%)',
-                    color: 'white',
-                  }}
-                >
-                  <th
-                    style={{
-                      padding: isMobile ? '8px 6px' : '14px 12px',
-                      textAlign: 'left',
-                      fontWeight: 700,
-                      fontSize: isMobile ? '0.65rem' : '0.9rem',
-                    }}
-                  >
-                    Account Name
-                  </th>
-                  <th
-                    style={{
-                      padding: isMobile ? '8px 6px' : '14px 12px',
-                      textAlign: 'left',
-                      fontWeight: 700,
-                      fontSize: isMobile ? '0.65rem' : '0.9rem',
-                    }}
-                  >
-                    Type
-                  </th>
-                  <th
-                    style={{
-                      padding: isMobile ? '8px 6px' : '14px 12px',
-                      textAlign: 'left',
-                      fontWeight: 700,
-                      fontSize: isMobile ? '0.65rem' : '0.9rem',
-                    }}
-                  >
-                    Account Number
-                  </th>
-                  <th
-                    style={{
-                      padding: isMobile ? '8px 6px' : '14px 12px',
-                      textAlign: 'left',
-                      fontWeight: 700,
-                      fontSize: isMobile ? '0.65rem' : '0.9rem',
-                    }}
-                  >
-                    Holder
-                  </th>
-                  <th
-                    style={{
-                      padding: isMobile ? '8px 6px' : '14px 12px',
-                      textAlign: 'left',
-                      fontWeight: 700,
-                      fontSize: isMobile ? '0.65rem' : '0.9rem',
-                    }}
-                  >
-                    Status
-                  </th>
-                  <th
-                    style={{
-                      padding: isMobile ? '8px 6px' : '14px 12px',
-                      textAlign: 'center',
-                      fontWeight: 700,
-                      fontSize: isMobile ? '0.65rem' : '0.9rem',
-                    }}
-                  >
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {paymentAccounts.length > 0 ? (
-                  paymentAccounts.map((account, index) => (
-                    <tr
-                      key={account.id}
-                      style={{
-                        borderBottom: '1px solid #e0e0e0',
-                        background: index % 2 === 0 ? 'white' : '#f9f9f9',
-                        transition: 'all 0.3s ease',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = '#f0f7fb';
-                        e.currentTarget.style.boxShadow = 'inset 0 0 6px rgba(33,150,243,0.1)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = index % 2 === 0 ? 'white' : '#f9f9f9';
-                        e.currentTarget.style.boxShadow = 'none';
-                      }}
-                    >
-                      <td
-                        style={{
-                          padding: isMobile ? '8px 6px' : '12px',
-                          fontWeight: 700,
-                          color: '#333',
-                          fontSize: isMobile ? '0.7rem' : '0.9rem',
-                        }}
-                      >
-                        {account.accountName}
-                      </td>
-                      <td
-                        style={{
-                          padding: isMobile ? '8px 6px' : '12px',
-                          fontSize: isMobile ? '0.7rem' : '0.9rem',
-                        }}
-                      >
-                        <span
-                          style={{
-                            background: '#2196f3',
-                            color: 'white',
-                            padding: isMobile ? '3px 5px' : '4px 8px',
-                            borderRadius: '4px',
-                            fontSize: isMobile ? '0.6rem' : '0.8rem',
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                          }}
-                        >
-                          {account.accountType}
-                        </span>
-                      </td>
-                      <td
-                        style={{
-                          padding: isMobile ? '8px 6px' : '12px',
-                          color: '#666',
-                          fontSize: isMobile ? '0.7rem' : '0.9rem',
-                        }}
-                      >
-                        {account.accountNumber}
-                      </td>
-                      <td
-                        style={{
-                          padding: isMobile ? '8px 6px' : '12px',
-                          color: '#666',
-                          fontSize: isMobile ? '0.7rem' : '0.9rem',
-                        }}
-                      >
-                        {account.accountHolder || 'N/A'}
-                      </td>
-                      <td
-                        style={{
-                          padding: isMobile ? '8px 6px' : '12px',
-                          fontSize: isMobile ? '0.7rem' : '0.9rem',
-                        }}
-                      >
-                        <label
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            cursor: 'pointer',
-                            gap: '8px',
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={account.isActive}
-                            onChange={() => handleToggleStatus(account.id, account.isActive)}
-                            style={{
-                              cursor: 'pointer',
-                              width: '18px',
-                              height: '18px',
-                            }}
-                          />
-                          <span
-                            style={{
-                              color: account.isActive ? '#4caf50' : '#999',
-                              fontWeight: 700,
-                            }}
-                          >
-                            {account.isActive ? 'Active' : 'Disabled'}
-                          </span>
-                        </label>
-                      </td>
-                      <td
-                        style={{
-                          padding: '12px',
-                          textAlign: isMobile ? 'center' : 'center',
-                          display: 'flex',
-                          justifyContent: isMobile ? 'space-around' : 'center',
-                          gap: '8px',
-                          width: '100%',
-                        }}
-                      >
-                        <button
-                          onClick={() => handleEditAccount(account.id)}
-                          style={{
-                            background: '#FFC107',
-                            color: 'white',
-                            border: 'none',
-                            padding: isMobile ? '4px 6px' : '6px 12px',
-                            borderRadius: '6px',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            fontSize: isMobile ? '0.6rem' : '0.8rem',
-                            transition: 'all 0.3s ease',
-                            flex: isMobile ? '0 1 auto' : '0 1 1fr',
-                            minWidth: isMobile ? 'auto' : '60px',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = '#FFA000';
-                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(255,193,7,0.3)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = '#FFC107';
-                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAccount(account.id)}
-                          style={{
-                            background: '#f44336',
-                            color: 'white',
-                            border: 'none',
-                            padding: isMobile ? '4px 6px' : '6px 12px',
-                            borderRadius: '6px',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            fontSize: isMobile ? '0.6rem' : '0.8rem',
-                            transition: 'all 0.3s ease',
-                            flex: isMobile ? '0 1 auto' : '0 1 1fr',
-                            minWidth: isMobile ? 'auto' : '60px',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = '#d32f2f';
-                            e.currentTarget.style.boxShadow = '0 4px 12px rgba(244,67,54,0.3)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = '#f44336';
-                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td
-                      colSpan="6"
-                      style={{
-                        padding: '40px 20px',
-                        textAlign: 'center',
-                        color: '#999',
-                        fontSize: '0.95rem',
-                      }}
-                    >
-                      No payment accounts added yet. Click "Add Account" to get started.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* Transactions Table */}
       <div
@@ -1066,7 +719,11 @@ function PaymentManagement() {
             marginBottom: isMobile ? '15px' : '25px',
           }}
         >
-          {showHistoryView ? 'Payment History (Completed Payments)' : 'Payment Transactions'}
+          {isHistorySearch
+            ? `Payment History${searchedHistoryDate ? `: ${searchedHistoryDate}` : ''} · ${
+                searchedHistoryRoute === 'all' ? 'All routes' : searchedHistoryRoute
+              }`
+            : 'Payment Transactions'}
         </h2>
         <div
           style={{
@@ -1091,7 +748,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Booking ID
@@ -1101,7 +758,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Passenger
@@ -1111,7 +768,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Trip
@@ -1121,7 +778,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'left',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Date & Time
@@ -1131,7 +788,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'right',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Amount
@@ -1141,7 +798,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'center',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Method
@@ -1151,7 +808,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'center',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Status
@@ -1161,7 +818,7 @@ function PaymentManagement() {
                     padding: isMobile ? '8px 6px' : '14px 12px',
                     textAlign: 'center',
                     fontWeight: 700,
-                    fontSize: isMobile ? '0.65rem' : '0.9rem',
+                    fontSize: isMobile ? '0.7rem' : '0.9rem',
                   }}
                 >
                   Actions
@@ -1169,8 +826,8 @@ function PaymentManagement() {
               </tr>
             </thead>
             <tbody>
-              {(showHistoryView ? completedPayments.length : transactionPayments.length) > 0 ? (
-                (showHistoryView ? paginatedHistory : paginatedPayments).map((payment, index) => {
+              {(isHistorySearch ? completedPayments.length : transactionPayments.length) > 0 ? (
+                (isHistorySearch ? paginatedHistory : paginatedPayments).map((payment, index) => {
                   const createdDate = new Date(payment.createdAt?.toDate?.() || payment.createdAt);
                   const dateStr = createdDate.toLocaleDateString();
                   const timeStr = createdDate.toLocaleTimeString([], {
@@ -1229,7 +886,7 @@ function PaymentManagement() {
                         style={{
                           padding: isMobile ? '8px 6px' : '12px',
                           color: '#666',
-                          fontSize: isMobile ? '0.65rem' : '0.85rem',
+                          fontSize: isMobile ? '0.7rem' : '0.85rem',
                         }}
                       >
                         {dateStr} {timeStr}
@@ -1262,7 +919,7 @@ function PaymentManagement() {
                             color: 'white',
                             padding: isMobile ? '3px 5px' : '4px 8px',
                             borderRadius: '4px',
-                            fontSize: isMobile ? '0.6rem' : '0.75rem',
+                            fontSize: isMobile ? '0.65rem' : '0.75rem',
                             fontWeight: 700,
                             textTransform: 'uppercase',
                           }}
@@ -1284,19 +941,21 @@ function PaymentManagement() {
                           style={{
                             background:
                               payment.status === 'pending'
-                                ? '#ff9800'
+                                ? payment.paymongoStatus === 'paid'
+                                  ? '#ef6c00'
+                                  : '#ff9800'
                                 : payment.status === 'completed'
                                 ? '#4caf50'
                                 : '#f44336',
                             color: 'white',
                             padding: isMobile ? '3px 6px' : '4px 10px',
                             borderRadius: '4px',
-                            fontSize: isMobile ? '0.6rem' : '0.75rem',
+                            fontSize: isMobile ? '0.65rem' : '0.75rem',
                             fontWeight: 700,
                             textTransform: 'uppercase',
                           }}
                         >
-                          {getPaymentStatusLabel(payment.status)}
+                          {getPaymentStatusLabel(payment)}
                         </span>
                       </td>
                       <td
@@ -1331,7 +990,7 @@ function PaymentManagement() {
                                   borderRadius: '4px',
                                   fontWeight: 700,
                                   cursor: 'pointer',
-                                  fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                  fontSize: isMobile ? '0.65rem' : '0.7rem',
                                   transition: 'all 0.3s ease',
                                 }}
                                 onMouseEnter={(e) => {
@@ -1354,7 +1013,7 @@ function PaymentManagement() {
                                 borderRadius: '4px',
                                 fontWeight: 700,
                                 cursor: 'pointer',
-                                fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                fontSize: isMobile ? '0.65rem' : '0.7rem',
                                 transition: 'all 0.3s ease',
                               }}
                               onMouseEnter={(e) => {
@@ -1364,10 +1023,10 @@ function PaymentManagement() {
                                 e.target.style.background = '#4caf50';
                               }}
                             >
-                              Confirm
+                              {payment.paymongoStatus === 'paid' ? 'Confirm Booking' : 'Confirm Paid'}
                             </button>
                             <button
-                              onClick={() => handleRejectPayment(payment.id)}
+                              onClick={() => handleCancelBooking(payment.id)}
                               style={{
                                 background: '#f44336',
                                 color: 'white',
@@ -1376,7 +1035,7 @@ function PaymentManagement() {
                                 borderRadius: '4px',
                                 fontWeight: 700,
                                 cursor: 'pointer',
-                                fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                fontSize: isMobile ? '0.65rem' : '0.7rem',
                                 transition: 'all 0.3s ease',
                               }}
                               onMouseEnter={(e) => {
@@ -1386,7 +1045,7 @@ function PaymentManagement() {
                                 e.target.style.background = '#f44336';
                               }}
                             >
-                              Reject
+                              Cancel Booking
                             </button>
                           </div>
                         ) : payment.status === 'completed' ? (
@@ -1415,7 +1074,7 @@ function PaymentManagement() {
                                   borderRadius: '4px',
                                   fontWeight: 700,
                                   cursor: 'pointer',
-                                  fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                  fontSize: isMobile ? '0.65rem' : '0.7rem',
                                   transition: 'all 0.3s ease',
                                 }}
                                 onMouseEnter={(e) => {
@@ -1444,7 +1103,7 @@ function PaymentManagement() {
                                 borderRadius: '4px',
                                 fontWeight: 700,
                                 cursor: 'pointer',
-                                fontSize: isMobile ? '0.55rem' : '0.7rem',
+                                fontSize: isMobile ? '0.65rem' : '0.7rem',
                                 transition: 'all 0.3s ease',
                               }}
                               onMouseEnter={(e) => {
@@ -1475,8 +1134,10 @@ function PaymentManagement() {
                       fontSize: '0.95rem',
                     }}
                   >
-                    {showHistoryView
-                      ? 'No completed payments yet.'
+                    {isHistorySearch
+                      ? `No completed payments found${searchedHistoryDate ? ` for ${searchedHistoryDate}` : ''}${
+                          searchedHistoryRoute === 'all' ? '.' : ` on ${searchedHistoryRoute}.`
+                        }`
                       : `No payment data available yet for ${
                           adminData ? adminData.assignedBoat : 'this boat'
                         }.`}
@@ -1488,7 +1149,7 @@ function PaymentManagement() {
         </div>
 
         {/* Pagination Controls */}
-        {(showHistoryView ? completedPayments.length : transactionPayments.length) >
+        {(isHistorySearch ? completedPayments.length : transactionPayments.length) >
           itemsPerPage && (
           <div
             style={{
@@ -1502,13 +1163,13 @@ function PaymentManagement() {
           >
             <button
               onClick={() =>
-                showHistoryView
+                isHistorySearch
                   ? setCurrentHistoryPage((prev) => Math.max(1, prev - 1))
                   : setCurrentPaymentPage((prev) => Math.max(1, prev - 1))
               }
-              disabled={showHistoryView ? currentHistoryPage === 1 : currentPaymentPage === 1}
+              disabled={isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1}
               style={{
-                background: (showHistoryView ? currentHistoryPage === 1 : currentPaymentPage === 1)
+                background: (isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)
                   ? '#ccc'
                   : '#2196f3',
                 color: 'white',
@@ -1516,23 +1177,23 @@ function PaymentManagement() {
                 padding: '10px 20px',
                 borderRadius: '6px',
                 fontWeight: 700,
-                cursor: (showHistoryView ? currentHistoryPage === 1 : currentPaymentPage === 1)
+                cursor: (isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)
                   ? 'not-allowed'
                   : 'pointer',
                 fontSize: '0.9rem',
                 transition: 'all 0.3s ease',
-                opacity: (showHistoryView ? currentHistoryPage === 1 : currentPaymentPage === 1)
+                opacity: (isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)
                   ? 0.5
                   : 1,
               }}
               onMouseEnter={(e) => {
-                if (!(showHistoryView ? currentHistoryPage === 1 : currentPaymentPage === 1)) {
+                if (!(isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)) {
                   e.currentTarget.style.background = '#1976d2';
                   e.currentTarget.style.boxShadow = '0 4px 8px rgba(33,150,243,0.3)';
                 }
               }}
               onMouseLeave={(e) => {
-                if (!(showHistoryView ? currentHistoryPage === 1 : currentPaymentPage === 1)) {
+                if (!(isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)) {
                   e.currentTarget.style.background = '#2196f3';
                   e.currentTarget.style.boxShadow = 'none';
                 }
@@ -1548,24 +1209,24 @@ function PaymentManagement() {
                 color: '#666',
               }}
             >
-              Page {showHistoryView ? currentHistoryPage : currentPaymentPage} of{' '}
-              {showHistoryView ? totalHistoryPages : totalPaymentPages}
+              Page {isHistorySearch ? currentHistoryPage : currentPaymentPage} of{' '}
+              {isHistorySearch ? totalHistoryPages : totalPaymentPages}
             </span>
 
             <button
               onClick={() =>
-                showHistoryView
+                isHistorySearch
                   ? setCurrentHistoryPage((prev) => Math.min(totalHistoryPages, prev + 1))
                   : setCurrentPaymentPage((prev) => Math.min(totalPaymentPages, prev + 1))
               }
               disabled={
-                showHistoryView
+                isHistorySearch
                   ? currentHistoryPage === totalHistoryPages
                   : currentPaymentPage === totalPaymentPages
               }
               style={{
                 background: (
-                  showHistoryView
+                  isHistorySearch
                     ? currentHistoryPage === totalHistoryPages
                     : currentPaymentPage === totalPaymentPages
                 )
@@ -1577,7 +1238,7 @@ function PaymentManagement() {
                 borderRadius: '6px',
                 fontWeight: 700,
                 cursor: (
-                  showHistoryView
+                  isHistorySearch
                     ? currentHistoryPage === totalHistoryPages
                     : currentPaymentPage === totalPaymentPages
                 )
@@ -1586,7 +1247,7 @@ function PaymentManagement() {
                 fontSize: '0.9rem',
                 transition: 'all 0.3s ease',
                 opacity: (
-                  showHistoryView
+                  isHistorySearch
                     ? currentHistoryPage === totalHistoryPages
                     : currentPaymentPage === totalPaymentPages
                 )
@@ -1595,7 +1256,7 @@ function PaymentManagement() {
               }}
               onMouseEnter={(e) => {
                 if (
-                  !(showHistoryView
+                  !(isHistorySearch
                     ? currentHistoryPage === totalHistoryPages
                     : currentPaymentPage === totalPaymentPages)
                 ) {
@@ -1605,7 +1266,7 @@ function PaymentManagement() {
               }}
               onMouseLeave={(e) => {
                 if (
-                  !(showHistoryView
+                  !(isHistorySearch
                     ? currentHistoryPage === totalHistoryPages
                     : currentPaymentPage === totalPaymentPages)
                 ) {

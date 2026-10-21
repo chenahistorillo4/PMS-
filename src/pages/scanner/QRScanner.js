@@ -11,6 +11,14 @@ import {
 } from "firebase/auth";
 import "./QRScanner.css";
 
+async function getBookingPaymentStatus(bookingId, bookingData) {
+  const paymentsSnapshot = await getDocs(
+    query(collection(db, "payments"), where("bookingId", "==", bookingId))
+  );
+  const paymentStatus = paymentsSnapshot.docs[0]?.data().status?.toLowerCase?.();
+  return paymentStatus || bookingData.paymentStatus?.toLowerCase?.() || "pending";
+}
+
 function QRScanner({ user }) {
   const navigate = useNavigate();
   const videoRef = useRef(null);
@@ -184,9 +192,33 @@ function QRScanner({ user }) {
   const handleAcceptScan = async () => {
     if (bookingDetails && currentBookingDocId) {
       try {
+        const bookingRef = doc(db, "bookings", currentBookingDocId);
+        const bookingSnapshot = await getDoc(bookingRef);
+        if (!bookingSnapshot.exists()) {
+          setNotificationMessage("✗ Booking could not be found. Please scan again.");
+          setNotificationType("error");
+          return;
+        }
+        const latestBooking = bookingSnapshot.data();
+        const paymentStatus = await getBookingPaymentStatus(currentBookingDocId, latestBooking);
+        if (
+          latestBooking.status !== "confirmed" ||
+          !["completed", "confirmed"].includes(paymentStatus)
+        ) {
+          setBookingDetails((previous) => ({
+            ...previous,
+            status: latestBooking.status || "Pending",
+            paymentStatus,
+            isPaidAndConfirmed: false
+          }));
+          setNotificationMessage("✗ Payment is still pending. Confirm payment before boarding.");
+          setNotificationType("error");
+          return;
+        }
+
         const acceptedRecord = createScanRecord(bookingDetails, "accepted", currentBookingDocId);
         // Mark booking as scanned/used in Firebase
-        await updateDoc(doc(db, "bookings", currentBookingDocId), {
+        await updateDoc(bookingRef, {
           status: "scanned",
           scannedAt: serverTimestamp(),
           scannedBy: profile.name || auth.currentUser?.email || "QR Scanner"
@@ -534,6 +566,11 @@ function QRScanner({ user }) {
           return;
         }
 
+        const paymentStatus = await getBookingPaymentStatus(bookingDoc.id, bookingData);
+        const isPaidAndConfirmed =
+          bookingData.status === "confirmed" &&
+          ["completed", "confirmed"].includes(paymentStatus);
+
         // Extract relevant booking information
         const details = {
           passengerName: bookingData.customerName || bookingData.passenger_name || bookingData.name || "N/A",
@@ -559,14 +596,20 @@ function QRScanner({ user }) {
           tripId: bookingData.tripId || "N/A",
           email: bookingData.userEmail || "N/A",
           bookedBy: bookingData.bookedByName || "N/A",
-          paymentMethod: bookingData.payment || "N/A"
+          paymentMethod: bookingData.payment || "N/A",
+          paymentStatus,
+          isPaidAndConfirmed
         };
 
         setBookingDetails(details);
         setCurrentBookingDocId(bookingDoc.id);
         setScanMessage(`Booking found`);
-        setNotificationMessage("✓ Booking found successfully! Accept or reject to proceed.");
-        setNotificationType("success");
+        setNotificationMessage(
+          isPaidAndConfirmed
+            ? "✓ Payment confirmed. Booking is valid for boarding."
+            : "Payment is pending. Confirm payment before boarding."
+        );
+        setNotificationType(isPaidAndConfirmed ? "success" : "error");
         setIsPendingAcceptance(true);
         setSuccessfulScan(details);
       } else {
@@ -721,6 +764,10 @@ function QRScanner({ user }) {
             if (bookingDoc) {
               const bookingData = bookingDoc.data();
               console.log("Booking found:", bookingData);
+              const paymentStatus = await getBookingPaymentStatus(bookingDoc.id, bookingData);
+              const isPaidAndConfirmed =
+                bookingData.status === "confirmed" &&
+                ["completed", "confirmed"].includes(paymentStatus);
 
               // Check if ticket is already scanned/used
               if (bookingData.status === "scanned" || bookingData.scannedAt) {
@@ -758,14 +805,20 @@ function QRScanner({ user }) {
                 tripId: bookingData.tripId || "N/A",
                 email: bookingData.userEmail || "N/A",
                 bookedBy: bookingData.bookedByName || "N/A",
-                paymentMethod: bookingData.payment || "N/A"
+                paymentMethod: bookingData.payment || "N/A",
+                paymentStatus,
+                isPaidAndConfirmed
               };
 
               setBookingDetails(details);
               setCurrentBookingDocId(bookingDoc.id);
               setScanMessage(`Booking found`);
-              setNotificationMessage("✓ Booking scanned successfully! Accept or reject to proceed.");
-              setNotificationType("success");
+              setNotificationMessage(
+                isPaidAndConfirmed
+                  ? "✓ Payment confirmed. Booking is valid for boarding."
+                  : "Payment is pending. Confirm payment before boarding."
+              );
+              setNotificationType(isPaidAndConfirmed ? "success" : "error");
               setIsPendingAcceptance(true);
               setSuccessfulScan(details);
             } else {
@@ -1086,6 +1139,16 @@ function QRScanner({ user }) {
                   <span className="detail-value">{bookingDetails.paymentMethod}</span>
                 </div>
                 <div className="detail-item">
+                  <span className="detail-label">Payment Status:</span>
+                  <span
+                    className={`detail-value ${
+                      bookingDetails.isPaidAndConfirmed ? "status-confirmed" : "status-pending"
+                    }`}
+                  >
+                    {bookingDetails.isPaidAndConfirmed ? "Paid / Valid" : "Pending / Not Valid"}
+                  </span>
+                </div>
+                <div className="detail-item">
                   <span className="detail-label">Status:</span>
                   <span className={`detail-value status-${bookingDetails.status.toLowerCase()}`}>
                     {bookingDetails.status}
@@ -1112,25 +1175,42 @@ function QRScanner({ user }) {
                     borderTop: "1px solid #e0e8f0",
                     paddingTop: "16px"
                   }}>
-                    <button
-                      onClick={handleAcceptScan}
-                      style={{
-                        flex: 1,
-                        padding: "12px",
-                        background: "#1e7e34",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "8px",
-                        fontWeight: "bold",
-                        cursor: "pointer",
-                        fontSize: "0.95rem",
-                        transition: "background 0.2s"
-                      }}
-                      onMouseOver={(e) => e.target.style.background = "#155a2a"}
-                      onMouseOut={(e) => e.target.style.background = "#1e7e34"}
-                    >
-                      Accept
-                    </button>
+                    {bookingDetails.isPaidAndConfirmed ? (
+                      <button
+                        onClick={handleAcceptScan}
+                        style={{
+                          flex: 1,
+                          padding: "12px",
+                          background: "#1e7e34",
+                          color: "white",
+                          border: "none",
+                          borderRadius: "8px",
+                          fontWeight: "bold",
+                          cursor: "pointer",
+                          fontSize: "0.95rem",
+                          transition: "background 0.2s"
+                        }}
+                        onMouseOver={(e) => e.target.style.background = "#155a2a"}
+                        onMouseOut={(e) => e.target.style.background = "#1e7e34"}
+                      >
+                        Accept for Boarding
+                      </button>
+                    ) : (
+                      <div
+                        role="status"
+                        style={{
+                          flex: 1,
+                          padding: "12px",
+                          background: "#fff3e0",
+                          color: "#e65100",
+                          borderRadius: "8px",
+                          fontWeight: "bold",
+                          textAlign: "center"
+                        }}
+                      >
+                        Waiting for payment confirmation
+                      </div>
+                    )}
                     <button
                       onClick={handleRejectScan}
                       style={{

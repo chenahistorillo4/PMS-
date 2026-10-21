@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useUserUnreadNotificationCount } from "../hooks/useUnreadNotificationCount";
 import { NavNotificationBadge } from "./NotificationBadge";
@@ -6,6 +6,9 @@ import { NavNotificationBadge } from "./NotificationBadge";
 function Navbar({ user }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const location = useLocation();
+  const isAuthPage = ["/login", "/register"].includes(location.pathname);
+  const showAuthenticatedLinks = Boolean(user && !isAuthPage);
   const unreadNotificationCount = useUserUnreadNotificationCount(user?.uid);
 
   useEffect(() => {
@@ -75,7 +78,7 @@ function Navbar({ user }) {
                 <Link className="nav-link nav-link-custom" to="/about" onClick={handleNavClick}>About</Link>
               </li>
 
-              {user && (
+              {showAuthenticatedLinks && (
                 <>
                   <li className="nav-item">
                     <Link className="nav-link nav-link-custom" to="/booking" onClick={handleNavClick}>Book Ticket</Link>
@@ -108,7 +111,7 @@ function Navbar({ user }) {
                 </>
               )}
 
-              {!user && (
+              {!showAuthenticatedLinks && (
                 <>
                   <li className="nav-item">
                     <Link className="nav-link nav-link-custom" to="/login" onClick={handleNavClick}>Login</Link>
@@ -361,7 +364,7 @@ function Navbar({ user }) {
             About
           </Link>
 
-          {user && (
+          {showAuthenticatedLinks && (
             <>
               <Link
                 to="/booking"
@@ -493,7 +496,7 @@ function Navbar({ user }) {
             </>
           )}
 
-          {!user && (
+          {!showAuthenticatedLinks && (
             <>
               <Link
                 to="/login"

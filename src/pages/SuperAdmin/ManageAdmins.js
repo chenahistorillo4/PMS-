@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { db, auth } from "../../firebase";
+import { db, accountCreationAuth } from "../../firebase";
 import { collection, getDocs, doc, updateDoc, deleteDoc, setDoc } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import SuperadminLayout from "./SuperadminLayout";
 import "./ManageAdmins.css";
+import { ensureBoatExists } from "../../utils/boatHelpers";
 
 function ManageAdmins() {
   const [admins, setAdmins] = useState([]);
@@ -84,8 +85,15 @@ function ManageAdmins() {
 
     setIsCreating(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, newAdminData.email, newAdminData.password);
+      const userCredential = await createUserWithEmailAndPassword(accountCreationAuth, newAdminData.email, newAdminData.password);
       const uid = userCredential.user.uid;
+
+      await ensureBoatExists(
+        db,
+        newAdminData.boat,
+        newAdminData.route,
+        newAdminData.availableRoutes.split(",").map(r => r.trim()).filter(Boolean)
+      );
 
       await setDoc(doc(db, "admins", uid), {
         uid,
@@ -499,7 +507,16 @@ function ManageAdmins() {
                       setNewAdminData({ ...newAdminData, boat: value });
                       const selectedBoat = boats.find(b => b.name === value);
                       if (selectedBoat) {
-                        setNewAdminData(prev => ({ ...prev, route: selectedBoat.route }));
+                        const routes = Array.isArray(selectedBoat.availableRoutes)
+                          ? selectedBoat.availableRoutes
+                          : selectedBoat.route ? [selectedBoat.route] : [];
+                        setNewAdminData(prev => ({
+                          ...prev,
+                          route: selectedBoat.route,
+                          availableRoutes: routes.join(", ")
+                        }));
+                      } else {
+                        setNewAdminData(prev => ({ ...prev, availableRoutes: "" }));
                       }
                     }}
                     list="boat-suggestions"

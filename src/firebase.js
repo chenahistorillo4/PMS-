@@ -18,8 +18,10 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+const accountCreationApp = initializeApp(firebaseConfig, "accountCreation");
     
 // Export Auth instance
 export const auth = getAuth(app);
+export const accountCreationAuth = getAuth(accountCreationApp);
 export const db = getFirestore(app);
 export const storage = getStorage(app);

@@ -23,6 +23,21 @@ export function getPeriodRange(period) {
   const end = new Date(now);
   end.setHours(23, 59, 59, 999);
 
+  if (period === 'today') {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    return { start, end, label: 'Today' };
+  }
+
+  if (period === 'yesterday') {
+    const start = new Date(now);
+    start.setDate(now.getDate() - 1);
+    start.setHours(0, 0, 0, 0);
+    const yesterdayEnd = new Date(start);
+    yesterdayEnd.setHours(23, 59, 59, 999);
+    return { start, end: yesterdayEnd, label: 'Yesterday' };
+  }
+
   if (period === 'weekly') {
     const start = new Date(now);
     start.setDate(now.getDate() - 6);
@@ -37,6 +52,21 @@ export function getPeriodRange(period) {
   }
 
   return null;
+}
+
+export function getWeekRange(weekOffset = 0) {
+  const now = new Date();
+  const start = new Date(now);
+  const dayOfWeek = start.getDay();
+  const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  start.setDate(start.getDate() - daysFromMonday + (weekOffset * 7));
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+
+  return { start, end, label: weekOffset === 0 ? 'This week' : 'Last week' };
 }
 
 export function bookingMatchesPeriod(booking, range) {
@@ -59,8 +89,16 @@ export function filterBookingsByPeriod(bookings, period) {
   return bookings.filter((booking) => bookingMatchesPeriod(booking, range));
 }
 
+export function filterBookingsByRange(bookings, range) {
+  return bookings.filter((booking) => bookingMatchesPeriod(booking, range));
+}
+
 export function getBookingRouteLabel(booking) {
-  return booking.tripName || booking.route || booking.routeDirection || 'N/A';
+  return booking.routeDirection || booking.route || 'N/A';
+}
+
+export function getBookingTripNameLabel(booking) {
+  return booking.tripName || 'N/A';
 }
 
 export function normalizeBookingForReport(booking) {
@@ -88,7 +126,7 @@ export function summarizeBookings(bookings) {
   const normalized = bookings.map(normalizeBookingForReport);
   const totalRevenue = normalized.reduce((sum, b) => sum + b.paymentAmount, 0);
   const completedBookings = normalized.filter(
-    (b) => b.status === 'confirmed' || b.status === 'completed'
+    (b) => ['confirmed', 'completed', 'departed', 'scanned'].includes(b.status)
   ).length;
   const pendingBookings = normalized.filter((b) => b.status === 'pending').length;
   const cancelledBookings = normalized.filter((b) => b.status === 'cancelled').length;
@@ -109,13 +147,17 @@ export function getUniqueRoutesFromBookings(bookings) {
   return [...new Set(bookings.map(getBookingRouteLabel).filter((route) => route && route !== 'N/A'))].sort();
 }
 
+export function getUniqueTripNamesFromBookings(bookings) {
+  return [...new Set(bookings.map(getBookingTripNameLabel).filter((name) => name && name !== 'N/A'))].sort();
+}
+
 export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
 }
 
 export function isConfirmedBooking(booking) {
   const status = String(booking?.status || 'pending').toLowerCase();
-  return status === 'confirmed' || status === 'completed' || status === 'departed';
+  return ['confirmed', 'completed', 'departed', 'scanned'].includes(status);
 }
 
 function bookingCreatedInRange(booking, range) {
@@ -160,7 +202,7 @@ export function computeDashboardMetrics(bookings = []) {
   };
 }
 
-export function buildReportFilterLabel({ reportPeriod, filterDate, filterRoute }) {
+export function buildReportFilterLabel({ reportPeriod, filterDate, filterRoute, filterTripName }) {
   const parts = [];
   if (reportPeriod) {
     parts.push(getPeriodRange(reportPeriod)?.label || reportPeriod);
@@ -170,6 +212,9 @@ export function buildReportFilterLabel({ reportPeriod, filterDate, filterRoute }
   }
   if (filterRoute) {
     parts.push(`Route: ${filterRoute}`);
+  }
+  if (filterTripName) {
+    parts.push(`Trip name: ${filterTripName}`);
   }
   return parts.length > 0 ? parts.join(' · ') : 'All bookings';
 }
