@@ -155,6 +155,32 @@ export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
 }
 
+export function attachPaymentStatuses(bookings = [], payments = []) {
+  const paymentStatusByBookingId = new Map();
+
+  payments.forEach((payment) => {
+    if (!payment?.bookingId) return;
+    const status = String(payment.status || '').toLowerCase();
+    const previousStatus = paymentStatusByBookingId.get(payment.bookingId);
+    if (!previousStatus || ['completed', 'confirmed'].includes(status)) {
+      paymentStatusByBookingId.set(payment.bookingId, status);
+    }
+  });
+
+  return bookings.map((booking) => ({
+    ...booking,
+    paymentStatus: paymentStatusByBookingId.get(booking.id) || '',
+  }));
+}
+
+export function isReportableBooking(booking) {
+  const paymentStatus = String(booking?.paymentStatus || '').toLowerCase();
+  const paymentIsComplete = ['completed', 'confirmed'].includes(paymentStatus);
+  const qrWasConfirmedByPortStaff =
+    String(booking?.status || '').toLowerCase() === 'scanned' || Boolean(booking?.scannedAt);
+  return paymentIsComplete && qrWasConfirmedByPortStaff;
+}
+
 export function isConfirmedBooking(booking) {
   const status = String(booking?.status || 'pending').toLowerCase();
   return ['confirmed', 'completed', 'departed', 'scanned'].includes(status);
