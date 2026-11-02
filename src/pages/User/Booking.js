@@ -179,17 +179,17 @@ function Booking({ userId, userType }) {
     >
         <div
           style={{
-            padding: isMobile ? "14px 10px" : "40px 20px",
-            maxWidth: isMobile ? "100%" : "1200px",
+            padding: isMobile ? "14px 10px" : "64px 40px",
+            maxWidth: isMobile ? "100%" : "1440px",
             margin: "0 auto"
           }}
         >
         <h1
           style={{
             textAlign: "center",
-            fontSize: isMobile ? "1.2rem" : "2.2rem",
+            fontSize: isMobile ? "1.2rem" : "3rem",
             fontWeight: 800,
-            marginBottom: isMobile ? "6px" : "10px",
+            marginBottom: isMobile ? "6px" : "14px",
             color: "#1a1a1a"
           }}
         >
@@ -200,7 +200,7 @@ function Booking({ userId, userType }) {
             textAlign: "center",
             fontSize: isMobile ? "0.76rem" : "0.98rem",
             color: "#666",
-            marginBottom: isMobile ? "16px" : "32px",
+            marginBottom: isMobile ? "16px" : "42px",
             fontWeight: 500,
             maxWidth: "720px",
             marginLeft: "auto",
@@ -214,9 +214,9 @@ function Booking({ userId, userType }) {
         <div
           style={{
             background: "rgba(255, 255, 255, 0.97)",
-            padding: isMobile ? "14px 12px" : "28px 32px",
+            padding: isMobile ? "14px 12px" : "36px 40px",
             borderRadius: "12px",
-            marginBottom: isMobile ? "18px" : "42px",
+            marginBottom: isMobile ? "18px" : "48px",
             border: "1px solid #dcdcdc",
             boxShadow: "0 3px 10px rgba(0, 0, 0, 0.07)"
           }}
@@ -276,8 +276,8 @@ function Booking({ userId, userType }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(auto-fill, minmax(320px, 1fr))",
-              gap: isMobile ? "12px" : "18px",
+              gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(auto-fill, minmax(360px, 1fr))",
+              gap: isMobile ? "12px" : "28px",
               paddingBottom: isMobile ? "8px" : "0"
             }}
           >

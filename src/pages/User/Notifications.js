@@ -260,7 +260,13 @@ function UserNotifications() {
   };
 
   return (
-    <main className={`user-notifications-page${isMobile ? " mobile" : ""}`}>
+    <main
+      className={`user-notifications-page${isMobile ? " mobile" : ""}`}
+      style={{
+        background:
+          "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed"
+      }}
+    >
       <div className="user-notifications-shell">
 
         {/* Notifications List */}

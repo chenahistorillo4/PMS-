@@ -83,9 +83,9 @@ function Schedule() {
     return "#999";
   };
 
-  const cellPadding = isMobile ? "9px 8px" : "15px";
-  const bodyFontSize = isMobile ? "0.72rem" : "0.95rem";
-  const headFontSize = isMobile ? "0.64rem" : "0.85rem";
+  const cellPadding = isMobile ? "9px 8px" : "18px 20px";
+  const bodyFontSize = isMobile ? "0.72rem" : "1.05rem";
+  const headFontSize = isMobile ? "0.64rem" : "0.95rem";
 
   return (
     <div
@@ -94,20 +94,20 @@ function Schedule() {
         minHeight: "100vh",
         background:
           "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed",
-        padding: isMobile ? "14px 8px" : "40px 20px",
+        padding: isMobile ? "14px 8px" : "64px 40px",
         paddingTop: isMobile ? "72px" : "40px"
       }}
     >
       <div
         style={{
-          maxWidth: "1200px",
+          maxWidth: "1440px",
           margin: "0 auto"
         }}
       >
         <h1
           style={{
             textAlign: "center",
-            fontSize: isMobile ? "1.2rem" : "2.2rem",
+            fontSize: isMobile ? "1.2rem" : "3rem",
             fontWeight: 800,
             marginBottom: isMobile ? "6px" : "10px",
             color: "#1a1a1a"
@@ -121,7 +121,7 @@ function Schedule() {
             textAlign: "center",
             fontSize: isMobile ? "0.76rem" : "0.98rem",
             color: "#666",
-            marginBottom: isMobile ? "16px" : "32px",
+            marginBottom: isMobile ? "16px" : "42px",
             fontWeight: 500,
             maxWidth: "720px",
             marginLeft: "auto",
@@ -135,13 +135,13 @@ function Schedule() {
         <div
           style={{
             background: "rgba(255, 255, 255, 0.95)",
-            padding: isMobile ? "12px" : "30px",
+            padding: isMobile ? "12px" : "36px",
             borderRadius: "12px",
-            marginBottom: isMobile ? "16px" : "40px",
+            marginBottom: isMobile ? "16px" : "48px",
             display: isMobile ? "flex" : "grid",
             flexDirection: isMobile ? "column" : "row",
             gridTemplateColumns: isMobile ? undefined : "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: isMobile ? "10px" : "20px",
+            gap: isMobile ? "10px" : "28px",
             alignItems: isMobile ? "stretch" : "end",
             boxShadow: "0 8px 32px rgba(0, 0, 0, 0.1)"
           }}

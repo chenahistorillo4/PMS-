@@ -233,6 +233,70 @@
   background: #f1f7fd;
 }
 
+@media (min-width: 992px) {
+  .user-notifications-page {
+    padding: 64px 40px 72px;
+  }
+
+  .user-notifications-shell {
+    width: min(100%, 1280px);
+  }
+
+  .notifications-page-header {
+    margin-bottom: 28px;
+    padding: 28px 34px;
+    border-radius: 22px;
+  }
+
+  .notifications-page-title {
+    font-size: 2.4rem;
+  }
+
+  .notifications-page-description {
+    font-size: 1.05rem;
+  }
+
+  .notifications-list {
+    gap: 20px;
+  }
+
+  .notification-swipe-wrapper,
+  .notification-card {
+    border-radius: 18px;
+  }
+
+  .notification-card-body {
+    gap: 20px;
+  }
+
+  .notification-icon {
+    flex-basis: 56px;
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+  }
+
+  .notification-card-content {
+    padding-right: 18px;
+  }
+
+  .notification-trip-details {
+    padding: 14px 16px;
+    font-size: .95rem;
+  }
+
+  .notification-action-button {
+    min-height: 40px;
+    padding: 8px 14px !important;
+    font-size: .86rem !important;
+  }
+
+  .notifications-pagination {
+    margin-top: 28px;
+    padding: 16px;
+  }
+}
+
 @media (max-width: 768px) {
   .user-notifications-page {
     padding: 88px 12px 28px;

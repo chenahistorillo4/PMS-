@@ -426,15 +426,15 @@ function ManageBooking() {
 
   return (
     <div id="managebooking-page-content" style={{ minHeight: "100vh", background: "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed", paddingTop: isMobile ? "70px" : "0" }}>
-      <div style={{ padding: isMobile ? "10px 10px 16px" : "22px 18px 28px", maxWidth: "1060px", margin: "0 auto" }}>
+      <div style={{ padding: isMobile ? "10px 10px 16px" : "64px 40px 48px", maxWidth: "1440px", margin: "0 auto" }}>
       {/* Header */}
       <div style={{ marginBottom: isMobile ? "16px" : "32px", textAlign: "center" }}>
         <h1
           style={{
             textAlign: "center",
-            fontSize: isMobile ? "1.2rem" : "2.2rem",
+            fontSize: isMobile ? "1.2rem" : "3rem",
             fontWeight: 800,
-            marginBottom: isMobile ? "6px" : "10px",
+            marginBottom: isMobile ? "6px" : "14px",
             color: "#1a1a1a"
           }}
         >
@@ -484,7 +484,7 @@ function ManageBooking() {
           <p style={{ fontSize: isMobile ? "0.8rem" : "1rem", color: "#999" }}>Start booking today!</p>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "10px" : "16px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "10px" : "24px" }}>
           {visibleBookings.map((booking) => (
             <div key={booking.id} style={{ display: "flex", flexDirection: "column", gap: "0" }}>
               {(() => {
