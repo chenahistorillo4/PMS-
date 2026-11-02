@@ -72,7 +72,7 @@ export const AuthProvider = ({ children }) => {
           setAuthReady(true);
         }
       }
-    });
+    })
     return () => {
       active = false;
       unsubscribe();

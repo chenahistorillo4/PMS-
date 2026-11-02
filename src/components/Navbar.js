@@ -174,15 +174,15 @@ function Navbar({ user }) {
             color: "white",
             display: "flex",
             alignItems: "center",
-            gap: "8px",
+            gap: "15px",
             flexGrow: 1
           }}
         >
           <div
             style={{
-              width: "45px",
-              height: "35px",
-              borderRadius: "45px 45px 0 0",
+              width: "55px",
+              height: "40px",
+              borderRadius: "50px 50px 0 0",
               backgroundColor: "rgba(255, 255, 255, 0.15)",
               display: "flex",
               alignItems: "center",
@@ -194,18 +194,18 @@ function Navbar({ user }) {
               src="/logoo.png"
               alt="PMS Port Logo"
               style={{
-                width: "35px",
-                height: "25px",
+                width: "auto",
+                height: "35px",
                 objectFit: "contain"
               }}
             />
           </div>
           <h3 style={{
             fontWeight: "900",
-            fontSize: "1rem",
+            fontSize: "clamp(1.2rem, 4vw, 1.5rem)",
             margin: "0",
             color: "white",
-            letterSpacing: "-0.3px"
+            letterSpacing: "0.5px"
           }}>
             PMS Port
           </h3>

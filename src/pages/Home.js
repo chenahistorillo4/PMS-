@@ -1,254 +1,254 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import {
+  FiArrowRight,
+  FiAnchor,
+  FiBookOpen,
+  FiCheckCircle,
+  FiClock,
+  FiMail,
+  FiMapPin,
+  FiPhone,
+  FiRadio,
+  FiShield,
+  FiX,
+} from "react-icons/fi";
+import "../App.css";
+
+const destinations = [
+  {
+    name: "Marinduque",
+    image: "/Marinduque/Boac Plaza.webp",
+    places: [
+      ["Boac Plaza", "/Marinduque/Boac Plaza.webp"],
+      ["Immaculate Concepcion Cathedral Parish", "/Marinduque/Immaculate Concepcion Cathedral Parish.webp"],
+      ["Luzon Datum of 1911", "/Marinduque/Luzon Datum of 1911.webp"],
+      ["Maniuaya Island", "/Marinduque/Maniuaya Island.webp"],
+      ["Mount Malindig", "/Marinduque/Mount Malindig.webp"],
+      ["Poctoy White Beach", "/Marinduque/Poctoy White Beach.webp"],
+    ],
+  },
+  {
+    name: "Sibale",
+    image: "/Sibale/Boat Ride Ezperience.avif",
+    places: [
+      ["Boat Ride Experience", "/Sibale/Boat Ride Ezperience.avif"],
+      ["Mt. Talisay", "/Sibale/Mt.-Talisay.avif"],
+      ["The Mangrove Shack", "/Sibale/The-Mangrove-Shack.avif"],
+    ],
+  },
+  {
+    name: "Pinamalayan",
+    image: "/Pinamalayan/Aplaya De Ana Liza.jpg",
+    places: [
+      ["Aplaya De Ana Liza", "/Pinamalayan/Aplaya De Ana Liza.jpg"],
+      ["Cawa-Cawa Falls", "/Pinamalayan/Cawa-Cawa Falls.webp"],
+      ["Magdalena Beach Resort", "/Pinamalayan/Magdalena Beach Resort.webp"],
+      ["Pinamalayan Park", "/Pinamalayan/Pinamalayan Park.jpg"],
+      ["Pinamalayan Rainbow Junction", "/Pinamalayan/Pinamalayan Rainbow Junction.jpg"],
+      ["White Beach", "/Pinamalayan/White Beach.webp"],
+    ],
+  },
+];
+
+const benefits = [
+  {
+    title: "Real-Time Schedules",
+    description: "See updated sailing times and plan your trip with confidence.",
+    icon: FiClock,
+  },
+  {
+    title: "QR Boarding Pass",
+    description: "Get a convenient digital pass that is ready to scan at the port.",
+    icon: FiRadio,
+  },
+  {
+    title: "Safe & Secure Travel",
+    description: "Enjoy a reliable booking experience from reservation to boarding.",
+    icon: FiShield,
+  },
+];
+
+const faqs = [
+  ["How can I book a ferry ticket?", "Create an account, select your preferred trip schedule, provide the required information, and complete the payment."],
+  ["What payment methods are accepted?", "The system accepts digital payments such as GCash and PayLater."],
+  ["How will I receive my boarding pass?", "A QR code boarding pass will be generated and sent after successful booking and payment."],
+  ["Can I reserve cargo through the system?", "Yes, passengers can reserve cargo space for eligible items during the booking process."],
+  ["What should I do if my trip is canceled?", "You may submit a refund request through the system for review and approval."],
+  ["Can I cancel my booking?", "Yes, passengers may cancel their booking subject to the port's cancellation and refund policy."],
+  ["What should I do if I forget my password?", "Click the \"Forgot Password\" link on the login page and follow the instructions sent to your registered email address."],
+  ["Can I use my Google account to sign in?", "Yes, passengers may sign in or create an account using their Google account through the Continue with Google feature."],
+  ["Is my personal information secure?", "Yes, the system is designed to protect user information and ensure secure transactions."],
+  ["Do I need to print my QR boarding pass?", "No, passengers may present the QR boarding pass using their mobile device during boarding."],
+];
 
 function Home({ user }) {
   const navigate = useNavigate();
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-
-  // Scroll to top on mount
-  useEffect(() => {
-    const contentElement = document.getElementById('home-page-content');
-    if (contentElement) {
-      contentElement.scrollIntoView({ behavior: 'auto', block: 'start' });
-    }
-  }, []);
-
-  useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  const [selectedDestination, setSelectedDestination] = useState(null);
+  const [showFaqs, setShowFaqs] = useState(false);
 
   const handleBookClick = () => {
     if (!user) {
       alert("You need to log in first.");
       navigate("/login");
-    } else {
-      navigate("/booking");
+      return;
     }
+    navigate("/booking");
   };
 
   const handleManageClick = () => {
     if (!user) {
       alert("You need to log in first.");
       navigate("/login");
-    } else {
-      navigate("/manage");
+      return;
     }
+    navigate("/manage");
   };
 
   return (
-    <div id="home-page-content" className="home-page" style={{ paddingTop: isMobile ? "68px" : "0" }}>
+    <main className="home-page home-modern-page">
       <section
-        className="text-center text-white hero-section home-hero-section"
-        style={{
-          backgroundImage: "url('/homebg.png')",
-          backgroundSize: isMobile ? "cover" : "100% 100%",
-          backgroundPosition: isMobile ? "right center" : "center",
-          backgroundRepeat: "no-repeat",
-          minHeight: isMobile ? "auto" : "auto",
-          height: isMobile ? "52vh" : "auto",
-          width: "100%",
-          padding: isMobile ? "42px 12px" : "80px 20px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundAttachment: isMobile ? "scroll" : "scroll"
-        }}
+        className="home-modern-hero"
+        style={{ backgroundImage: "url(/homebg.png)" }}
       >
-        <div 
-          className="container home-hero-content"
-          style={{
-            backgroundColor: "transparent",
-            padding: isMobile ? "18px 10px" : "0",
-            borderRadius: isMobile ? "12px" : "0",
-            backdropFilter: "none"
-          }}
-        >
-          <h1
-            className="fw-bold mb-3 home-hero-title"
-            style={{
-              fontSize: isMobile ? "1.55rem" : "clamp(2rem, 8vw, 3.5rem)",
-              color: "#111",
-              textShadow: "1px 1px 2px rgba(255,255,255,0.35)",
-              marginBottom: isMobile ? "6px" : "12px"
-            }}
-          >
-            PMS Port
-          </h1>
-          <p
-            className="lead mb-2 home-hero-route"
-            style={{
-              fontSize: isMobile ? "0.78rem" : "clamp(1rem, 4vw, 1.3rem)",
-              color: "#111",
-              textShadow: "1px 1px 2px rgba(255,255,255,0.35)",
-              marginBottom: isMobile ? "4px" : "8px"
-            }}
-          >
-            Pinamalayan-Marinduque-Sibale Ferry
-          </p>
-          <p
-            className="mb-4 home-hero-description"
-            style={{
-              fontSize: isMobile ? "0.72rem" : "clamp(0.9rem, 3vw, 1.1rem)",
-              color: "#111",
-              textShadow: "1px 1px 2px rgba(255,255,255,0.35)",
-              marginBottom: isMobile ? "14px" : "24px",
-              lineHeight: isMobile ? "1.2" : "1.5"
-            }}
-          >
-            Online Reservation & Ticketing System with QR Boarding Pass
-          </p>
-
-          <div 
-            className="d-flex flex-wrap justify-content-center gap-3 home-hero-actions"
-            style={{
-              maxWidth: isMobile ? "100%" : "auto",
-              gap: isMobile ? "8px" : "12px"
-            }}
-          >
-            <button
-              onClick={handleBookClick}
-              className="btn btn-light btn-lg home-hero-button"
-              style={{
-                padding: isMobile ? "8px 16px" : "12px 32px",
-                fontSize: isMobile ? "0.74rem" : "1rem",
-                fontWeight: "600",
-                borderRadius: "8px",
-                transition: "all 0.3s ease"
-              }}
-            >
-              Book Your Ticket
+        <div className="home-hero-overlay">
+          <div className="home-hero-copy">
+            <h1>PMS Port</h1>
+            <h2>Pinamalayan-Marinduque-<br />Sibale Ferry</h2>
+            <p>Safe&nbsp; • &nbsp;Fast&nbsp; • &nbsp;Reliable</p>
+          </div>
+          <div className="home-hero-actions">
+            <button type="button" className="home-hero-button home-hero-book-button" onClick={handleBookClick}>
+              <FiBookOpen /> Book Ticket <FiArrowRight />
             </button>
-
-            <button
-              onClick={handleManageClick}
-              className="btn btn-outline-light btn-lg home-hero-button"
-              style={{
-                padding: isMobile ? "8px 16px" : "12px 32px",
-                fontSize: isMobile ? "0.74rem" : "1rem",
-                fontWeight: "600",
-                color: "#111",
-                borderRadius: "8px",
-                transition: "all 0.3s ease"
-              }}
-            >
-              Manage Booking
+            <button type="button" className="home-hero-button home-hero-manage-button" onClick={handleManageClick}>
+              <FiCheckCircle /> Manage Booking
             </button>
           </div>
         </div>
       </section>
 
-      <section className="container mt-5">
-        <h2 
-          className="fw-bold text-center mb-4" 
-          style={{
-            fontSize: isMobile ? "1.2rem" : "2rem",
-            transition: "font-size 0.3s ease"
-          }}
-        >
-          Why Choose PMS Port?
-        </h2>
-        <div className="row text-center">
-          <div className="col-md-4">
-            <div className="card shadow-sm p-3 rounded">
-              <h5 
-                className="fw-bold"
-                style={{
-                  fontSize: isMobile ? "0.8rem" : "1.1rem",
-                  transition: "font-size 0.3s ease"
-                }}
-              >
-                Real-Time Schedule
-              </h5>
-              <p
-                style={{
-                  fontSize: isMobile ? "0.7rem" : "0.95rem",
-                  transition: "font-size 0.3s ease"
-                }}
-              >
-                View updated ferry schedules instantly.
-              </p>
-            </div>
+      <section className="home-modern-content">
+        <section className="home-announcement">
+          <FiRadio className="home-announcement-icon" />
+          <div>
+            <h2>Latest Schedule</h2>
+            <p>Schedule adjustment. Please check the updated ferry times before booking.</p>
           </div>
-          <div className="col-md-4">
-            <div className="card shadow-sm p-3 rounded">
-              <h5 
-                className="fw-bold"
-                style={{
-                  fontSize: isMobile ? "0.8rem" : "1.1rem",
-                  transition: "font-size 0.3s ease"
-                }}
-              >
-                QR Boarding Pass
-              </h5>
-              <p
-                style={{
-                  fontSize: isMobile ? "0.7rem" : "0.95rem",
-                  transition: "font-size 0.3s ease"
-                }}
-              >
-                Scan your ticket with ease at the port.
-              </p>
-            </div>
+          <button type="button" onClick={() => navigate("/schedule")}>View All <FiArrowRight /></button>
+        </section>
+
+        <section className="home-benefits">
+          <h2 className="home-section-title"><span />Why Choose PMS Port?<span /></h2>
+          <div className="home-benefit-grid">
+            {benefits.map(({ title, description, icon: Icon }) => (
+              <div className="home-benefit-card" key={title}>
+                <span className="home-benefit-icon"><Icon /></span>
+                <strong>{title}</strong>
+                <p>{description}</p>
+              </div>
+            ))}
           </div>
-          <div className="col-md-4">
-            <div className="card shadow-sm p-3 rounded">
-              <h5 
-                className="fw-bold"
-                style={{
-                  fontSize: isMobile ? "0.8rem" : "1.1rem",
-                  transition: "font-size 0.3s ease"
-                }}
+        </section>
+
+        <section className="home-destinations">
+          <h2 className="home-section-title"><span />Explore Our Destinations<span /></h2>
+          <div className="home-destination-grid">
+            {destinations.map((destination) => (
+              <button
+                type="button"
+                className="home-destination-card"
+                key={destination.name}
+                onClick={() => setSelectedDestination(destination)}
+                aria-label={`View ${destination.name} destinations`}
               >
-                Manage Bookings
-              </h5>
-              <p
-                style={{
-                  fontSize: isMobile ? "0.7rem" : "0.95rem",
-                  transition: "font-size 0.3s ease"
-                }}
-              >
-                Update or cancel your reservations anytime.
-              </p>
-            </div>
+                <img src={destination.image} alt={`${destination.name} destination`} />
+                <div><FiMapPin /> {destination.name}</div>
+              </button>
+            ))}
           </div>
+        </section>
+
+      </section>
+
+      <section className="home-support-banner">
+        <div
+          className="home-support-image"
+          style={{ backgroundImage: "url(/FAQs.jpg)" }}
+          aria-hidden="true"
+        />
+        <div className="home-support-copy">
+          <h2>Need Help with Your Booking?</h2>
+          <p>Check our FAQs or contact our support team.</p>
+          <button type="button" onClick={() => setShowFaqs((current) => !current)}>
+            {showFaqs ? "Hide FAQs" : "See FAQs"} <FiArrowRight />
+          </button>
         </div>
+        <span className="home-support-anchor" aria-hidden="true"><FiAnchor /></span>
       </section>
 
-      <section 
-        className="text-center mt-5"
-        style={{
-          padding: isMobile ? "14px 12px" : "30px 20px"
-        }}
-      >
-        <h4 
-          className="fw-bold"
-          style={{
-            fontSize: isMobile ? "1rem" : "1.5rem",
-            transition: "font-size 0.3s ease",
-            marginBottom: isMobile ? "6px" : "15px"
-          }}
-        >
-          Book Your Ferry Ticket
-        </h4>
-        <p
-          style={{
-            fontSize: isMobile ? "0.72rem" : "1rem",
-            transition: "font-size 0.3s ease",
-            color: "#666"
-          }}
-        >
-          Select your route, date, and passenger details
-        </p>
-      </section>
+      {showFaqs && (
+        <section className="home-faq-section" aria-labelledby="faq-title">
+          <h2 id="faq-title">Frequently Asked Questions</h2>
+          <div className="home-faq-list">
+            {faqs.map(([question, answer]) => (
+              <article className="home-faq-item" key={question}>
+                <h3>Q: {question}</h3>
+                <p>A: {answer}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
-      <footer className="bg-dark text-light text-center py-3 mt-5">
-        <p>&copy; 2026 PMS Port</p>
+      <footer className="home-footer">
+        <div className="home-footer-main">
+          <div className="home-footer-brand">
+            <div className="home-footer-logo">
+              <img src="/logoo.png" alt="PMS Port logo" />
+            </div>
+            <strong>PMS Port</strong>
+            <span>Pinamalayan-Marinduque-Sibale Ferry</span>
+          </div>
+          <div className="home-footer-column home-footer-contact">
+            <h3>Contact Us</h3>
+            <span><FiPhone /> 0966-029-7160</span>
+            <span><FiMail /> pmsport2026@gmail.com</span>
+            <span><FiMapPin /> Port of Pinamalayan, Oriental Mindoro</span>
+          </div>
+          <div className="home-footer-tagline">Travel with Ease.<br />Reach More Places.</div>
+        </div>
+        <div className="home-footer-bottom">
+          <span>© 2026 PMS Port. All rights reserved.</span>
+
+        </div>
       </footer>
-    </div>
+
+      {selectedDestination && (
+        <div className="home-destination-backdrop" role="presentation">
+          <section className="home-destination-modal" role="dialog" aria-modal="true" aria-labelledby="destination-title">
+            <button
+              type="button"
+              className="home-destination-close"
+              onClick={() => setSelectedDestination(null)}
+              aria-label="Close destinations"
+            >
+              <FiX />
+            </button>
+            <h2 id="destination-title">{selectedDestination.name}</h2>
+            <p>Explore places to visit in {selectedDestination.name}.</p>
+            <div className="home-place-grid">
+              {selectedDestination.places.map(([name, image]) => (
+                <figure key={image} className="home-place-card">
+                  <img src={image} alt={name} />
+                  <figcaption>{name}</figcaption>
+                </figure>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+    </main>
   );
 }
 

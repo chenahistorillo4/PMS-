@@ -1,8 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import {
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup,
+  updateProfile,
+} from "firebase/auth";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
+import { FcGoogle } from "react-icons/fc";
+import { FiArrowRight, FiEye, FiEyeOff, FiLock, FiMail, FiUser } from "react-icons/fi";
 import "./Register.css";
 
 function Register() {
@@ -13,8 +20,32 @@ function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [loading, setLoading] = useState(false);
+  const googleSignInPending = useRef(false);
 
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const resetCancelledGoogleSignIn = () => {
+      if (!googleSignInPending.current) {
+        return;
+      }
+
+      window.setTimeout(() => {
+        if (googleSignInPending.current) {
+          googleSignInPending.current = false;
+          setLoading(false);
+        }
+      }, 300);
+    };
+
+    window.addEventListener("focus", resetCancelledGoogleSignIn);
+    document.addEventListener("visibilitychange", resetCancelledGoogleSignIn);
+    return () => {
+      window.removeEventListener("focus", resetCancelledGoogleSignIn);
+      document.removeEventListener("visibilitychange", resetCancelledGoogleSignIn);
+    };
+  }, []);
 
   useEffect(() => {
     const handleResize = () => {
@@ -27,9 +58,11 @@ function Register() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    setLoading(true);
 
     if (password !== confirmPassword) {
       alert("Passwords do not match!");
+      setLoading(false);
       return;
     }
 
@@ -54,6 +87,48 @@ function Register() {
       navigate("/login");
     } catch (error) {
       alert(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleRegister = async () => {
+    googleSignInPending.current = true;
+    setLoading(true);
+
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      const userCredential = await signInWithPopup(auth, provider);
+      googleSignInPending.current = false;
+      const user = userCredential.user;
+      const userDocRef = doc(db, "users", user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (!userDocSnap.exists()) {
+        await setDoc(userDocRef, {
+          uid: user.uid,
+          name: user.displayName || "",
+          email: user.email || "",
+          createdAt: new Date(),
+          phone: "",
+          address: "",
+          photoURL: user.photoURL || "",
+          role: "passenger",
+        });
+      }
+
+      navigate("/home");
+    } catch (error) {
+      console.error("❌ Google registration error:", error.code, error.message);
+      if (error.code === "auth/popup-blocked") {
+        alert("Google sign-in was blocked. Please allow popups for this site and try again.");
+      } else if (error.code !== "auth/popup-closed-by-user" && error.code !== "auth/cancelled-popup-request") {
+        alert("Google sign-up failed. Please try again.");
+      }
+    } finally {
+      googleSignInPending.current = false;
+      setLoading(false);
     }
   };
 
@@ -73,7 +148,7 @@ function Register() {
       <div
         className="card shadow p-4 register-card"
         style={{
-          maxWidth: isMobile ? "90%" : "400px",
+          maxWidth: isMobile ? "90%" : "420px",
           width: "100%",
           minHeight: "auto",
         }}
@@ -133,44 +208,48 @@ function Register() {
 
         <form onSubmit={handleRegister}>
           <div className="mb-3">
-            <label className="form-label" style={{ fontSize: isMobile ? "0.9rem" : "1rem" }}>
-              Name
-            </label>
-            <input
-              type="text"
-              className="form-control register-control"
-              style={{ fontSize: isMobile ? "0.95rem" : "1rem" }}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
+            <div className="auth-input-wrap">
+              <FiUser className="auth-input-icon" aria-hidden="true" />
+              <input
+                type="text"
+                className="form-control register-control auth-input"
+                placeholder="Full name"
+                style={{ fontSize: isMobile ? "0.95rem" : "1rem" }}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={loading}
+                required
+              />
+            </div>
           </div>
 
           <div className="mb-3">
-            <label className="form-label" style={{ fontSize: isMobile ? "0.9rem" : "1rem" }}>
-              Email
-            </label>
-            <input
-              type="email"
-              className="form-control register-control"
-              style={{ fontSize: isMobile ? "0.95rem" : "1rem" }}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+            <div className="auth-input-wrap">
+              <FiMail className="auth-input-icon" aria-hidden="true" />
+              <input
+                type="email"
+                className="form-control register-control auth-input"
+                placeholder="Email"
+                style={{ fontSize: isMobile ? "0.95rem" : "1rem" }}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+                required
+              />
+            </div>
           </div>
 
           <div className="mb-3">
-            <label className="form-label" style={{ fontSize: isMobile ? "0.9rem" : "1rem" }}>
-              Password
-            </label>
             <div className="register-password-wrap">
+              <FiLock className="auth-input-icon" aria-hidden="true" />
               <input
                 type={showPassword ? "text" : "password"}
-                className="form-control register-control register-password-input"
+                className="form-control register-control register-password-input auth-input"
+                placeholder="Password"
                 style={{ fontSize: isMobile ? "0.95rem" : "1rem" }}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
                 required
               />
               <button
@@ -181,46 +260,22 @@ function Register() {
                 aria-pressed={showPassword}
                 title={showPassword ? "Hide password" : "Show password"}
               >
-                {showPassword ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path d="M4 4l16 16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                )}
+                {showPassword ? <FiEye aria-hidden="true" /> : <FiEyeOff aria-hidden="true" />}
               </button>
             </div>
           </div>
 
           <div className="mb-3">
-            <label className="form-label" style={{ fontSize: isMobile ? "0.9rem" : "1rem" }}>
-              Confirm Password
-            </label>
             <div className="register-password-wrap">
+              <FiLock className="auth-input-icon" aria-hidden="true" />
               <input
                 type={showConfirmPassword ? "text" : "password"}
-                className="form-control register-control register-password-input"
+                className="form-control register-control register-password-input auth-input"
+                placeholder="Confirm password"
                 style={{ fontSize: isMobile ? "0.95rem" : "1rem" }}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={loading}
                 required
               />
               <button
@@ -231,43 +286,32 @@ function Register() {
                 aria-pressed={showConfirmPassword}
                 title={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
               >
-                {showConfirmPassword ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path d="M4 4l16 16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                )}
+                {showConfirmPassword ? <FiEye aria-hidden="true" /> : <FiEyeOff aria-hidden="true" />}
               </button>
             </div>
           </div>
 
           <button
             type="submit"
-            className="btn btn-primary w-100 fw-bold register-submit"
+            className="auth-submit-button register-submit"
             style={{ fontSize: isMobile ? "0.95rem" : "1rem" }}
+            disabled={loading}
           >
-            Create Account
+            <span>{loading ? "Creating Account..." : "Create Account"}</span>
+            {!loading && <FiArrowRight aria-hidden="true" />}
           </button>
         </form>
+
+        <div className="auth-divider"><span>or</span></div>
+        <button
+          type="button"
+          className="google-auth-button"
+          onClick={handleGoogleRegister}
+          disabled={loading}
+        >
+          <FcGoogle className="google-auth-icon" aria-hidden="true" />
+          Continue with Google
+        </button>
 
         <p className="text-center mt-3 register-login-text" style={{ fontSize: isMobile ? "0.85rem" : "14px" }}>
           Already have an account?{" "}

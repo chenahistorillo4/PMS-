@@ -1,8 +1,15 @@
-import { useState } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  GoogleAuthProvider,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+} from "firebase/auth";
 import { auth, db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useNavigate, Link } from "react-router-dom";
+import { FcGoogle } from "react-icons/fc";
+import { FiArrowRight, FiEye, FiEyeOff, FiLock, FiMail } from "react-icons/fi";
 import "./Login.css";
 
 function Login() {
@@ -11,12 +18,67 @@ function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const googleSignInPending = useRef(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const resetCancelledGoogleSignIn = () => {
+      if (!googleSignInPending.current) {
+        return;
+      }
+
+      window.setTimeout(() => {
+        if (googleSignInPending.current) {
+          googleSignInPending.current = false;
+          setLoading(false);
+        }
+      }, 300);
+    };
+
+    window.addEventListener("focus", resetCancelledGoogleSignIn);
+    document.addEventListener("visibilitychange", resetCancelledGoogleSignIn);
+    return () => {
+      window.removeEventListener("focus", resetCancelledGoogleSignIn);
+      document.removeEventListener("visibilitychange", resetCancelledGoogleSignIn);
+    };
+  }, []);
+
+  const redirectAuthenticatedUser = useCallback(async (user) => {
+    const superDocSnap = await getDoc(doc(db, "superadmin", user.uid));
+    if (superDocSnap.exists()) {
+      navigate("/superadmin-dashboard");
+      return;
+    }
+
+    const adminDocSnap = await getDoc(doc(db, "admins", user.uid));
+    if (adminDocSnap.exists()) {
+      navigate("/admin-dashboard");
+      return;
+    }
+
+    const portStaffDocSnap = await getDoc(doc(db, "port_staff", user.uid));
+    if (portStaffDocSnap.exists()) {
+      navigate("/port-staff-dashboard");
+      return;
+    }
+
+    const userDocSnap = await getDoc(doc(db, "users", user.uid));
+    if (userDocSnap.exists()) {
+      navigate("/home");
+      return;
+    }
+
+    setErrorMessage("No role found for this account!");
+    navigate("/home");
+  }, [navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setErrorMessage("");
+    setSuccessMessage("");
 
     if (!email.trim()) {
       setErrorMessage("Please enter your email");
@@ -35,52 +97,8 @@ function Login() {
       const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const user = userCredential.user;
       console.log("✓ Authentication successful. UID:", user.uid);
-
-      // Check SUPERADMIN collection
-      const superDocRef = doc(db, "superadmin", user.uid);
-      const superDocSnap = await getDoc(superDocRef);
-
-      if (superDocSnap.exists()) {
-        console.log("✓ Found SUPERADMIN role");
-        navigate("/superadmin-dashboard");
-        return;
-      }
-
-      // Check ADMINS collection
-      const adminDocRef = doc(db, "admins", user.uid);
-      const adminDocSnap = await getDoc(adminDocRef);
-
-      if (adminDocSnap.exists()) {
-        console.log("✓ Found ADMIN role");
-        navigate("/admin-dashboard");
-        return;
-      }
-
-      const portStaffDocRef = doc(db, "port_staff", user.uid);
-      const portStaffDocSnap = await getDoc(portStaffDocRef);
-
-      if (portStaffDocSnap.exists()) {
-        console.log("✓ Found PORT STAFF role");
-        navigate("/port-staff-dashboard");
-        return;
-      }
-
-      // Check USERS collection
-      const userDocRef = doc(db, "users", user.uid);
-      const userDocSnap = await getDoc(userDocRef);
-
-      if (userDocSnap.exists()) {
-        console.log("✓ Found USER role");
-        setLoading(false);
-        navigate("/home");
-        return;
-      }
-
-      // Fallback
-      console.log("⚠ No role document found!");
-      setErrorMessage("No role found for this account!");
+      await redirectAuthenticatedUser(user);
       setLoading(false);
-      navigate("/home");
     } catch (error) {
       console.error("❌ Login error:", error.code, error.message);
       setLoading(false);
@@ -99,6 +117,69 @@ function Login() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    googleSignInPending.current = true;
+    setLoading(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
+      const userCredential = await signInWithPopup(auth, provider);
+      googleSignInPending.current = false;
+      await redirectAuthenticatedUser(userCredential.user);
+    } catch (error) {
+      console.error("❌ Google login error:", error.code, error.message);
+      if (error.code === "auth/popup-blocked") {
+        setErrorMessage("Google sign-in was blocked. Please allow popups for this site and try again.");
+      } else if (error.code !== "auth/popup-closed-by-user" && error.code !== "auth/cancelled-popup-request") {
+        setErrorMessage("Google sign-in failed. Please try again.");
+      }
+    } finally {
+      googleSignInPending.current = false;
+      setLoading(false);
+    }
+  };
+
+  const openForgotPassword = () => {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setShowForgotPassword(true);
+  };
+
+  const handlePasswordReset = async (e) => {
+    e.preventDefault();
+    const trimmedEmail = email.trim();
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    if (!trimmedEmail) {
+      setErrorMessage("Please enter your email.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      setSuccessMessage("Password reset link sent. Please check your email.");
+      setShowForgotPassword(false);
+    } catch (error) {
+      console.error("❌ Password reset error:", error.code, error.message);
+
+      if (error.code === "auth/invalid-email") {
+        setErrorMessage("Invalid email format.");
+      } else if (error.code === "auth/user-not-found") {
+        setErrorMessage("Email not found. Please register first.");
+      } else {
+        setErrorMessage("Unable to send password reset email. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div
       className="login-page"
@@ -112,7 +193,7 @@ function Login() {
         padding: "20px",
       }}
     >
-      <div className="card shadow p-4 login-card" style={{ maxWidth: "400px", width: "100%" }}>
+      <div className="card shadow p-4 login-card" style={{ maxWidth: "420px", width: "100%" }}>
         <div className="login-header" style={{ textAlign: "center", marginBottom: "30px" }}>
           <div
             className="login-logo-shell"
@@ -163,26 +244,39 @@ function Login() {
             {errorMessage}
           </div>
         )}
+        {successMessage && (
+          <div
+            className="alert alert-success"
+            role="status"
+            style={{ marginBottom: "20px", fontSize: "14px" }}
+          >
+            {successMessage}
+          </div>
+        )}
 
         <form onSubmit={handleLogin}>
           <div className="mb-3">
-            <label className="form-label">Email</label>
-            <input
-              type="email"
-              className="form-control"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loading}
-              required
-            />
+            <div className="auth-input-wrap">
+              <FiMail className="auth-input-icon" aria-hidden="true" />
+              <input
+                type="email"
+                className="form-control auth-input"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+                required
+              />
+            </div>
           </div>
           <div className="mb-3">
-            <label htmlFor="login-password" className="form-label">Password</label>
             <div className="password-input-wrap">
+              <FiLock className="auth-input-icon" aria-hidden="true" />
               <input
                 id="login-password"
                 type={showPassword ? "text" : "password"}
-                className="form-control password-input"
+                className="form-control password-input auth-input"
+                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
@@ -197,43 +291,38 @@ function Login() {
                 title={showPassword ? "Hide password" : "Show password"}
                 disabled={loading}
               >
-                {showPassword ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path
-                      d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path d="M4 4l16 16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                )}
+                {showPassword ? <FiEye aria-hidden="true" /> : <FiEyeOff aria-hidden="true" />}
               </button>
             </div>
+            <button
+              type="button"
+              className="forgot-password-link"
+              onClick={openForgotPassword}
+              disabled={loading}
+            >
+              Forgot Password?
+            </button>
           </div>
           <button
             type="submit"
-            className="btn btn-primary w-100"
+            className="auth-submit-button"
             disabled={loading}
-            style={{ opacity: loading ? 0.7 : 1 }}
           >
-            {loading ? "Logging in..." : "Login"}
+            <span>{loading ? "Logging in..." : "Login"}</span>
+            {!loading && <FiArrowRight aria-hidden="true" />}
           </button>
         </form>
+
+        <div className="auth-divider"><span>or</span></div>
+        <button
+          type="button"
+          className="google-auth-button"
+          onClick={handleGoogleLogin}
+          disabled={loading}
+        >
+          <FcGoogle className="google-auth-icon" aria-hidden="true" />
+          Continue with Google
+        </button>
 
         <p className="text-center mt-3 login-register-text">
           Don't have an account?{" "}
@@ -242,6 +331,53 @@ function Login() {
           </Link>
         </p>
       </div>
+
+      {showForgotPassword && (
+        <div className="forgot-password-backdrop" role="presentation">
+          <div
+            className="forgot-password-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="forgot-password-title"
+          >
+            <button
+              type="button"
+              className="forgot-password-close"
+              onClick={() => setShowForgotPassword(false)}
+              disabled={loading}
+              aria-label="Close forgot password dialog"
+            >
+              &times;
+            </button>
+            <h2 id="forgot-password-title">Forgot Password?</h2>
+            <p>Enter the email you use to log in. We will send you a password reset link.</p>
+            <form onSubmit={handlePasswordReset}>
+              <label htmlFor="reset-email">Email</label>
+              <input
+                id="reset-email"
+                type="email"
+                className="form-control"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setErrorMessage("");
+                }}
+                autoFocus
+                disabled={loading}
+                required
+              />
+              {errorMessage && (
+                <div className="alert alert-danger forgot-password-error" role="alert">
+                  {errorMessage}
+                </div>
+              )}
+              <button type="submit" className="btn btn-primary w-100" disabled={loading}>
+                {loading ? "Sending..." : "Continue"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
