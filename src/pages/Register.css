@@ -209,7 +209,7 @@
 
 @media (min-width: 992px) {
   .register-page {
-    padding: 48px !important;
+    padding: 110px 48px 48px !important;
   }
 
   .register-card {

@@ -329,7 +329,7 @@
 
 @media (min-width: 992px) {
   .login-page {
-    padding: 48px !important;
+    padding: 110px 48px 48px !important;
   }
 
   .login-card {

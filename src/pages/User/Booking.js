@@ -179,7 +179,7 @@ function Booking({ userId, userType }) {
     >
         <div
           style={{
-            padding: isMobile ? "14px 10px" : "64px 40px",
+            padding: isMobile ? "14px 10px" : "110px 40px 64px",
             maxWidth: isMobile ? "100%" : "1440px",
             margin: "0 auto"
           }}
@@ -190,7 +190,8 @@ function Booking({ userId, userType }) {
             fontSize: isMobile ? "1.2rem" : "3rem",
             fontWeight: 800,
             marginBottom: isMobile ? "6px" : "14px",
-            color: "#1a1a1a"
+            color: "#062b70",
+            fontFamily: "inherit"
           }}
         >
           Ferry Booking
@@ -199,7 +200,8 @@ function Booking({ userId, userType }) {
           style={{
             textAlign: "center",
             fontSize: isMobile ? "0.76rem" : "0.98rem",
-            color: "#666",
+            color: "#1d416f",
+            fontFamily: "inherit",
             marginBottom: isMobile ? "16px" : "42px",
             fontWeight: 500,
             maxWidth: "720px",

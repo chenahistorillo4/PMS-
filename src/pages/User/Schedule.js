@@ -95,7 +95,7 @@ function Schedule() {
         background:
           "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed",
         padding: isMobile ? "14px 8px" : "64px 40px",
-        paddingTop: isMobile ? "72px" : "40px"
+        paddingTop: isMobile ? "72px" : "110px"
       }}
     >
       <div
@@ -110,7 +110,8 @@ function Schedule() {
             fontSize: isMobile ? "1.2rem" : "3rem",
             fontWeight: 800,
             marginBottom: isMobile ? "6px" : "10px",
-            color: "#1a1a1a"
+            color: "#062b70",
+            fontFamily: "inherit"
           }}
         >
           Ferry Schedule
@@ -120,7 +121,8 @@ function Schedule() {
           style={{
             textAlign: "center",
             fontSize: isMobile ? "0.76rem" : "0.98rem",
-            color: "#666",
+            color: "#1d416f",
+            fontFamily: "inherit",
             marginBottom: isMobile ? "16px" : "42px",
             fontWeight: 500,
             maxWidth: "720px",

@@ -426,7 +426,7 @@ function ManageBooking() {
 
   return (
     <div id="managebooking-page-content" style={{ minHeight: "100vh", background: "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed", paddingTop: isMobile ? "70px" : "0" }}>
-      <div style={{ padding: isMobile ? "10px 10px 16px" : "64px 40px 48px", maxWidth: "1440px", margin: "0 auto" }}>
+      <div style={{ padding: isMobile ? "10px 10px 16px" : "110px 40px 48px", maxWidth: "1440px", margin: "0 auto" }}>
       {/* Header */}
       <div style={{ marginBottom: isMobile ? "16px" : "32px", textAlign: "center" }}>
         <h1
@@ -435,7 +435,8 @@ function ManageBooking() {
             fontSize: isMobile ? "1.2rem" : "3rem",
             fontWeight: 800,
             marginBottom: isMobile ? "6px" : "14px",
-            color: "#1a1a1a"
+            color: "#062b70",
+            fontFamily: "inherit"
           }}
         >
           Manage Booking
@@ -444,7 +445,8 @@ function ManageBooking() {
           style={{
             textAlign: "center",
             fontSize: isMobile ? "0.76rem" : "0.98rem",
-            color: "#666",
+            color: "#1d416f",
+            fontFamily: "inherit",
             marginBottom: 0,
             fontWeight: 500,
             maxWidth: "720px",

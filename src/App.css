@@ -4,6 +4,15 @@
 }
 
 @media (min-width: 992px) {
+  .navbar-custom {
+    position: fixed !important;
+    top: 0;
+    right: 0;
+    left: 0;
+    width: 100%;
+    z-index: 1100;
+  }
+
   .about-page .about-content {
     width: min(calc(100% - 80px), 1440px);
   }
@@ -2539,5 +2548,11 @@
 
   .home-destination-modal > p {
     font-size: .78rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .home-modern-page {
+    padding-top: 82px;
   }
 }

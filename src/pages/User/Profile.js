@@ -31,7 +31,7 @@ function Profile() {
     newPassword: "",
     confirmPassword: "",
   });
-  
+
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
@@ -67,7 +67,7 @@ function Profile() {
         setProfile(docSnap.data());
       }
     };
-
+    
     loadProfile();
 
     const handleResize = () => {
@@ -290,7 +290,7 @@ function Profile() {
         minHeight: "100vh",
         background:
           "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed",
-        paddingTop: isMobile ? "70px" : "0",
+        paddingTop: isMobile ? "70px" : "110px",
       }}
     >
       <div className="profile-page-shell">
