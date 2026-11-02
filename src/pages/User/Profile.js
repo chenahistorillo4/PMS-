@@ -19,6 +19,7 @@ function Profile() {
     address: "",
     photoURL: "",
   });
+
   const [preview, setPreview] = useState(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -30,6 +31,7 @@ function Profile() {
     newPassword: "",
     confirmPassword: "",
   });
+  
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
