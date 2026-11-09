@@ -215,6 +215,7 @@ function Home({ user, role, authReady }) {
             <span><FiMail /> pmsport2026@gmail.com</span>
             <span><FiMapPin /> Port of Pinamalayan, Oriental Mindoro</span>
           </div>
+
           <div className="home-footer-tagline">Travel with Ease.<br />Reach More Places.</div>
         </div>
         <div className="home-footer-bottom">
