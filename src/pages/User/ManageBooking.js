@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { useAuthReloadKey } from "../../hooks/useAuthUser";
 import { checkPaymentExpiry } from "../../utils/paymentExpiryCheck";
+import { getQrPhImageUrl } from "../../utils/paymongo";
 
 function ManageBooking() {
   const navigate = useNavigate();
@@ -18,12 +19,46 @@ function ManageBooking() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [proofModal, setProofModal] = useState({ isOpen: false, bookingId: null, proofImage: null });
   const [qrModal, setQrModal] = useState({ isOpen: false, bookingId: null, referenceCode: null });
+  const [qrCountdownNow, setQrCountdownNow] = useState(Date.now());
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
   const [expandedDetails, setExpandedDetails] = useState({});
   const bookingsPerPage = 5;
   const totalPages = Math.ceil(bookings.length / bookingsPerPage);
   const pageStartIndex = (currentPage - 1) * bookingsPerPage;
   const visibleBookings = bookings.slice(pageStartIndex, pageStartIndex + bookingsPerPage);
+  const qrBooking = bookings.find((booking) => booking.id === qrModal.bookingId);
+  const qrPaymentInfo = paymentStatuses[qrModal.bookingId] || {};
+  const isPayMongoGcashPayment =
+    qrPaymentInfo.paymentProvider === "paymongo" &&
+    qrPaymentInfo.paymongoFlow === "qrph" &&
+    String(qrPaymentInfo.method || qrBooking?.payment || "").toLowerCase() === "gcash" &&
+    Boolean(qrPaymentInfo.paymongoPaymentIntentId);
+  const isPendingPayMongoGcashQr =
+    isPayMongoGcashPayment &&
+    qrPaymentInfo.status === "pending" &&
+    qrPaymentInfo.paymongoStatus !== "paid";
+  const qrExpiryValue = qrPaymentInfo.paymentExpiresAt || qrBooking?.paymentExpiresAt;
+  const qrExpiryDate = qrExpiryValue?.toDate?.() || (qrExpiryValue ? new Date(qrExpiryValue) : null);
+  const qrExpiryTime = qrExpiryDate && !Number.isNaN(qrExpiryDate.getTime())
+    ? qrExpiryDate.getTime()
+    : null;
+  const qrSecondsRemaining = qrExpiryTime === null
+    ? null
+    : Math.max(0, Math.ceil((qrExpiryTime - qrCountdownNow) / 1000));
+  const qrCountdownLabel = qrSecondsRemaining === null
+    ? "Countdown unavailable"
+    : `${Math.floor(qrSecondsRemaining / 60)}m ${String(qrSecondsRemaining % 60).padStart(2, "0")}s`;
+  const showPayMongoPaymentQr = isPendingPayMongoGcashQr && qrSecondsRemaining !== 0;
+  const showBookingQr = !isPayMongoGcashPayment ||
+    (qrPaymentInfo.status === "completed" && qrBooking?.status === "confirmed");
+
+  useEffect(() => {
+    if (!qrModal.isOpen || !isPendingPayMongoGcashQr || qrExpiryTime === null) return undefined;
+
+    setQrCountdownNow(Date.now());
+    const intervalId = setInterval(() => setQrCountdownNow(Date.now()), 1000);
+    return () => clearInterval(intervalId);
+  }, [qrModal.isOpen, isPendingPayMongoGcashQr, qrExpiryTime]);
 
   useEffect(() => {
     const lastPage = Math.max(1, totalPages);
@@ -89,63 +124,69 @@ function ManageBooking() {
         const bookingMap = new Map();
         const bookingsRef = collection(db, "bookings");
         const paymentsRef = collection(db, "payments");
-        const userProfileSnap = await getDoc(doc(db, "users", user.uid));
+        const uidValues = buildIdentifierVariants(user.uid);
+        const emailValues = buildIdentifierVariants(user.email, { allowLowercase: true });
+        const makeQueries = (collectionRef, field, values) =>
+          values.map((value) => getDocs(query(collectionRef, where(field, "==", value))));
+        const bookingQueries = [
+          ...makeQueries(bookingsRef, "userId", uidValues),
+          ...makeQueries(bookingsRef, "userEmail", emailValues),
+        ];
+        const paymentQueries = [
+          ...makeQueries(paymentsRef, "userId", uidValues),
+          ...makeQueries(paymentsRef, "userEmail", emailValues),
+        ];
+
+        const [userProfileSnap, bookingSnapshots, paymentSnapshots] = await Promise.all([
+          getDoc(doc(db, "users", user.uid)),
+          Promise.all(bookingQueries),
+          Promise.all(paymentQueries),
+        ]);
         const userProfile = userProfileSnap.exists() ? userProfileSnap.data() : {};
 
-        const bookingQueries = [];
-        const paymentQueries = [];
-
-        buildIdentifierVariants(user.uid).forEach((uidValue) => {
-          bookingQueries.push(getDocs(query(bookingsRef, where("userId", "==", uidValue))));
-          paymentQueries.push(getDocs(query(paymentsRef, where("userId", "==", uidValue))));
-        });
-
-        buildIdentifierVariants(user.email, { allowLowercase: true }).forEach((emailValue) => {
-          bookingQueries.push(getDocs(query(bookingsRef, where("userEmail", "==", emailValue))));
-          paymentQueries.push(getDocs(query(paymentsRef, where("userEmail", "==", emailValue))));
-        });
-
-        buildIdentifierVariants(userProfile?.email, { allowLowercase: true }).forEach((emailValue) => {
-          bookingQueries.push(getDocs(query(bookingsRef, where("userEmail", "==", emailValue))));
-          paymentQueries.push(getDocs(query(paymentsRef, where("userEmail", "==", emailValue))));
-        });
-
-        const bookingSnapshots = await Promise.all(bookingQueries);
-        bookingSnapshots.forEach((snapshot) => {
-          snapshot.docs.forEach((doc) => {
-            bookingMap.set(doc.id, formatBooking(doc));
-          });
-        });
-
-        if (bookingMap.size === 0) {
-          const fallbackNameQueries = [];
-
-          buildIdentifierVariants(user.displayName).forEach((nameValue) => {
-            fallbackNameQueries.push(getDocs(query(bookingsRef, where("customerName", "==", nameValue))));
-          });
-
-          buildIdentifierVariants(userProfile?.name).forEach((nameValue) => {
-            fallbackNameQueries.push(getDocs(query(bookingsRef, where("customerName", "==", nameValue))));
-          });
-
-          const fallbackSnapshots = await Promise.all(fallbackNameQueries);
-          fallbackSnapshots.forEach((snapshot) => {
-            snapshot.docs.forEach((doc) => {
-              bookingMap.set(doc.id, formatBooking(doc));
+        const mergeBookingSnapshots = (snapshots) => {
+          snapshots.forEach((snapshot) => {
+            snapshot.docs.forEach((bookingDoc) => {
+              bookingMap.set(bookingDoc.id, formatBooking(bookingDoc));
             });
           });
+        };
+        mergeBookingSnapshots(bookingSnapshots);
+
+        const additionalEmails = buildIdentifierVariants(userProfile?.email, { allowLowercase: true })
+          .filter((email) => !emailValues.includes(email));
+        if (additionalEmails.length > 0) {
+          const [additionalBookings, additionalPayments] = await Promise.all([
+            Promise.all(makeQueries(bookingsRef, "userEmail", additionalEmails)),
+            Promise.all(makeQueries(paymentsRef, "userEmail", additionalEmails)),
+          ]);
+          mergeBookingSnapshots(additionalBookings);
+          paymentSnapshots.push(...additionalPayments);
         }
 
-        const data = Array.from(bookingMap.values()).sort((a, b) => {
-          const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-          const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-          return bTime - aTime;
-        });
+        if (bookingMap.size === 0) {
+          const fallbackNames = new Set([
+            ...buildIdentifierVariants(user.displayName),
+            ...buildIdentifierVariants(userProfile?.name),
+          ]);
+          if (fallbackNames.size > 0) {
+            const fallbackSnapshots = await Promise.all(
+              makeQueries(bookingsRef, "customerName", Array.from(fallbackNames))
+            );
+            mergeBookingSnapshots(fallbackSnapshots);
+          }
+        }
 
-        setBookings(data);
+        const sortBookings = (bookingValues) =>
+          Array.from(bookingValues).sort((a, b) => {
+            const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+            const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+            return bTime - aTime;
+          });
+
+        setBookings(sortBookings(bookingMap.values()));
 
         const paymentMap = {};
-        const paymentSnapshots = await Promise.all(paymentQueries);
         paymentSnapshots.forEach((snapshot) => {
           snapshot.docs.forEach((doc) => {
             const payment = doc.data();
@@ -154,6 +195,11 @@ function ManageBooking() {
                 paymentId: doc.id,
                 status: payment.status?.toLowerCase?.() || "",
                 paymentMode: payment.paymentMode || "",
+                method: payment.method || "",
+                paymentProvider: payment.paymentProvider || "",
+                paymongoFlow: payment.paymongoFlow || "",
+                paymongoPaymentIntentId: payment.paymongoPaymentIntentId || "",
+                paymentExpiresAt: payment.paymentExpiresAt || null,
                 paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
                 proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
               };
@@ -161,46 +207,35 @@ function ManageBooking() {
           });
         });
 
-        await Promise.all(
-          Object.entries(paymentMap)
-            .filter(
-              ([, payment]) =>
-                payment.status === 'pending' && payment.paymentMode !== 'pay_later'
+        setPaymentStatuses(paymentMap);
+        setIsLoadingBookings(false);
+
+        const expiringPaymentEntries = Object.entries(paymentMap).filter(
+          ([, payment]) => payment.status === "pending" && payment.paymentMode !== "pay_later"
+        );
+        const expiryResults = await Promise.all(
+          expiringPaymentEntries.map(([, payment]) => checkPaymentExpiry(payment.paymentId))
+        );
+        const cancelledPayments = expiryResults.flatMap((result) => result?.cancelled || []);
+        if (cancelledPayments.length > 0) {
+          const cancelledPaymentIds = new Set(cancelledPayments.map((item) => item.paymentId));
+          const cancelledBookingIds = new Set(cancelledPayments.map((item) => item.bookingId));
+          setPaymentStatuses((previous) => {
+            const updated = { ...previous };
+            cancelledBookingIds.forEach((bookingId) => {
+              if (updated[bookingId]) updated[bookingId] = { ...updated[bookingId], status: "cancelled" };
+            });
+            return updated;
+          });
+          setBookings((previous) =>
+            previous.map((booking) =>
+              cancelledBookingIds.has(booking.id) ? { ...booking, status: "cancelled" } : booking
             )
-            .map(([, payment]) => checkPaymentExpiry(payment.paymentId))
-        );
-
-        const refreshedPaymentSnapshots = await Promise.all(paymentQueries);
-        const refreshedPaymentMap = {};
-        refreshedPaymentSnapshots.forEach((snapshot) => {
-          snapshot.docs.forEach((paymentDoc) => {
-            const payment = paymentDoc.data();
-            if (payment.bookingId) {
-              refreshedPaymentMap[payment.bookingId] = {
-                paymentId: paymentDoc.id,
-                status: payment.status?.toLowerCase?.() || "",
-                paymentMode: payment.paymentMode || "",
-                paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
-                proofOfPaymentBase64: payment.proofOfPaymentBase64 || null,
-              };
-            }
-          });
-        });
-        setPaymentStatuses(refreshedPaymentMap);
-
-        const refreshedBookingSnapshots = await Promise.all(bookingQueries);
-        refreshedBookingSnapshots.forEach((snapshot) => {
-          snapshot.docs.forEach((bookingDoc) => {
-            bookingMap.set(bookingDoc.id, formatBooking(bookingDoc));
-          });
-        });
-        setBookings(
-          Array.from(bookingMap.values()).sort((a, b) => {
-            const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-            const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-            return bTime - aTime;
-          })
-        );
+          );
+          console.info(
+            `Marked ${cancelledBookingIds.size} expired booking(s) and ${cancelledPaymentIds.size} payment(s) as cancelled.`
+          );
+        }
       } catch (error) {
         console.error("Error fetching bookings:", error);
       } finally {
@@ -300,6 +335,11 @@ function ManageBooking() {
             paymentId: paymentDoc.id,
             status: payment.status?.toLowerCase?.() || "",
             paymentMode: payment.paymentMode || "",
+            method: payment.method || "",
+            paymentProvider: payment.paymentProvider || "",
+            paymongoFlow: payment.paymongoFlow || "",
+            paymongoPaymentIntentId: payment.paymongoPaymentIntentId || "",
+            paymentExpiresAt: payment.paymentExpiresAt || null,
             paymongoStatus: payment.paymongoStatus?.toLowerCase?.() || "",
             proofOfPaymentBase64: payment.proofOfPaymentBase64 || null
           }
@@ -369,7 +409,7 @@ function ManageBooking() {
       };
     }
 
-    if (paymentStatus === "failed") {
+    if (["failed", "cancelled"].includes(paymentStatus)) {
       return {
         label: "Cancelled",
         color: "#f44336",
@@ -415,12 +455,17 @@ function ManageBooking() {
   };
 
   const downloadQRCode = () => {
-    const canvas = document.querySelector("canvas");
-    if (!canvas) return;
-    
+    const qrContainer = document.querySelector("#manage-booking-qr");
+    const image = qrContainer?.querySelector("img");
+    const canvas = qrContainer?.querySelector("canvas");
+    const qrSource = showPayMongoPaymentQr ? image?.src : canvas?.toDataURL("image/png");
+    if (!qrSource) return;
+
     const link = document.createElement("a");
-    link.href = canvas.toDataURL("image/png");
-    link.download = `booking-qr-${qrModal.referenceCode || qrModal.bookingId}.png`;
+    link.href = qrSource;
+    link.download = showPayMongoPaymentQr
+      ? `paymongo-gcash-${qrModal.bookingId}.png`
+      : `booking-qr-${qrModal.referenceCode || qrModal.bookingId}.png`;
     link.click();
   };
 
@@ -937,14 +982,18 @@ function ManageBooking() {
           alignItems: "center",
           justifyContent: "center",
           zIndex: 1000,
-          padding: isMobile ? "14px" : "20px"
+          padding: isMobile ? "12px" : "20px",
+          overflowY: "auto"
         }}>
           <div style={{
             background: "white",
             borderRadius: "16px",
-            padding: isMobile ? "16px" : "28px",
-            maxWidth: isMobile ? "92vw" : "420px",
+            padding: isMobile ? "12px" : "28px",
+            maxWidth: isMobile ? "340px" : "420px",
             width: "100%",
+            maxHeight: isMobile ? "calc(100dvh - 24px)" : undefined,
+            overflowY: isMobile ? "auto" : undefined,
+            boxSizing: "border-box",
             boxShadow: "0 10px 40px rgba(0, 0, 0, 0.3)",
             textAlign: "center"
           }}>
@@ -952,7 +1001,7 @@ function ManageBooking() {
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              marginBottom: "18px"
+              marginBottom: isMobile ? "10px" : "18px"
             }}>
               <h3 style={{
                 fontSize: isMobile ? "1rem" : "1.2rem",
@@ -960,7 +1009,7 @@ function ManageBooking() {
                 color: "#1e3a5f",
                 margin: 0
               }}>
-                Booking QR Code
+                {showPayMongoPaymentQr ? "GCash Payment QR" : "Booking QR Code"}
               </h3>
               <button
                 onClick={() => setQrModal({ isOpen: false, bookingId: null, referenceCode: null })}
@@ -985,9 +1034,32 @@ function ManageBooking() {
               borderRadius: "14px",
               padding: isMobile ? "14px" : "18px"
             }}>
-              <div style={{ background: "white", padding: isMobile ? "10px" : "12px", borderRadius: "12px", border: "1px solid #e0e8f0", display: "inline-block", marginBottom: "14px" }}>
-                <QRCodeCanvas value={qrModal.referenceCode || qrModal.bookingId || ""} size={isMobile ? 180 : 220} />
-              </div>
+              {(showPayMongoPaymentQr || showBookingQr) && (
+                <div id="manage-booking-qr" style={{ background: "white", padding: isMobile ? "8px" : "12px", borderRadius: "12px", border: "1px solid #e0e8f0", display: "inline-block", marginBottom: isMobile ? "10px" : "14px" }}>
+                  {showPayMongoPaymentQr ? (
+                    <img
+                      id="manage-booking-paymongo-qr"
+                      src={getQrPhImageUrl(qrPaymentInfo.paymongoPaymentIntentId)}
+                      alt="PayMongo GCash payment QR code"
+                      style={{
+                        display: "block",
+                        width: isMobile ? "min(220px, 65vw)" : "220px",
+                        height: "auto",
+                      }}
+                    />
+                  ) : (
+                    <QRCodeCanvas
+                      value={qrModal.referenceCode || qrModal.bookingId || ""}
+                      size={isMobile ? 150 : 220}
+                    />
+                  )}
+                </div>
+              )}
+              {isPendingPayMongoGcashQr && qrSecondsRemaining > 0 && (
+                <p style={{ margin: "0 0 12px", color: "#e65100", fontSize: "0.85rem", fontWeight: 700 }}>
+                  Pay within {qrCountdownLabel}.
+                </p>
+              )}
               {(() => {
                 const booking = bookings.find((item) => item.id === qrModal.bookingId);
                 const paymentInfo = paymentStatuses[qrModal.bookingId] || {};
@@ -999,9 +1071,13 @@ function ManageBooking() {
                 const qrStatusLabel = ["scanned", "boarded"].includes(booking?.status?.toLowerCase?.())
                   ? "Already boarded"
                   : booking?.status === "cancelled"
-                    ? "Cancelled"
+                    ? "Booking cancelled."
                     : isPaidAndValid
                       ? "Paid / Valid for boarding"
+                      : paymentInfo.paymongoStatus === "paid"
+                        ? "Payment received / Awaiting confirmation"
+                        : isPendingPayMongoGcashQr && qrSecondsRemaining === 0
+                          ? "QR expired. Booking cancellation is being processed."
                       : "Pending payment / Not valid for boarding";
                 const qrStatusIsInvalid =
                   ["scanned", "boarded"].includes(booking?.status?.toLowerCase?.()) ||
@@ -1032,24 +1108,28 @@ function ManageBooking() {
                   </div>
                 );
               })()}
-              <div style={{ fontSize: isMobile ? "0.62rem" : "0.7rem", fontWeight: 800, color: "#7b8da1", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                Reference Code
-              </div>
-              <div style={{ 
-                fontSize: isMobile ? "0.78rem" : "0.9rem", 
-                fontFamily: "monospace", 
-                color: "#1e3a5f", 
-                fontWeight: 800, 
-                background: "white", 
-                padding: "10px 12px", 
-                borderRadius: "10px", 
-                border: "1px solid #e0e8f0", 
-                letterSpacing: "0.4px", 
-                wordBreak: "break-all",
-                marginBottom: "12px"
-              }}>
-                {(qrModal.referenceCode || qrModal.bookingId || "").toUpperCase()}
-              </div>
+              {showBookingQr && (
+                <>
+                  <div style={{ fontSize: isMobile ? "0.62rem" : "0.7rem", fontWeight: 800, color: "#7b8da1", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    Reference Code
+                  </div>
+                  <div style={{
+                    fontSize: isMobile ? "0.78rem" : "0.9rem",
+                    fontFamily: "monospace",
+                    color: "#1e3a5f",
+                    fontWeight: 800,
+                    background: "white",
+                    padding: "10px 12px",
+                    borderRadius: "10px",
+                    border: "1px solid #e0e8f0",
+                    letterSpacing: "0.4px",
+                    wordBreak: "break-all",
+                    marginBottom: "12px"
+                  }}>
+                    {(qrModal.referenceCode || qrModal.bookingId || "").toUpperCase()}
+                  </div>
+                </>
+              )}
 
               {/* Copy and Download Buttons */}
               <div style={{
@@ -1057,7 +1137,7 @@ function ManageBooking() {
                 gap: "8px",
                 marginBottom: "4px"
               }}>
-                <button
+                {showBookingQr && <button
                   onClick={() => copyToClipboard((qrModal.referenceCode || qrModal.bookingId || "").toUpperCase())}
                   style={{
                     flex: 1,
@@ -1075,8 +1155,8 @@ function ManageBooking() {
                   onMouseLeave={(e) => e.target.style.background = "#2196f3"}
                 >
                   Copy Code
-                </button>
-                <button
+                </button>}
+                {(showPayMongoPaymentQr || showBookingQr) && <button
                   onClick={downloadQRCode}
                   style={{
                     flex: 1,
@@ -1093,8 +1173,8 @@ function ManageBooking() {
                   onMouseEnter={(e) => e.target.style.background = "#45a049"}
                   onMouseLeave={(e) => e.target.style.background = "#4caf50"}
                 >
-                  Download QR
-                </button>
+                  {showPayMongoPaymentQr ? "Download PayMongo QR" : "Download Booking QR"}
+                </button>}
               </div>
             </div>
 
@@ -1102,8 +1182,8 @@ function ManageBooking() {
               onClick={() => setQrModal({ isOpen: false, bookingId: null, referenceCode: null })}
               style={{
                 width: "100%",
-                marginTop: "16px",
-                padding: "11px",
+                marginTop: isMobile ? "10px" : "16px",
+                padding: isMobile ? "9px" : "11px",
                 background: "#2196f3",
                 color: "white",
                 border: "none",

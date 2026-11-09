@@ -20,12 +20,25 @@ import {
   isProductionDeployment,
 } from '../../utils/paymongo';
 import { PAYMENT_PENDING_NOTICE, PAYMENT_QR_VALID_MINUTES } from '../../constants/paymentNotice';
+import {
+  calculatePromoDiscount,
+  getActivePromo,
+  getPromoReservationCounts,
+} from '../../utils/promotionHelpers';
+import { notifyNewBookingReceived } from '../../utils/notificationHelper';
 
 // Generate a unique reference code
 const generateReferenceCode = () => {
   const timestamp = Date.now().toString(36).toUpperCase().slice(-6);
   const randomStr = Math.random().toString(36).substring(2, 8).toUpperCase();
   return `${randomStr}${timestamp}`;
+};
+
+const getPassengerDiscountRate = (discounts, type) => {
+  const matchingType = Object.keys(discounts).find(
+    (discountType) => discountType.toLowerCase() === String(type).toLowerCase()
+  );
+  return matchingType ? Number(discounts[matchingType]) || 0 : 0;
 };
 
 function BookingDetails(props) {
@@ -39,6 +52,8 @@ function BookingDetails(props) {
   let { trip, userId, userType } = props?.trip
     ? { trip: props.trip, userId: props.userId, userType: props.userType }
     : location.state || {};
+  const tripPaymentMethod = trip?.paymentMethod || (trip?.allowPayLater ? 'pay_later' : 'gcash');
+  const tripUsesPayLater = tripPaymentMethod === 'pay_later';
 
   if (!userId && auth.currentUser) {
     userId = auth.currentUser.uid;
@@ -62,12 +77,12 @@ function BookingDetails(props) {
   };
 
   const [form, setForm] = useState({
-    bookingType: 'passenger_cargo', // "passenger_cargo" or "cargo_only"
+    bookingType: 'passenger_cargo',
     customerName: '',
     cargoType: '',
     cargoWeight: '',
     userType: userType || 'regular',
-    payment: trip?.allowPayLater ? 'Pay Later' : '',
+    payment: tripUsesPayLater ? 'Pay Later' : '',
     idProof: null,
     idProofBase64: null,
     idPreview: null,
@@ -81,9 +96,13 @@ function BookingDetails(props) {
   const [paymentProofBase64, setPaymentProofBase64] = useState(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState(null);
   const [boatDiscounts, setBoatDiscounts] = useState({});
+  const [boatPromos, setBoatPromos] = useState([]);
+  const [promoReservationCounts, setPromoReservationCounts] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [payMongoReady, setPayMongoReady] = useState(false);
   const paymentAutoSelectedRef = useRef(false);
+  const idProofInputRef = useRef(null);
+  const idProofReaderRef = useRef(null);
   const usesPayMongoGcash = isPayMongoGcash(form.payment);
   const isPayLater = form.payment === 'Pay Later';
 
@@ -102,27 +121,44 @@ function BookingDetails(props) {
     return isNaN(w) ? 0 : w * cargoRate;
   };
   const computeDiscountAmount = (basePrice, type) => {
-    const rate = boatDiscounts[type] || 0;
+    const rate = getPassengerDiscountRate(boatDiscounts, type);
     return basePrice * rate;
   };
-
+  const passengerDiscountTypes = Object.entries(boatDiscounts).filter(
+    ([type, rate]) =>
+      type.toLowerCase() !== 'regular' &&
+      Number.isFinite(Number(rate)) &&
+      Number(rate) > 0 &&
+      Number(rate) <= 1
+  );
   // Price calculations
-  const cargoPrice = computeCargoPrice(form.cargoWeight);
+  const cargoPrice =
+    form.bookingType === 'passenger_only' ? 0 : computeCargoPrice(form.cargoWeight);
 
-  let basePrice, discountRate, discountAmount, finalPrice;
+  const activePromo = getActivePromo(boatPromos, promoReservationCounts);
+  let basePrice, discountRate, passengerDiscountAmount, promoDiscountAmount, discountAmount, finalPrice;
 
   if (form.bookingType === 'cargo_only') {
     // Cargo-only: only charge cargo fee, no passenger base price
     basePrice = cargoPrice;
     discountRate = 0;
+    passengerDiscountAmount = 0;
+    promoDiscountAmount = 0;
     discountAmount = 0;
     finalPrice = cargoPrice;
   } else {
-    // Passenger + Cargo: charge base price + cargo price with discounts
-    basePrice = parseFloat(trip?.price || 0) + cargoPrice;
-    discountRate = boatDiscounts[form.userType] || 0;
-    discountAmount = computeDiscountAmount(basePrice, form.userType);
-    finalPrice = basePrice - discountAmount;
+    // Passenger-only bookings exclude cargo from the discounted fare.
+    basePrice =
+      parseFloat(trip?.price || 0) +
+      (form.bookingType === 'passenger_cargo' ? cargoPrice : 0);
+    discountRate = getPassengerDiscountRate(boatDiscounts, form.userType);
+    passengerDiscountAmount = computeDiscountAmount(
+      parseFloat(trip?.price || 0),
+      form.userType
+    );
+    promoDiscountAmount = calculatePromoDiscount(basePrice - passengerDiscountAmount, activePromo);
+    discountAmount = passengerDiscountAmount + promoDiscountAmount;
+    finalPrice = Math.max(0, basePrice - discountAmount);
   }
 
   // Scroll to top on mount (only if not in modal)
@@ -145,6 +181,8 @@ function BookingDetails(props) {
         if (!trip?.boat) {
           console.log('No boat selected, skipping discount fetch');
           setBoatDiscounts({});
+          setBoatPromos([]);
+          setPromoReservationCounts({});
           return;
         }
 
@@ -156,20 +194,31 @@ function BookingDetails(props) {
           where('boatName', '==', trip.boat)
         );
 
-        const discountSnap = await getDocs(discountQuery);
+        const [discountSnap, bookingsSnap] = await Promise.all([
+          getDocs(discountQuery),
+          getDocs(query(collection(db, 'bookings'), where('boat', '==', trip.boat))),
+        ]);
+        setPromoReservationCounts(
+          getPromoReservationCounts(bookingsSnap.docs.map((bookingDoc) => bookingDoc.data()))
+        );
 
         if (discountSnap.empty) {
           console.log('[ERROR] No discounts found for boat:', trip.boat);
           setBoatDiscounts({});
+          setBoatPromos([]);
+          setPromoReservationCounts({});
           return;
         }
 
         const discountData = discountSnap.docs[0].data();
         console.log('[SUCCESS] Discounts found:', discountData);
         setBoatDiscounts(discountData.discounts || {});
+        setBoatPromos(Array.isArray(discountData.promos) ? discountData.promos : []);
       } catch (error) {
         console.error('Error fetching boat discounts:', error);
         setBoatDiscounts({});
+        setBoatPromos([]);
+        setPromoReservationCounts({});
       }
     };
 
@@ -239,10 +288,14 @@ function BookingDetails(props) {
           });
         }
 
+        if (tripPaymentMethod === 'gcash') {
+          methods = methods.filter((method) => method.accountType === 'gcash');
+        }
+
         if (!isCurrent) return;
         setAvailablePaymentMethods(methods);
 
-        if (trip?.allowPayLater) {
+        if (tripUsesPayLater) {
           setForm((prev) => ({ ...prev, payment: 'Pay Later' }));
           setSelectedPaymentAccount(null);
           paymentAutoSelectedRef.current = true;
@@ -266,12 +319,12 @@ function BookingDetails(props) {
     return () => {
       isCurrent = false;
     };
-  }, [trip?.allowPayLater, trip?.boat]);
+  }, [tripPaymentMethod, tripUsesPayLater, trip?.boat]);
 
   // Validate user type when boat discounts change
   useEffect(() => {
     if (boatDiscounts && Object.keys(boatDiscounts).length > 0 && form.userType !== 'regular') {
-      if (!boatDiscounts[form.userType]) {
+      if (!getPassengerDiscountRate(boatDiscounts, form.userType)) {
         console.log(
           `User type "${form.userType}" not available for boat "${trip.boat}". Resetting to "regular".`
         );
@@ -284,27 +337,32 @@ function BookingDetails(props) {
     if (e.target.name === 'idProof') {
       const file = e.target.files[0];
       if (file) {
-        // Create preview
+        idProofReaderRef.current?.abort();
+        if (form.idPreview) URL.revokeObjectURL(form.idPreview);
         const preview = URL.createObjectURL(file);
-
-        // Convert to Base64
         const reader = new FileReader();
+        idProofReaderRef.current = reader;
         reader.onloadend = () => {
-          setForm({
-            ...form,
+          if (idProofReaderRef.current !== reader) return;
+          idProofReaderRef.current = null;
+          setForm((current) => ({
+            ...current,
             idProof: file,
             idProofBase64: reader.result, // Base64 string
             idPreview: preview,
-          });
+          }));
         };
         reader.readAsDataURL(file);
       } else {
-        setForm({
-          ...form,
+        idProofReaderRef.current?.abort();
+        idProofReaderRef.current = null;
+        if (form.idPreview) URL.revokeObjectURL(form.idPreview);
+        setForm((current) => ({
+          ...current,
           idProof: null,
           idProofBase64: null,
           idPreview: null,
-        });
+        }));
       }
     } else if (e.target.name === 'paymentProof') {
       const file = e.target.files[0];
@@ -336,6 +394,19 @@ function BookingDetails(props) {
     }
   };
 
+  const handleCancelIdProof = () => {
+    idProofReaderRef.current?.abort();
+    idProofReaderRef.current = null;
+    if (form.idPreview) URL.revokeObjectURL(form.idPreview);
+    if (idProofInputRef.current) idProofInputRef.current.value = '';
+    setForm((current) => ({
+      ...current,
+      idProof: null,
+      idProofBase64: null,
+      idPreview: null,
+    }));
+  };
+
   const handleConfirmBooking = async () => {
     if (!form.customerName || !form.payment) {
       alert('Please complete all required fields.');
@@ -343,9 +414,9 @@ function BookingDetails(props) {
     }
 
     // Only validate passenger-specific fields if booking includes passenger
-    if (form.bookingType === 'passenger_cargo') {
+    if (form.bookingType !== 'cargo_only') {
       // Validate user type is available for this boat
-      if (form.userType !== 'regular' && !boatDiscounts[form.userType]) {
+      if (form.userType !== 'regular' && !getPassengerDiscountRate(boatDiscounts, form.userType)) {
         alert(
           `The discount type "${form.userType}" is not available for ${trip.boat}. Please select a different user type or contact support.`
         );
@@ -415,6 +486,18 @@ function BookingDetails(props) {
       // Booking data with Base64 encoded image
       const referenceCode = generateReferenceCode();
       const paymentExpiresAt = new Date(Date.now() + PAYMENT_QR_VALID_MINUTES * 60 * 1000);
+      const latestBookingsSnapshot = await getDocs(
+        query(collection(db, 'bookings'), where('boat', '==', trip.boat))
+      );
+      const latestPromo = getActivePromo(
+        boatPromos,
+        getPromoReservationCounts(latestBookingsSnapshot.docs.map((bookingDoc) => bookingDoc.data()))
+      );
+      if ((latestPromo?.id || null) !== (activePromo?.id || null)) {
+        alert('Promo availability has changed. Please review the updated price before booking.');
+        setLoading(false);
+        return;
+      }
 
       const bookingData = {
         tripId: trip.id,
@@ -427,13 +510,18 @@ function BookingDetails(props) {
         bookingType: form.bookingType,
         customerName: form.customerName,
         userType: form.bookingType === 'cargo_only' ? null : form.userType,
-        cargoType: form.cargoType,
-        cargoWeight: form.cargoWeight,
+        cargoType: form.bookingType === 'passenger_only' ? '' : form.cargoType,
+        cargoWeight: form.bookingType === 'passenger_only' ? '' : form.cargoWeight,
         cargoPrice,
         basePrice: form.bookingType === 'cargo_only' ? 0 : parseFloat(trip?.price || 0),
         passengerPrice: form.bookingType === 'cargo_only' ? 0 : parseFloat(trip?.price || 0),
         discountRate,
         discountAmount,
+        passengerDiscountAmount,
+        promoName: promoDiscountAmount > 0 ? activePromo?.name || null : null,
+        promoId: promoDiscountAmount > 0 ? activePromo?.id || null : null,
+        promoPercentage: promoDiscountAmount > 0 ? Number(activePromo?.percentage) : 0,
+        promoDiscountAmount,
         finalPrice,
         payment: form.payment,
         paymentMode: isPayLater ? 'pay_later' : 'prepaid',
@@ -479,6 +567,9 @@ function BookingDetails(props) {
 
       const paymentRef = await addDoc(collection(db, 'payments'), paymentData);
       console.log('[SUCCESS] Payment record created! ID:', paymentRef.id);
+      await notifyNewBookingReceived(bookingData, docRef.id, trip.capacity).catch((error) =>
+        console.warn('New booking in-app notification failed:', error)
+      );
 
       if (usesPayMongoGcash) {
         if (!payMongoReady) {
@@ -560,8 +651,7 @@ function BookingDetails(props) {
         background: isModal
           ? 'transparent'
           : "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed",
-        paddingTop: isMobile && !isModal ? '70px' : '0',
-        padding: isModal ? '0' : '40px 20px',
+        padding: isModal ? '0' : isMobile ? '86px 14px 24px' : '40px 20px',
       }}
     >
       <div
@@ -577,7 +667,8 @@ function BookingDetails(props) {
             textAlign: 'center',
             fontSize: isModal ? (isMobile ? '1.2rem' : '1.5rem') : isMobile ? '1.3rem' : '2rem',
             fontWeight: 700,
-            marginBottom: isModal ? '20px' : '40px',
+            marginTop: 0,
+            marginBottom: isMobile ? '18px' : isModal ? '20px' : '32px',
             color: '#1a1a1a',
             letterSpacing: '-0.5px',
           }}
@@ -590,20 +681,20 @@ function BookingDetails(props) {
           style={{
             background: 'white',
             borderRadius: '12px',
-            padding: isModal ? '25px' : '35px',
+            padding: isMobile ? (isModal ? '12px' : '20px') : isModal ? '20px' : '35px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
             border: '1px solid #f0f0f0',
           }}
         >
           {/* Trip Information Section */}
-          <div style={{ marginBottom: '35px' }}>
+          <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
             <h3
               style={{
                 fontSize: isMobile ? '0.95rem' : '1.1rem',
                 fontWeight: 800,
                 color: '#1a1a1a',
-                marginBottom: '20px',
-                paddingBottom: '12px',
+                marginBottom: isMobile ? '14px' : '20px',
+                paddingBottom: isMobile ? '9px' : '12px',
                 borderBottom: '2px solid #2196f3',
               }}
             >
@@ -612,8 +703,8 @@ function BookingDetails(props) {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '20px',
+                gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(2, minmax(0, 1fr))',
+                gap: isMobile ? '14px 10px' : '20px',
                 fontSize: isMobile ? '0.8rem' : '0.95rem',
               }}
             >
@@ -759,20 +850,24 @@ function BookingDetails(props) {
           </div>
 
           {/* Booking Type Selection Section */}
-          <div style={{ marginBottom: '35px' }}>
+          <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
             <h3
               style={{
                 fontSize: isMobile ? '0.95rem' : '1.1rem',
                 fontWeight: 800,
                 color: '#1a1a1a',
-                marginBottom: '20px',
-                paddingBottom: '12px',
+                marginBottom: isMobile ? '14px' : '20px',
+                paddingBottom: isMobile ? '9px' : '12px',
                 borderBottom: '2px solid #2196f3',
               }}
             >
               Booking Type
             </h3>
-            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+              gap: isMobile ? '8px' : '12px',
+            }}>
               <label
                 style={{
                   display: 'flex',
@@ -810,6 +905,33 @@ function BookingDetails(props) {
                   fontWeight: 500,
                   color: '#333',
                   padding: '12px 15px',
+                  background: form.bookingType === 'passenger_only' ? '#e3f2fd' : '#f5f5f5',
+                  borderRadius: '8px',
+                  border:
+                    form.bookingType === 'passenger_only' ? '2px solid #2196f3' : '2px solid #ddd',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <input
+                  type="radio"
+                  name="bookingType"
+                  value="passenger_only"
+                  onChange={handleChange}
+                  checked={form.bookingType === 'passenger_only'}
+                  style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                />
+                <span style={{ fontWeight: 600 }}>Passenger Only</span>
+              </label>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  cursor: 'pointer',
+                  fontSize: isMobile ? '0.78rem' : '0.95rem',
+                  fontWeight: 500,
+                  color: '#333',
+                  padding: '12px 15px',
                   background: form.bookingType === 'cargo_only' ? '#fff3e0' : '#f5f5f5',
                   borderRadius: '8px',
                   border:
@@ -831,14 +953,14 @@ function BookingDetails(props) {
           </div>
 
           {/* Customer Information Section */}
-          <div style={{ marginBottom: '35px' }}>
+          <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
             <h3
               style={{
                 fontSize: isMobile ? '0.95rem' : '1.1rem',
                 fontWeight: 800,
                 color: '#1a1a1a',
-                marginBottom: '20px',
-                paddingBottom: '12px',
+                marginBottom: isMobile ? '14px' : '20px',
+                paddingBottom: isMobile ? '9px' : '12px',
                 borderBottom: '2px solid #2196f3',
               }}
             >
@@ -867,21 +989,21 @@ function BookingDetails(props) {
           </div>
 
           {/* User Type Section - Only show for passenger bookings */}
-          {form.bookingType === 'passenger_cargo' && (
-            <div style={{ marginBottom: '35px' }}>
+          {form.bookingType !== 'cargo_only' && (
+            <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
               <h3
                 style={{
                   fontSize: isMobile ? '0.95rem' : '1.1rem',
                   fontWeight: 800,
                   color: '#1a1a1a',
-                  marginBottom: '20px',
-                  paddingBottom: '12px',
+                  marginBottom: isMobile ? '14px' : '20px',
+                  paddingBottom: isMobile ? '9px' : '12px',
                   borderBottom: '2px solid #2196f3',
                 }}
               >
                 Passenger Type
               </h3>
-              {Object.keys(boatDiscounts).length > 0 && (
+              {passengerDiscountTypes.length > 0 && (
                 <p
                   style={{
                     fontSize: isMobile ? '0.72rem' : '0.85rem',
@@ -894,12 +1016,12 @@ function BookingDetails(props) {
                   }}
                 >
                   [INFO] Available discounts for <strong>{trip.boat}</strong>:{' '}
-                  {Object.keys(boatDiscounts)
-                    .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
+                  {passengerDiscountTypes
+                    .map(([type]) => type.charAt(0).toUpperCase() + type.slice(1))
                     .join(', ')}
                 </p>
               )}
-              {Object.keys(boatDiscounts).length === 0 && (
+              {passengerDiscountTypes.length === 0 && (
                 <p
                   style={{
                     fontSize: isMobile ? '0.72rem' : '0.85rem',
@@ -935,13 +1057,13 @@ function BookingDetails(props) {
                 onBlur={(e) => (e.target.style.borderColor = '#ddd')}
               >
                 <option value="regular">Regular</option>
-                {Object.keys(boatDiscounts).map((type) => (
+                {passengerDiscountTypes.map(([type, rate]) => (
                   <option
                     key={type}
                     value={type}
                   >
                     {type.charAt(0).toUpperCase() + type.slice(1)} (
-                    {(boatDiscounts[type] * 100).toFixed(0)}% discount)
+                    {(Number(rate) * 100).toFixed(0)}% discount)
                   </option>
                 ))}
               </select>
@@ -949,15 +1071,15 @@ function BookingDetails(props) {
           )}
 
           {/* ID Upload Section - Only show for passenger bookings with non-regular type */}
-          {form.bookingType === 'passenger_cargo' && form.userType !== 'regular' && (
-            <div style={{ marginBottom: '35px' }}>
+          {form.bookingType !== 'cargo_only' && form.userType !== 'regular' && (
+            <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
               <h3
                 style={{
                   fontSize: isMobile ? '0.95rem' : '1.1rem',
                   fontWeight: 800,
                   color: '#1a1a1a',
-                  marginBottom: '20px',
-                  paddingBottom: '12px',
+                  marginBottom: isMobile ? '14px' : '20px',
+                  paddingBottom: isMobile ? '9px' : '12px',
                   borderBottom: '2px solid #2196f3',
                 }}
               >
@@ -975,6 +1097,7 @@ function BookingDetails(props) {
                 Upload Your Valid ID / Photo
               </label>
               <input
+                ref={idProofInputRef}
                 type="file"
                 name="idProof"
                 accept="image/*"
@@ -1017,20 +1140,38 @@ function BookingDetails(props) {
                     alt="ID Preview"
                     style={{ maxWidth: '200px', maxHeight: '200px', borderRadius: '6px' }}
                   />
+                  <button
+                    type="button"
+                    onClick={handleCancelIdProof}
+                    style={{
+                      display: 'block',
+                      margin: '12px auto 0',
+                      padding: '8px 14px',
+                      color: '#b42318',
+                      background: '#fff1f0',
+                      border: '1px solid #f2b8b5',
+                      borderRadius: '6px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Remove ID
+                  </button>
                 </div>
               )}
             </div>
           )}
 
           {/* Cargo Information Section */}
-          <div style={{ marginBottom: '35px' }}>
+          {form.bookingType !== 'passenger_only' && (
+          <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
             <h3
               style={{
                 fontSize: isMobile ? '0.95rem' : '1.1rem',
                 fontWeight: 800,
                 color: '#1a1a1a',
-                marginBottom: '20px',
-                paddingBottom: '12px',
+                marginBottom: isMobile ? '14px' : '20px',
+                paddingBottom: isMobile ? '9px' : '12px',
                 borderBottom: '2px solid #2196f3',
               }}
             >
@@ -1112,16 +1253,17 @@ function BookingDetails(props) {
               />
             </div>
           </div>
+          )}
 
           {/* Price Breakdown Section */}
-          <div style={{ marginBottom: '35px' }}>
+          <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
             <h3
               style={{
                 fontSize: isMobile ? '0.95rem' : '1.1rem',
                 fontWeight: 800,
                 color: '#1a1a1a',
-                marginBottom: '20px',
-                paddingBottom: '12px',
+                marginBottom: isMobile ? '14px' : '20px',
+                paddingBottom: isMobile ? '9px' : '12px',
                 borderBottom: '2px solid #2196f3',
               }}
             >
@@ -1130,14 +1272,14 @@ function BookingDetails(props) {
             <div
               style={{
                 background: '#f9f9f9',
-                padding: '20px',
+                padding: isMobile ? '14px' : '20px',
                 borderRadius: '8px',
                 border: '1px solid #e0e0e0',
               }}
             >
               {form.bookingType === 'cargo_only' ? (
                 <>
-                  <div
+                  {form.bookingType === 'passenger_cargo' && <div
                     style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -1149,7 +1291,18 @@ function BookingDetails(props) {
                     <span style={{ fontWeight: 600, color: '#1a1a1a' }}>
                       ₱{Number(cargoPrice).toFixed(2)}
                     </span>
-                  </div>
+                  </div>}
+                  {!activePromo && (
+                    <p
+                      style={{
+                        margin: '0 0 12px',
+                        color: '#666',
+                        fontSize: isMobile ? '0.78rem' : '0.9rem',
+                      }}
+                    >
+                      No promotions available at the moment.
+                    </p>
+                  )}
                   <div
                     style={{
                       display: 'flex',
@@ -1199,20 +1352,45 @@ function BookingDetails(props) {
                       ₱{Number(cargoPrice).toFixed(2)}
                     </span>
                   </div>
-                  <div
-                    style={{
+                  {passengerDiscountAmount > 0 && (
+                    <div style={{
                       display: 'flex',
                       justifyContent: 'space-between',
                       marginBottom: '12px',
                       fontSize: isMobile ? '0.78rem' : '0.95rem',
                       color: '#f44336',
-                    }}
-                  >
-                    <span style={{ fontWeight: 500 }}>
-                      Discount ({(discountRate * 100).toFixed(0)})%:
-                    </span>
-                    <span style={{ fontWeight: 600 }}>-₱{Number(discountAmount).toFixed(2)}</span>
-                  </div>
+                    }}>
+                      <span style={{ fontWeight: 500 }}>
+                        {form.userType} Discount ({(discountRate * 100).toFixed(0)}%):
+                      </span>
+                      <span style={{ fontWeight: 600 }}>-₱{Number(passengerDiscountAmount).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {promoDiscountAmount > 0 && (
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginBottom: '12px',
+                      fontSize: isMobile ? '0.78rem' : '0.95rem',
+                      color: '#f44336',
+                    }}>
+                      <span style={{ fontWeight: 500 }}>
+                        Promo: {activePromo.name} ({Number(activePromo.percentage)}%):
+                      </span>
+                      <span style={{ fontWeight: 600 }}>-₱{Number(promoDiscountAmount).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {!activePromo && (
+                    <p
+                      style={{
+                        margin: '0 0 12px',
+                        color: '#666',
+                        fontSize: isMobile ? '0.78rem' : '0.9rem',
+                      }}
+                    >
+                      No promotions available at the moment.
+                    </p>
+                  )}
                   <div
                     style={{
                       display: 'flex',
@@ -1239,20 +1417,20 @@ function BookingDetails(props) {
           </div>
 
           {/* Payment Method Section */}
-          <div style={{ marginBottom: '35px' }}>
+          <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
             <h3
               style={{
                 fontSize: isMobile ? '0.95rem' : '1.1rem',
                 fontWeight: 800,
                 color: '#1a1a1a',
-                marginBottom: '20px',
-                paddingBottom: '12px',
+                marginBottom: isMobile ? '14px' : '20px',
+                paddingBottom: isMobile ? '9px' : '12px',
                 borderBottom: '2px solid #2196f3',
               }}
             >
-              {trip?.allowPayLater ? 'Booking Only' : 'Payment Method'}
+              {tripUsesPayLater ? 'Booking Only' : 'Payment Method'}
             </h3>
-            {trip?.allowPayLater ? (
+            {tripUsesPayLater ? (
               <div
                 style={{
                   padding: '15px',
@@ -1265,8 +1443,7 @@ function BookingDetails(props) {
                   lineHeight: 1.5,
                 }}
               >
-                Reserve this trip now. Payment of ₱{Number(finalPrice).toFixed(2)} is due manually
-                later and will remain pending until the admin confirms it.
+                Reserve this trip now and pay ₱{Number(finalPrice).toFixed(2)} at the port.
               </div>
             ) : isLoadingPaymentMethods ? (
               <div
@@ -1673,24 +1850,26 @@ function BookingDetails(props) {
             </div>
           )}
 
-          <div
-            role="note"
-            style={{
-              marginBottom: '16px',
-              padding: '14px 16px',
-              background: '#fff3e0',
-              border: '1px solid #ffb74d',
-              borderLeft: '5px solid #f57c00',
-              borderRadius: '8px',
-              color: '#7a3e00',
-              fontSize: isMobile ? '0.78rem' : '0.92rem',
-              lineHeight: 1.6,
-            }}
-          >
-            <strong>Paalala:</strong> Dapat nasa venue ka nang hindi bababa sa 30 minuto bago
-            ang oras ng pag-alis ng bangka. Kapag hindi ka nakarating bago ang 30-minute cutoff,
-            kakanselahin ang booking at bibigyan ng prayoridad ang mga pasaherong nasa venue.
-          </div>
+          {isPayLater && (
+            <div
+              role="note"
+              style={{
+                marginBottom: '16px',
+                padding: '14px 16px',
+                background: '#fff3e0',
+                border: '1px solid #ffb74d',
+                borderLeft: '5px solid #f57c00',
+                borderRadius: '8px',
+                color: '#7a3e00',
+                fontSize: isMobile ? '0.78rem' : '0.92rem',
+                lineHeight: 1.6,
+              }}
+            >
+              <strong>Reminder:</strong> Please arrive at the venue at least 30 minutes before the
+              ferry's departure. If you do not arrive by the 30-minute cutoff, your booking will be
+              canceled and passengers already at the venue will be given priority.
+            </div>
+          )}
 
           {/* Confirm Booking Button - at dulo, after payment instructions */}
           {!bookingId && (

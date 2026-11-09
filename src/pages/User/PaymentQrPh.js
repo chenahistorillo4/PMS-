@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../firebase';
 import {
   getPayMongoPaymentStatus,
   getQrPhImageUrl,
-  refreshQrPhCheckout,
 } from '../../utils/paymongo';
 import { notifyPaymentSuccess } from '../../utils/notificationHelper';
 import { PAYMENT_PENDING_NOTICE, PAYMENT_QR_VALID_MINUTES } from '../../constants/paymentNotice';
@@ -21,11 +20,12 @@ function PaymentQrPh() {
   const [amount, setAmount] = useState(0);
   const [paymentIntentId, setPaymentIntentId] = useState('');
   const [bookingId, setBookingId] = useState('');
+  const [paymentExpiresAt, setPaymentExpiresAt] = useState(null);
+  const [countdownNow, setCountdownNow] = useState(Date.now());
   const [status, setStatus] = useState('awaiting');
   const [message, setMessage] = useState('Waiting for payment...');
-  const [qrImageKey, setQrImageKey] = useState(Date.now());
+  const [qrImageKey] = useState(Date.now());
   const [qrLoadError, setQrLoadError] = useState(false);
-  const [refreshingQr, setRefreshingQr] = useState(false);
   const [fallbackQrImageUrl] = useState(location.state?.qrImageUrl || '');
 
   useEffect(() => {
@@ -50,6 +50,11 @@ function PaymentQrPh() {
 
         const paymentData = paymentSnap.data();
         setAmount(paymentData.amount || 0);
+        const expiryValue = paymentData.paymentExpiresAt;
+        const expiryDate = expiryValue?.toDate?.() || (expiryValue ? new Date(expiryValue) : null);
+        setPaymentExpiresAt(
+          expiryDate && !Number.isNaN(expiryDate.getTime()) ? expiryDate.getTime() : null
+        );
         setPaymentIntentId(
           paymentData.paymongoPaymentIntentId || location.state?.paymentIntentId || ''
         );
@@ -57,7 +62,7 @@ function PaymentQrPh() {
 
         if (paymentData.status === 'completed') {
           setStatus('success');
-          setMessage('Payment and booking confirmed by port staff.');
+          setMessage('Payment received and booking confirmed.');
           if (paymentData.bookingId) {
             notifyPaymentSuccess({
               paymentId,
@@ -65,16 +70,34 @@ function PaymentQrPh() {
               notifyAdmin: false,
             }).catch((error) => console.warn('Booking confirmation notification failed:', error));
           }
-        } else if (paymentData.status === 'failed') {
+        } else if (['failed', 'cancelled'].includes(paymentData.status)) {
           setStatus('error');
           setMessage('This payment expired and the booking was cancelled. Please book again.');
         } else if (paymentData.paymongoStatus === 'paid') {
+          const batch = writeBatch(db);
+          batch.update(paymentRef, {
+            status: 'completed',
+            confirmedAt: new Date(),
+          });
+          if (paymentData.bookingId) {
+            batch.update(doc(db, 'bookings', paymentData.bookingId), {
+              status: 'confirmed',
+            });
+          }
+          await batch.commit();
           setStatus('success');
-          setMessage('Payment received. Your booking is waiting for confirmation by port staff.');
+          setMessage('Payment received and booking confirmed.');
+          if (paymentData.bookingId) {
+            await notifyPaymentSuccess({
+              paymentId,
+              bookingId: paymentData.bookingId,
+              notifyAdmin: false,
+            }).catch((error) => console.warn('Payment received notification failed:', error));
+          }
         } else {
           await checkPaymentExpiry(paymentId);
           const refreshedSnap = await getDoc(paymentRef);
-          if (refreshedSnap.exists() && refreshedSnap.data().status === 'failed') {
+          if (refreshedSnap.exists() && ['failed', 'cancelled'].includes(refreshedSnap.data().status)) {
             setStatus('error');
             setMessage('This payment expired and the booking was cancelled. Please book again.');
           }
@@ -92,18 +115,41 @@ function PaymentQrPh() {
   }, [paymentId, location.state?.paymentIntentId]);
 
   useEffect(() => {
+    if (!paymentExpiresAt) return undefined;
+
+    const updateCountdown = () => setCountdownNow(Date.now());
+    updateCountdown();
+    const intervalId = setInterval(updateCountdown, 1000);
+    return () => clearInterval(intervalId);
+  }, [paymentExpiresAt]);
+
+  useEffect(() => {
     if (!paymentIntentId || status === 'success' || status === 'error') {
       return undefined;
     }
 
     const markPaid = async (paymentRef) => {
-      await updateDoc(paymentRef, {
-        status: 'pending',
+      const batch = writeBatch(db);
+      batch.update(paymentRef, {
+        status: 'completed',
         paymongoStatus: 'paid',
         paidAt: new Date(),
+        confirmedAt: new Date(),
       });
+      if (bookingId) {
+        batch.update(doc(db, 'bookings', bookingId), {
+          status: 'confirmed',
+        });
+      }
+      await batch.commit();
+
+      if (bookingId) {
+        await notifyPaymentSuccess({ paymentId, bookingId, notifyAdmin: false }).catch((error) =>
+          console.warn('Payment received notification failed:', error)
+        );
+      }
       setStatus('success');
-      setMessage('Payment received. Your booking is waiting for confirmation by port staff.');
+      setMessage('Payment received and booking confirmed.');
     };
 
     const pollStatus = async () => {
@@ -118,7 +164,7 @@ function PaymentQrPh() {
         const paymentData = paymentSnap.data();
         if (paymentData.status === 'completed') {
           setStatus('success');
-          setMessage('Payment and booking confirmed by port staff.');
+          setMessage('Payment received and booking confirmed.');
           if (paymentData.bookingId) {
             notifyPaymentSuccess({
               paymentId,
@@ -130,12 +176,11 @@ function PaymentQrPh() {
         }
 
         if (paymentData.paymongoStatus === 'paid') {
-          setStatus('success');
-          setMessage('Payment received. Your booking is waiting for confirmation by port staff.');
+          await markPaid(paymentRef);
           return;
         }
 
-        if (paymentData.status === 'failed') {
+        if (['failed', 'cancelled'].includes(paymentData.status)) {
           setStatus('error');
           setMessage('This payment expired and the booking was cancelled. Please book again.');
           return;
@@ -152,7 +197,7 @@ function PaymentQrPh() {
         const refreshedSnap = await getDoc(paymentRef);
         if (refreshedSnap.exists()) {
           const refreshedData = refreshedSnap.data();
-          if (refreshedData.status === 'failed') {
+          if (['failed', 'cancelled'].includes(refreshedData.status)) {
             setStatus('error');
             setMessage('This payment expired and the booking was cancelled. Please book again.');
             return;
@@ -167,43 +212,30 @@ function PaymentQrPh() {
     pollStatus();
     const intervalId = setInterval(pollStatus, 3000);
     return () => clearInterval(intervalId);
-  }, [paymentId, paymentIntentId, status]);
-
-  const handleRefreshQr = async () => {
-    if (!paymentIntentId || refreshingQr) {
-      return;
-    }
-
-    setRefreshingQr(true);
-    setQrLoadError(false);
-
-    try {
-      await refreshQrPhCheckout(paymentIntentId);
-      setQrImageKey(Date.now());
-      setMessage('New QR code generated. Scan it with GCash.');
-    } catch (error) {
-      setQrLoadError(true);
-      setMessage(error.message || 'Unable to refresh QR code.');
-    } finally {
-      setRefreshingQr(false);
-    }
-  };
+  }, [paymentId, paymentIntentId, status, bookingId]);
 
   const apiQrSrc = paymentIntentId ? getQrPhImageUrl(paymentIntentId, qrImageKey) : '';
   const displayQrSrc =
     qrLoadError && fallbackQrImageUrl ? fallbackQrImageUrl : apiQrSrc || fallbackQrImageUrl;
-  const showQr = Boolean(displayQrSrc);
+  const secondsRemaining = paymentExpiresAt
+    ? Math.max(0, Math.ceil((paymentExpiresAt - countdownNow) / 1000))
+    : null;
+  const showQr = Boolean(displayQrSrc) && secondsRemaining !== 0;
+  const countdownLabel = secondsRemaining === null
+    ? `${PAYMENT_QR_VALID_MINUTES}:00`
+    : `${String(Math.floor(secondsRemaining / 60)).padStart(2, '0')}:${String(secondsRemaining % 60).padStart(2, '0')}`;
 
   const statusColor = status === 'success' ? '#2e7d32' : status === 'error' ? '#c62828' : '#1565c0';
 
   return (
     <div
       style={{
-        minHeight: '100vh',
+        minHeight: 'calc(100vh - 70px)',
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'center',
-        padding: '20px',
+        padding: '90px 20px 20px',
+        boxSizing: 'border-box',
         background:
           "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed",
       }}
@@ -302,7 +334,9 @@ function PaymentQrPh() {
                   </div>
                 ) : (
                   <p style={{ color: '#c62828', marginBottom: '16px' }}>
-                    QR code unavailable. Please try booking again or tap New QR Code.
+                    {secondsRemaining === 0
+                      ? 'QR code expired. Checking your booking cancellation status...'
+                      : 'QR code unavailable. Please return to Manage Booking for help.'}
                   </p>
                 )}
 
@@ -324,19 +358,12 @@ function PaymentQrPh() {
                       Download QR
                     </a>
                   )}
-                  {paymentIntentId && (
-                    <button
-                      className="btn btn-outline-secondary"
-                      onClick={handleRefreshQr}
-                      disabled={refreshingQr}
-                    >
-                      {refreshingQr ? 'Refreshing...' : 'New QR Code'}
-                    </button>
-                  )}
                 </div>
 
-                <p style={{ color: '#ef6c00', fontSize: '0.85rem', marginBottom: 0 }}>
-                  QR code expires in {PAYMENT_QR_VALID_MINUTES} minutes. This page updates automatically after payment.
+                <p style={{ color: secondsRemaining === 0 ? '#c62828' : '#ef6c00', fontSize: '0.85rem', marginBottom: 0 }}>
+                  {secondsRemaining === 0
+                    ? 'QR expired. Your booking is being checked for automatic cancellation.'
+                    : `QR expires in ${countdownLabel}. This page updates automatically after payment.`}
                 </p>
               </>
             )}

@@ -383,6 +383,19 @@ function Schedule() {
                       textTransform: "uppercase"
                     }}
                   >
+                    Payment
+                  </th>
+                  <th
+                    style={{
+                      padding: cellPadding,
+                      textAlign: "left",
+                      fontWeight: 700,
+                      color: "white",
+                      fontSize: headFontSize,
+                      letterSpacing: "0.5px",
+                      textTransform: "uppercase"
+                    }}
+                  >
                     Status
                   </th>
                 </tr>
@@ -423,6 +436,9 @@ function Schedule() {
                     </td>
                     <td style={{ padding: cellPadding, color: "#333", fontSize: bodyFontSize }}>
                       {formatTime12Hour(trip.arrival)}
+                    </td>
+                    <td style={{ padding: cellPadding, color: "#333", fontSize: bodyFontSize, fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {(trip.paymentMethod || (trip.allowPayLater ? "pay_later" : "gcash")) === "pay_later" ? "PayLater" : "GCash"}
                     </td>
                     <td style={{ padding: cellPadding }}>
                       <span

@@ -11,6 +11,7 @@ import "./Notifications.css";
 
 function UserNotifications() {
   const [notifications, setNotifications] = useState([]);
+  const [notificationLoadError, setNotificationLoadError] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [processingAction, setProcessingAction] = useState({});
@@ -51,7 +52,11 @@ function UserNotifications() {
         createdAt: doc.data().createdAt?.toDate?.() || new Date()
       }));
       notificationList.sort((a, b) => b.createdAt - a.createdAt);
+      setNotificationLoadError("");
       setNotifications(notificationList);
+    }, (error) => {
+      console.error("Error loading user notifications:", error);
+      setNotificationLoadError(error.message || "Unable to load notifications.");
     });
 
     return () => unsubscribe();
@@ -178,9 +183,9 @@ function UserNotifications() {
         userEmail: user.email,
       };
 
-      await addDoc(collection(db, "refund_requests"), refundData);
+      const refundRequestRef = await addDoc(collection(db, "refund_requests"), refundData);
 
-      notifyRefundRequest(refundData, refundData.boat).catch((error) =>
+      notifyRefundRequest({ ...refundData, id: refundRequestRef.id }, refundData.boat).catch((error) =>
         console.warn("Refund admin notification failed:", error)
       );
 
@@ -241,6 +246,14 @@ function UserNotifications() {
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
           </svg>
         );
+      case "trip_departed":
+      case "trip_completed":
+        return (
+          <svg style={iconStyle} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" color="#2e7d32">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="m8 12 2.5 2.5L16 9"/>
+          </svg>
+        );
       case "announcement":
         return (
           <svg style={iconStyle} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" color="#4caf50">
@@ -271,7 +284,12 @@ function UserNotifications() {
 
         {/* Notifications List */}
         <div className="notifications-list">
-          {notifications.length === 0 ? (
+          {notificationLoadError ? (
+            <div className="notifications-empty" role="alert">
+              <h2>Unable to load notifications</h2>
+              <p>{notificationLoadError}</p>
+            </div>
+          ) : notifications.length === 0 ? (
             <div className="notifications-empty">
               <span className="notifications-empty-icon" aria-hidden="true">✉</span>
               <h2>No notifications yet</h2>

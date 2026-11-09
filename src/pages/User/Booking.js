@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { db } from "../../firebase";
 import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { FiAnchor, FiCalendar, FiClock, FiMapPin, FiTag, FiUser } from "react-icons/fi";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import BookingDetails from "./BookingDetails";
 
@@ -8,9 +9,9 @@ function Booking({ userId, userType }) {
   const [trips, setTrips] = useState([]);
   const [discounts, setDiscounts] = useState({});
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [bookingCounts, setBookingCounts] = useState({});
   const [bookingCountsLoaded, setBookingCountsLoaded] = useState(false);
-  const [expandedTrips, setExpandedTrips] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [showModal, setShowModal] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState(null);
@@ -126,6 +127,14 @@ function Booking({ userId, userType }) {
 
     return matchesSearch && isBookable && !isTripDateInPast(trip.date);
   });
+  const tripsPerPage = 6;
+  const totalPages = Math.ceil(filteredTrips.length / tripsPerPage);
+  const pageStartIndex = (currentPage - 1) * tripsPerPage;
+  const visibleTrips = filteredTrips.slice(pageStartIndex, pageStartIndex + tripsPerPage);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, Math.max(1, totalPages)));
+  }, [totalPages]);
 
   const handleBookClick = (trip) => {
     if (isTripDateInPast(trip?.date)) {
@@ -140,25 +149,6 @@ function Booking({ userId, userType }) {
   const handleCloseModal = () => {
     setShowModal(false);
     setSelectedTrip(null);
-  };
-
-  const handleToggleInfo = (tripId) => {
-    setExpandedTrips((prev) => ({
-      ...prev,
-      [tripId]: !prev[tripId]
-    }));
-  };
-
-  const getStatusBadgeColor = (status) => {
-    if (!status) return "#999";
-    const statusLower = status.toLowerCase();
-    if (statusLower === "upcoming") return "#2196f3";
-    if (statusLower === "boarding") return "#4caf50";
-    if (statusLower === "depart") return "#ff7043";
-    if (statusLower === "available") return "#26c6da";
-    if (statusLower === "limited") return "#ffc107";
-    if (statusLower === "full" || statusLower === "cancelled") return "#f44336";
-    return "#999";
   };
 
   const getAvailableSpots = (trip) => {
@@ -238,7 +228,10 @@ function Booking({ userId, userType }) {
             type="text"
             placeholder="Search by trip name, boat, or route..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setCurrentPage(1);
+            }}
             style={{
               width: "100%",
               padding: isMobile ? "9px 10px" : "13px 16px",
@@ -278,260 +271,228 @@ function Booking({ userId, userType }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(auto-fill, minmax(360px, 1fr))",
-              gap: isMobile ? "12px" : "28px",
+              gridTemplateColumns: isMobile
+                ? "repeat(auto-fit, minmax(min(100%, 165px), 1fr))"
+                : "repeat(auto-fit, minmax(min(100%, 520px), 1fr))",
+              gap: isMobile ? "12px" : "20px",
               paddingBottom: isMobile ? "8px" : "0"
             }}
           >
-            {filteredTrips.map((trip) => (
+            {visibleTrips.map((trip) => (
               <div
                 key={trip.id}
                 style={{
                   background: "#ffffff",
-                  borderRadius: "12px",
-                  border: "1px solid #e0e0e0",
+                  display: "flex",
+                  flexDirection: isMobile ? "column" : "row",
+                  alignItems: isMobile ? "stretch" : "stretch",
+                  gap: isMobile ? "7px" : "14px",
+                  padding: isMobile ? "7px" : "10px",
+                  height: isMobile ? "auto" : "184px",
+                  minHeight: isMobile ? "278px" : undefined,
+                  boxSizing: "border-box",
+                  borderRadius: "14px",
+                  border: "1px solid #d5e5f4",
                   overflow: "hidden",
                   transition: "all 0.3s ease",
-                  boxShadow: "0 2px 8px rgba(0, 0, 0, 0.06)"
+                  boxShadow: "0 3px 12px rgba(24, 73, 125, 0.1)",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "#2196f3";
-                  e.currentTarget.style.transform = "translateY(-4px)";
-                  e.currentTarget.style.boxShadow = "0 12px 24px rgba(0, 0, 0, 0.12)";
+                  e.currentTarget.style.borderColor = "#8abce9";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.boxShadow = "0 8px 18px rgba(24, 73, 125, 0.15)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "#e0e0e0";
+                  e.currentTarget.style.borderColor = "#d5e5f4";
                   e.currentTarget.style.transform = "translateY(0)";
-                  e.currentTarget.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.06)";
+                  e.currentTarget.style.boxShadow = "0 3px 12px rgba(24, 73, 125, 0.1)";
                 }}
               >
                 {(() => {
-                  const isExpanded = !!expandedTrips[trip.id];
+                  const availableSpots = getAvailableSpots(trip);
                   const isUnavailable =
                     !bookingCountsLoaded ||
-                    getAvailableSpots(trip) <= 0 ||
-                    trip.status?.toLowerCase() === "departed" ||
-                    trip.status?.toLowerCase() === "cancelled" ||
-                    trip.status?.toLowerCase() === "boarding";
+                    availableSpots <= 0 ||
+                    ["departed", "cancelled", "boarding"].includes(trip.status?.toLowerCase());
+                  const dateValue = trip.date?.toDate ? trip.date.toDate() : new Date(`${trip.date}T12:00:00`);
+                  const formattedDate = trip.date && !Number.isNaN(dateValue.getTime())
+                    ? dateValue.toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })
+                    : trip.date || "Date TBA";
+                  const paymentMethod = trip.paymentMethod || (trip.allowPayLater ? "pay_later" : "gcash");
+                  const paymentLabel = paymentMethod === "pay_later" ? "Pay Later" : "GCash";
+                  const routeParts = String(trip.routeDirection || "").split(/\s*[-–→]\s*/);
+                  const infoStyle = { color: "#25476d", fontSize: isMobile ? "0.66rem" : "0.78rem", fontWeight: 600, lineHeight: 1.3, minWidth: 0 };
+                  const iconStyle = { flex: "0 0 auto", width: isMobile ? 13 : 14, height: isMobile ? 13 : 14, color: "#0756ad", strokeWidth: 2.5 };
 
                   return (
                     <>
-                <div
-                  style={{
-                    background: "linear-gradient(135deg, #1e88e5 0%, #1565c0 100%)",
-                    color: "white",
-                    padding: isMobile ? "10px 10px" : "15px 17px"
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: isMobile ? "0.78rem" : "1rem",
-                      fontWeight: 700,
-                      marginBottom: "3px",
-                      color: "white",
-                      letterSpacing: "0.2px"
-                    }}
-                  >
-                    {trip.name}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: isMobile ? "0.62rem" : "0.75rem",
-                      color: "rgba(255,255,255,0.95)",
-                      fontWeight: 500
-                    }}
-                  >
-                    {trip.routeDirection}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    width: "100%",
-                    height: isMobile ? "112px" : "180px",
-                    background: "#f0f0f0",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    overflow: "hidden"
-                  }}
-                >
-                  {trip.boatImage ? (
-                    <img
-                      src={trip.boatImage}
-                      alt={trip.name}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                        objectPosition: "center"
-                      }}
-                    />
-                  ) : (
-                    <div style={{ textAlign: "center", color: "#999", fontSize: isMobile ? "0.62rem" : "0.9rem", padding: isMobile ? "0 8px" : "0" }}>
-                      <div style={{ marginBottom: "8px", fontSize: isMobile ? "1.15rem" : "2rem" }}></div>
-                      <div>No boat image available</div>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ padding: isMobile ? "10px" : "15px 17px" }}>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: isMobile ? "8px" : "11px",
-                      fontSize: isMobile ? "0.64rem" : "0.82rem",
-                      marginBottom: "10px"
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 700, color: "#1e88e5", marginBottom: "2px", fontSize: isMobile ? "0.5rem" : "0.65rem", textTransform: "uppercase", letterSpacing: "0.4px" }}>Boat</div>
-                        <div style={{ color: "#222", fontSize: isMobile ? "0.68rem" : "0.93rem", fontWeight: 600 }}>{trip.boat}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 700, color: "#1e88e5", marginBottom: "2px", fontSize: isMobile ? "0.5rem" : "0.65rem", textTransform: "uppercase", letterSpacing: "0.4px" }}>Date</div>
-                      <div style={{ color: "#222", fontSize: isMobile ? "0.68rem" : "0.93rem", fontWeight: 600 }}>{trip.date}</div>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "flex-end",
-                      alignItems: "center",
-                      marginBottom: isExpanded ? (isMobile ? "10px" : "12px") : "10px"
-                    }}
-                  >
-                    <button
-                      onClick={() => handleToggleInfo(trip.id)}
-                      style={{
-                        padding: 0,
-                        background: "transparent",
-                        border: "none",
-                        color: "#1565c0",
-                        fontWeight: 700,
-                        fontSize: isMobile ? "0.64rem" : "0.82rem",
-                        cursor: "pointer",
-                        textDecoration: "underline",
-                        textUnderlineOffset: "2px",
-                        whiteSpace: "nowrap",
-                        flexShrink: 0
-                      }}
-                    >
-                      {isExpanded ? "See less" : "See more"}
-                    </button>
-                  </div>
-
-                  {isExpanded && (
-                    <div style={{ marginBottom: isMobile ? "10px" : "15px" }}>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr",
-                          gap: isMobile ? "8px" : "11px",
-                          fontSize: isMobile ? "0.64rem" : "0.82rem"
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: 700, color: "#1e88e5", marginBottom: "2px", fontSize: isMobile ? "0.5rem" : "0.65rem", textTransform: "uppercase", letterSpacing: "0.4px" }}>Depart</div>
-                          <div style={{ color: "#222", fontSize: isMobile ? "0.68rem" : "0.93rem", fontWeight: 600 }}>{formatTime12Hour(trip.departure)}</div>
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 700, color: "#1e88e5", marginBottom: "2px", fontSize: isMobile ? "0.5rem" : "0.65rem", textTransform: "uppercase", letterSpacing: "0.4px" }}>Arrive</div>
-                          <div style={{ color: "#222", fontSize: isMobile ? "0.68rem" : "0.93rem", fontWeight: 600 }}>{formatTime12Hour(trip.arrival)}</div>
-                        </div>
+                      <div style={{
+                        position: "relative",
+                        flex: isMobile ? "0 0 94px" : "0 0 38%",
+                        width: isMobile ? "100%" : undefined,
+                        minWidth: isMobile ? 0 : "145px",
+                        maxWidth: isMobile ? "none" : "220px",
+                        height: isMobile ? "94px" : "100%",
+                        overflow: "hidden",
+                        borderRadius: isMobile ? "9px" : "9px",
+                        background: "#e8f1f8",
+                      }}>
+                        {trip.boatImage ? (
+                          <img src={trip.boatImage} alt={trip.name} style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <div style={{ display: "grid", placeItems: "center", height: "100%", padding: 8, color: "#718096", fontSize: isMobile ? "0.65rem" : "0.8rem", textAlign: "center" }}>
+                            No boat image available
+                          </div>
+                        )}
+                        {isMobile && (
+                          <span style={{
+                            position: "absolute",
+                            top: 6,
+                            right: 6,
+                            padding: "3px 7px",
+                            borderRadius: 12,
+                            background: paymentMethod === "pay_later" ? "#fff0c2" : "#d9f2e3",
+                            color: paymentMethod === "pay_later" ? "#805b00" : "#176b3a",
+                            fontSize: "0.62rem",
+                            fontWeight: 800,
+                            lineHeight: 1.2,
+                            whiteSpace: "nowrap",
+                            boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
+                          }}>{paymentLabel}</span>
+                        )}
                       </div>
-                    </div>
-                  )}
-
-                  {isExpanded && (
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns:
-                          trip.price === 0 || trip.price
-                            ? "1fr 1fr 1fr"
-                            : "1fr 1fr",
-                        gap: isMobile ? "8px" : "11px",
-                        paddingTop: isMobile ? "8px" : "11px",
-                        borderTop: "1px solid #e8e8e8",
-                        marginBottom: isMobile ? "10px" : "15px"
-                      }}
-                    >
-                      {(trip.price === 0 || trip.price) && (
-                        <div>
-                          <div style={{ fontWeight: 700, color: "#1e88e5", fontSize: isMobile ? "0.5rem" : "0.65rem", marginBottom: "2px", textTransform: "uppercase", letterSpacing: "0.4px" }}>Price</div>
-                          <div style={{ color: "#1e88e5", fontSize: isMobile ? "0.82rem" : "1.15rem", fontWeight: 800 }}>₱{Number(trip.price).toFixed(2)}</div>
+                      <div style={{ display: "flex", flex: "1 1 auto", flexDirection: "column", justifyContent: "flex-start", minWidth: 0, gap: isMobile ? 5 : 6, padding: isMobile ? "0 1px 1px" : "1px 2px 1px 0" }}>
+                        <div style={{ minWidth: 0, padding: isMobile ? "5px 6px" : "7px 9px", borderRadius: 8, background: "#edf5fc" }}>
+                          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 5 }}>
+                            <div style={{ color: "#0756ad", fontSize: isMobile ? "0.76rem" : "0.88rem", fontWeight: 800, lineHeight: 1.2, overflowWrap: "anywhere", minWidth: 0 }}>{trip.name}</div>
+                            {!isMobile && <span style={{
+                              flexShrink: 0,
+                              padding: "3px 6px",
+                              borderRadius: 5,
+                              background: paymentMethod === "pay_later" ? "#fff0c2" : "#d9f2e3",
+                              color: paymentMethod === "pay_later" ? "#805b00" : "#176b3a",
+                              fontSize: "0.64rem",
+                              fontWeight: 700,
+                              lineHeight: 1.2,
+                              whiteSpace: "nowrap",
+                            }}>{paymentLabel}</span>}
+                          </div>
+                          {isMobile ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4, color: "#1d5fa7", fontSize: "0.65rem", fontWeight: 700, lineHeight: 1.2, minWidth: 0 }}>
+                              <FiMapPin style={iconStyle} />
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {routeParts.length > 1 ? <>{routeParts[0]} <span style={{ padding: "0 3px" }}>→</span> {routeParts.slice(1).join(" - ")}</> : trip.routeDirection || "Route TBA"}
+                              </span>
+                            </div>
+                          ) : (
+                            <div style={{ marginTop: 4, color: "#1d5fa7", fontSize: "0.72rem", fontWeight: 600, lineHeight: 1.25, overflowWrap: "anywhere" }}>{trip.routeDirection || "Route TBA"}</div>
+                          )}
                         </div>
-                      )}
-                      <div>
-                        <div style={{ fontWeight: 700, color: "#1e88e5", fontSize: isMobile ? "0.5rem" : "0.65rem", marginBottom: "2px", textTransform: "uppercase", letterSpacing: "0.4px" }}>Available</div>
-                        <div style={{ color: "#222", fontSize: isMobile ? "0.7rem" : "1rem", fontWeight: 700 }}>{getAvailableSpots(trip)} seats</div>
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 700, color: "#1e88e5", fontSize: isMobile ? "0.5rem" : "0.65rem", marginBottom: "2px", textTransform: "uppercase", letterSpacing: "0.4px" }}>Status</div>
-                        <span
+
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: isMobile ? 3 : 4, padding: isMobile ? "0 4px" : "0 8px" }}>
+                          <div style={{ ...infoStyle, display: "flex", alignItems: "center", gap: 5 }}><FiCalendar style={iconStyle} />{formattedDate}</div>
+                          <div style={{ ...infoStyle, display: "flex", alignItems: "center", gap: 5 }}><FiClock style={iconStyle} />{formatTime12Hour(trip.departure)}{trip.arrival ? ` – ${formatTime12Hour(trip.arrival)}` : ""}</div>
+                        </div>
+
+                        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) auto auto", alignItems: "center", gap: isMobile ? 4 : 8, padding: isMobile ? "0 4px" : "0 8px" }}>
+                          <span style={{ ...infoStyle, display: "flex", alignItems: "center", gap: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><FiAnchor style={iconStyle} />{trip.boat || "Boat TBA"}</span>
+                          {isMobile ? (
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                              <span style={{ ...infoStyle, display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}><FiUser style={iconStyle} />{availableSpots} seats</span>
+                              <strong style={{ display: "flex", alignItems: "center", gap: 4, color: "#0756ad", fontSize: "0.82rem", whiteSpace: "nowrap" }}>
+                                <span style={{ height: 15, borderLeft: "1px solid #d5e0eb", marginRight: 4 }} />
+                                ₱{Number(trip.price || 0).toFixed(2)}
+                              </strong>
+                            </div>
+                          ) : (
+                            <>
+                              <span style={{ ...infoStyle, whiteSpace: "nowrap" }}>♙ &nbsp;{availableSpots}</span>
+                              <strong style={{ color: "#0756ad", fontSize: "0.95rem", whiteSpace: "nowrap" }}>
+                                ₱{Number(trip.price || 0).toFixed(2)}
+                              </strong>
+                            </>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => handleBookClick(trip)}
+                          disabled={isUnavailable}
                           style={{
-                            display: "inline-block",
-                            padding: isMobile ? "3px 6px" : "4px 9px",
-                            borderRadius: "4px",
-                            fontSize: isMobile ? "0.56rem" : "0.7rem",
+                            width: "100%",
+                            minHeight: isMobile ? 32 : 32,
+                            flexShrink: 0,
+                            marginTop: "auto",
+                            padding: isMobile ? "6px 8px" : "6px 10px",
+                            background: isUnavailable ? "#aab7c4" : "#0756ad",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: isMobile ? "9px" : "7px",
                             fontWeight: 700,
-                            backgroundColor: getStatusBadgeColor(trip.status),
-                            color: "white"
+                            fontSize: isMobile ? "0.72rem" : "0.76rem",
+                            cursor: isUnavailable ? "not-allowed" : "pointer",
+                            transition: "all 0.2s ease",
+                            letterSpacing: "0.2px",
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isUnavailable) e.currentTarget.style.background = "#064894";
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isUnavailable) e.currentTarget.style.background = "#0756ad";
                           }}
                         >
-                          {trip.status}
-                        </span>
+                          {isMobile && <FiTag style={{ width: 15, height: 15, marginRight: 6, verticalAlign: "middle" }} />}
+                          {!bookingCountsLoaded
+                            ? "Loading Availability..."
+                            : availableSpots <= 0
+                              ? "Fully Booked"
+                              : isUnavailable
+                                ? "Not Available"
+                                : "Book Now"}
+                        </button>
                       </div>
-                    </div>
-                  )}
-
-                  <button
-                    onClick={() => handleBookClick(trip)}
-                    disabled={isUnavailable}
-                    style={{
-                      width: "100%",
-                      padding: isMobile ? "8px 10px" : "10px 15px",
-                      background: isUnavailable ? "#ddd" : "#1e88e5",
-                      color: isUnavailable ? "#888" : "white",
-                      border: "none",
-                      borderRadius: "6px",
-                      fontWeight: 700,
-                      fontSize: isMobile ? "0.66rem" : "0.85rem",
-                      cursor: isUnavailable ? "not-allowed" : "pointer",
-                      transition: "all 0.3s ease",
-                      letterSpacing: "0.3px"
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isUnavailable) {
-                        e.target.style.background = "#1565c0";
-                        e.target.style.boxShadow = "0 4px 12px rgba(30, 136, 229, 0.35)";
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isUnavailable) {
-                        e.target.style.background = "#1e88e5";
-                        e.target.style.boxShadow = "none";
-                      }
-                    }}
-                  >
-                    {!bookingCountsLoaded
-                      ? "Loading Availability..."
-                      : getAvailableSpots(trip) <= 0
-                        ? "Fully Booked"
-                        : isUnavailable
-                          ? "Not Available"
-                          : "Book Now"}
-                  </button>
-
-                </div>
                     </>
                   );
                 })()}
               </div>
             ))}
+          </div>
+        )}
+        {totalPages > 1 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: isMobile ? "10px" : "16px",
+              marginTop: isMobile ? "14px" : "22px",
+              paddingBottom: isMobile ? "8px" : "0",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+              style={bookingPaginationButtonStyle(currentPage === 1, isMobile)}
+            >
+              Previous
+            </button>
+            <span style={{
+              color: "#25476d",
+              fontSize: isMobile ? "0.72rem" : "0.85rem",
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}>
+              {pageStartIndex + 1}–{Math.min(pageStartIndex + tripsPerPage, filteredTrips.length)} of {filteredTrips.length}
+              {" · "}Page {currentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={currentPage === totalPages}
+              style={bookingPaginationButtonStyle(currentPage === totalPages, isMobile)}
+            >
+              Next
+            </button>
           </div>
         )}
       </div>
@@ -549,23 +510,23 @@ function Booking({ userId, userType }) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            zIndex: 1000,
-            padding: isMobile ? "12px" : "20px",
-            overflow: "auto"
+            zIndex: 1200,
+            padding: isMobile ? "10px" : "20px",
+            overflowY: "auto"
           }}
-          onClick={handleCloseModal}
         >
           {/* Modal Container */}
           <div
             style={{
               background: "white",
-              borderRadius: "12px",
-              maxWidth: isMobile ? "100%" : "600px",
+              borderRadius: isMobile ? "14px" : "12px",
+              maxWidth: isMobile ? "min(94vw, 460px)" : "560px",
               width: "100%",
-              maxHeight: isMobile ? "90vh" : "85vh",
-              overflow: "auto",
+              maxHeight: isMobile ? "82dvh" : "82vh",
+              overflowY: "auto",
               boxShadow: "0 20px 60px rgba(0, 0, 0, 0.3)",
-              position: "relative"
+              position: "relative",
+              boxSizing: "border-box"
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -588,7 +549,7 @@ function Booking({ userId, userType }) {
                 color: "#666",
                 zIndex: 1001,
                 float: "right",
-                margin: "12px 12px 0 0",
+                margin: isMobile ? "8px 8px 0 0" : "12px 12px 0 0",
                 transition: "all 0.2s ease"
               }}
               onMouseEnter={(e) => {
@@ -604,7 +565,7 @@ function Booking({ userId, userType }) {
               ×
             </button>
             
-            <div style={{ clear: "both", padding: "20px" }}>
+            <div style={{ clear: "both", padding: isMobile ? "10px" : "16px" }}>
               <BookingDetails
                 trip={selectedTrip}
                 userId={userId}
@@ -619,6 +580,19 @@ function Booking({ userId, userType }) {
       )}
     </div>
   );
+}
+
+function bookingPaginationButtonStyle(disabled, isMobile) {
+  return {
+    padding: isMobile ? "7px 10px" : "8px 14px",
+    border: "1px solid #cbd8e6",
+    borderRadius: "7px",
+    background: disabled ? "#f3f6f9" : "#ffffff",
+    color: disabled ? "#9aa8b6" : "#0756ad",
+    fontWeight: 700,
+    fontSize: isMobile ? "0.7rem" : "0.82rem",
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
 }
 
 export default Booking;
