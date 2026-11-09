@@ -10,12 +10,26 @@ import {
   query,
   where,
   writeBatch,
+  onSnapshot,
 } from 'firebase/firestore';
 import AdminLayout from './AdminLayout';
 import { QRCodeCanvas } from 'qrcode.react';
 import { notifyPaymentSuccess, notifyPassengerRefundStatus } from '../../utils/notificationHelper';
 import { useAuthReloadKey, useAuthUser } from '../../hooks/useAuthUser';
 import { getStaffAccount } from '../../utils/staffAccount';
+import { checkPaymentExpiry } from '../../utils/paymentExpiryCheck';
+
+const getPaymentMethodLabel = (method, paymentMode) => {
+  if (String(paymentMode || '').toLowerCase().replace(/[\s_-]/g, '') === 'paylater') {
+    return 'Pay Later';
+  }
+
+  const normalizedMethod = String(method || '').trim().toLowerCase().replace(/[\s_-]/g, '');
+  if (normalizedMethod === 'cash' || normalizedMethod.includes('gcash')) return 'GCash';
+  if (normalizedMethod === 'paylater') return 'Pay Later';
+  if (normalizedMethod === 'paymaya') return 'PayMaya';
+  return method || 'Unknown';
+};
 
 function PaymentManagement() {
   const [adminData, setAdminData] = useState(null);
@@ -28,14 +42,13 @@ function PaymentManagement() {
   });
   const [qrModal, setQrModal] = useState({ isOpen: false, paymentId: null, bookingId: null });
   const [currentPaymentPage, setCurrentPaymentPage] = useState(1);
-  const [currentHistoryPage, setCurrentHistoryPage] = useState(1);
-  const [historyDate, setHistoryDate] = useState('');
-  const [historyRoute, setHistoryRoute] = useState('all');
-  const [searchedHistoryDate, setSearchedHistoryDate] = useState('');
-  const [searchedHistoryRoute, setSearchedHistoryRoute] = useState('all');
+  const [transactionDate, setTransactionDate] = useState('');
+  const [transactionRoute, setTransactionRoute] = useState('all');
+  const [transactionStatus, setTransactionStatus] = useState('all');
+  const [searchedTransactionDate, setSearchedTransactionDate] = useState('');
+  const [searchedTransactionRoute, setSearchedTransactionRoute] = useState('all');
+  const [searchedTransactionStatus, setSearchedTransactionStatus] = useState('all');
   const [transactionNameSearch, setTransactionNameSearch] = useState('');
-  const [historyNameSearch, setHistoryNameSearch] = useState('');
-  const [activePaymentView, setActivePaymentView] = useState('transactions');
   const [routeOptions, setRouteOptions] = useState([]);
   const [isMobile, setIsMobile] = useState(false);
   const { user, authReady } = useAuthUser();
@@ -44,50 +57,44 @@ function PaymentManagement() {
   // Pagination logic
   const itemsPerPage = 10;
 
-  // For transactions: exclude completed payments
   const matchesCustomerName = (payment, searchTerm) =>
     !searchTerm.trim() ||
     String(payment.customerName || payment.passengerName || '')
       .toLowerCase()
       .includes(searchTerm.trim().toLowerCase());
   const transactionPayments = payments.filter(
-    (payment) =>
-      payment.status !== 'completed' && matchesCustomerName(payment, transactionNameSearch)
+    (payment) => {
+      if (!matchesCustomerName(payment, transactionNameSearch)) {
+        return false;
+      }
+      if (
+        searchedTransactionRoute !== 'all' &&
+        (payment.routeDirection || payment.route) !== searchedTransactionRoute
+      ) {
+        return false;
+      }
+      if (searchedTransactionStatus !== 'all') {
+        const status = payment.status === 'completed' ? 'confirmed' : payment.status || 'pending';
+        if (status !== searchedTransactionStatus) return false;
+      }
+      if (!searchedTransactionDate) return true;
+
+      const rawDate = payment.createdAt?.toDate?.() || payment.createdAt;
+      const createdDate = rawDate ? new Date(rawDate) : null;
+      if (!createdDate || Number.isNaN(createdDate.getTime())) return false;
+
+      const dateKey = [
+        createdDate.getFullYear(),
+        String(createdDate.getMonth() + 1).padStart(2, '0'),
+        String(createdDate.getDate()).padStart(2, '0'),
+      ].join('-');
+      return dateKey === searchedTransactionDate;
+    }
   );
   const totalPaymentPages = Math.ceil(transactionPayments.length / itemsPerPage);
   const startIndex = (currentPaymentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const paginatedPayments = transactionPayments.slice(startIndex, endIndex);
-  const isHistorySearch = activePaymentView === 'history';
-
-  // History logic - show completed payments, optionally filtered by date and route
-  const completedPayments = payments.filter((payment) => {
-    if (payment.status !== 'completed') return false;
-    if (!matchesCustomerName(payment, historyNameSearch)) return false;
-    if (
-      searchedHistoryRoute !== 'all' &&
-      (payment.routeDirection || payment.route) !== searchedHistoryRoute
-    ) {
-      return false;
-    }
-    if (!searchedHistoryDate) return true;
-
-    const rawDate = payment.createdAt?.toDate?.() || payment.createdAt;
-    const createdDate = rawDate ? new Date(rawDate) : null;
-    if (!createdDate || Number.isNaN(createdDate.getTime())) return false;
-
-    const dateKey = [
-      createdDate.getFullYear(),
-      String(createdDate.getMonth() + 1).padStart(2, '0'),
-      String(createdDate.getDate()).padStart(2, '0'),
-    ].join('-');
-    return dateKey === searchedHistoryDate;
-  });
-  const totalHistoryPages = Math.ceil(completedPayments.length / itemsPerPage);
-  const historyStartIndex = (currentHistoryPage - 1) * itemsPerPage;
-  const historyEndIndex = historyStartIndex + itemsPerPage;
-  const paginatedHistory = completedPayments.slice(historyStartIndex, historyEndIndex);
-
   const getPaymentStatusLabel = (payment) => {
     if (payment.paymongoStatus === 'paid' && payment.status === 'pending') {
       return 'Paid - Awaiting Port Confirmation';
@@ -111,6 +118,40 @@ function PaymentManagement() {
 
   useEffect(() => {
     if (!authReady) return;
+
+    let isCurrent = true;
+    let unsubscribePayments;
+    let paymentExpiryInterval;
+    let latestPaymentDocs = [];
+    const expiryChecksInProgress = new Set();
+
+    const checkExpiredPayments = () => {
+      latestPaymentDocs.forEach((paymentDoc) => {
+        const payment = paymentDoc.data();
+        const expiryValue = payment.paymentExpiresAt;
+        const expiresAt = expiryValue?.toDate?.() || (expiryValue ? new Date(expiryValue) : null);
+
+        if (
+          payment.status !== 'pending' ||
+          payment.paymongoStatus === 'paid' ||
+          !expiresAt ||
+          Number.isNaN(expiresAt.getTime()) ||
+          expiresAt.getTime() > Date.now() ||
+          expiryChecksInProgress.has(paymentDoc.id)
+        ) {
+          return;
+        }
+
+        expiryChecksInProgress.add(paymentDoc.id);
+        checkPaymentExpiry(paymentDoc.id)
+          .catch((error) => {
+            console.error(`Unable to expire payment ${paymentDoc.id}:`, error);
+          })
+          .finally(() => {
+            expiryChecksInProgress.delete(paymentDoc.id);
+          });
+      });
+    };
 
     const fetchAdminData = async () => {
       if (!user) {
@@ -139,10 +180,11 @@ function PaymentManagement() {
               console.warn('Staff account has no assigned boat; payment data was not loaded.');
               return;
             }
-            const [paymentsSnap, bookingsSnap] = await Promise.all([
-              getDocs(query(collection(db, 'payments'), where('boat', '==', boatName))),
-              getDocs(query(collection(db, 'bookings'), where('boat', '==', boatName))),
-            ]);
+            const bookingsSnap = await getDocs(
+              query(collection(db, 'bookings'), where('boat', '==', boatName))
+            );
+            if (!isCurrent) return;
+
             const bookingsById = new Map(
               bookingsSnap.docs.map((bookingDoc) => [bookingDoc.id, bookingDoc.data()])
             );
@@ -152,25 +194,48 @@ function PaymentManagement() {
             setRouteOptions(
               [...new Set([...(account.data.availableRoutes || []), ...bookingRoutes])].sort()
             );
-            const paymentsList = paymentsSnap.docs
-              .map((doc) => ({
-                id: doc.id,
-                ...doc.data(),
-                customerName:
-                  doc.data().customerName ||
-                  bookingsById.get(doc.data().bookingId)?.customerName ||
-                  bookingsById.get(doc.data().bookingId)?.bookedByName ||
-                  '',
-                routeDirection:
-                  doc.data().routeDirection ||
-                  bookingsById.get(doc.data().bookingId)?.routeDirection ||
-                  bookingsById.get(doc.data().bookingId)?.route ||
-                  doc.data().route ||
-                  '',
-              }))
-              .sort((a, b) => b.createdAt - a.createdAt);
-            setPayments(paymentsList);
-            console.log('Payments found:', paymentsList.length);
+            unsubscribePayments = onSnapshot(
+              query(collection(db, 'payments'), where('boat', '==', boatName)),
+              (paymentsSnap) => {
+                if (!isCurrent) return;
+
+                latestPaymentDocs = paymentsSnap.docs;
+                const paymentsList = paymentsSnap.docs
+                  .map((paymentDoc) => {
+                    const payment = paymentDoc.data();
+                    const booking = bookingsById.get(payment.bookingId);
+                    const paymentMode = payment.paymentMode || booking?.paymentMode;
+                    return {
+                      id: paymentDoc.id,
+                      ...payment,
+                      method: getPaymentMethodLabel(
+                        payment.method || booking?.payment,
+                        paymentMode
+                      ),
+                      paymentMode,
+                      customerName:
+                        payment.customerName ||
+                        booking?.customerName ||
+                        booking?.bookedByName ||
+                        '',
+                      routeDirection:
+                        payment.routeDirection ||
+                        booking?.routeDirection ||
+                        booking?.route ||
+                        payment.route ||
+                        '',
+                    };
+                  })
+                  .sort((a, b) => b.createdAt - a.createdAt);
+                setPayments(paymentsList);
+                console.log('Payments found:', paymentsList.length);
+                checkExpiredPayments();
+              },
+              (error) => {
+                console.error('Error listening for payment updates:', error);
+              }
+            );
+            paymentExpiryInterval = setInterval(checkExpiredPayments, 15000);
 
             const refundsQuery = query(
               collection(db, 'refund_requests'),
@@ -195,6 +260,12 @@ function PaymentManagement() {
       }
     };
     fetchAdminData();
+
+    return () => {
+      isCurrent = false;
+      clearInterval(paymentExpiryInterval);
+      unsubscribePayments?.();
+    };
   }, [authReady, user, reloadKey]);
 
   const handleConfirmPayment = async (paymentId) => {
@@ -219,7 +290,7 @@ function PaymentManagement() {
 
       const bookingSnap = await getDoc(bookingRef);
       if (bookingSnap.exists()) {
-        notifyPaymentSuccess({
+        await notifyPaymentSuccess({
           paymentId,
           bookingId: payment.bookingId,
           notifyAdmin: false,
@@ -479,7 +550,7 @@ function PaymentManagement() {
         </p>
       )}
 
-      {/* Payment history date search */}
+      {/* Payment transaction search */}
       <div
         style={{
           background: 'white',
@@ -488,7 +559,8 @@ function PaymentManagement() {
           boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
           border: '1px solid #e0e8f0',
           marginBottom: isMobile ? '18px' : '30px',
-          maxWidth: '1100px',
+          width: '100%',
+          boxSizing: 'border-box',
         }}
       >
         <h3
@@ -499,25 +571,27 @@ function PaymentManagement() {
             margin: `0 0 ${isMobile ? '10px' : '15px'}`,
           }}
         >
-          Search Payments by Customer, Date & Route
+          Search Payment Transactions by Customer, Date, Route & Status
         </h3>
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            setSearchedHistoryDate(historyDate);
-            setSearchedHistoryRoute(historyRoute);
-            setCurrentHistoryPage(1);
-            setActivePaymentView('history');
+            setSearchedTransactionDate(transactionDate);
+            setSearchedTransactionRoute(transactionRoute);
+            setSearchedTransactionStatus(transactionStatus);
+            setCurrentPaymentPage(1);
           }}
           style={{
-            display: 'flex',
-            gap: isMobile ? '8px' : '15px',
-            alignItems: 'flex-start',
-            flexWrap: 'wrap',
+            display: 'grid',
+            gridTemplateColumns: isMobile
+              ? 'minmax(0, 1fr)'
+              : 'minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr) auto',
+            gap: isMobile ? '10px' : '16px',
+            alignItems: 'end',
             width: '100%',
           }}
         >
-          <div style={{ flex: 1, minWidth: isMobile ? '120px' : '200px' }}>
+          <div style={{ minWidth: 0 }}>
             <label
               htmlFor="payment-customer-search"
               style={{
@@ -536,15 +610,10 @@ function PaymentManagement() {
             <input
               id="payment-customer-search"
               type="search"
-              value={isHistorySearch ? historyNameSearch : transactionNameSearch}
+              value={transactionNameSearch}
               onChange={(event) => {
-                if (isHistorySearch) {
-                  setHistoryNameSearch(event.target.value);
-                  setCurrentHistoryPage(1);
-                } else {
-                  setTransactionNameSearch(event.target.value);
-                  setCurrentPaymentPage(1);
-                }
+                setTransactionNameSearch(event.target.value);
+                setCurrentPaymentPage(1);
               }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') event.preventDefault();
@@ -564,9 +633,9 @@ function PaymentManagement() {
               }}
             />
           </div>
-          <div style={{ flex: 1, minWidth: isMobile ? '120px' : '200px' }}>
+          <div style={{ minWidth: 0 }}>
             <label
-              htmlFor="payment-history-date"
+              htmlFor="payment-transaction-date"
               style={{
                 display: 'block',
                 minHeight: isMobile ? '14px' : '17px',
@@ -581,10 +650,10 @@ function PaymentManagement() {
               Choose Date
             </label>
             <input
-              id="payment-history-date"
+              id="payment-transaction-date"
               type="date"
-              value={historyDate}
-              onChange={(event) => setHistoryDate(event.target.value)}
+              value={transactionDate}
+              onChange={(event) => setTransactionDate(event.target.value)}
               style={{
                 boxSizing: 'border-box',
                 width: '100%',
@@ -599,9 +668,9 @@ function PaymentManagement() {
               }}
             />
           </div>
-          <div style={{ flex: 1, minWidth: isMobile ? '100%' : '200px' }}>
+          <div style={{ minWidth: 0 }}>
             <label
-              htmlFor="payment-history-route"
+              htmlFor="payment-transaction-route"
               style={{
                 display: 'block',
                 minHeight: isMobile ? '14px' : '17px',
@@ -616,9 +685,9 @@ function PaymentManagement() {
               Select Route
             </label>
             <select
-              id="payment-history-route"
-              value={historyRoute}
-              onChange={(event) => setHistoryRoute(event.target.value)}
+              id="payment-transaction-route"
+              value={transactionRoute}
+              onChange={(event) => setTransactionRoute(event.target.value)}
               style={{
                 boxSizing: 'border-box',
                 width: '100%',
@@ -640,65 +709,100 @@ function PaymentManagement() {
               ))}
             </select>
           </div>
-          <button
-            type="submit"
-            style={{
-              height: isMobile ? '32px' : '42px',
-              padding: isMobile ? '6px 10px' : '10px 24px',
-              border: 'none',
-              borderRadius: '6px',
-              background: '#2196f3',
-              color: '#fff',
-              fontSize: isMobile ? '0.7rem' : '0.85rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              width: isMobile ? '80px' : 'auto',
-              alignSelf: 'flex-start',
-              marginTop: isMobile ? '18px' : '25px',
-              marginLeft: isMobile ? 'auto' : '0',
-              boxSizing: 'border-box',
-            }}
-          >
-            Search
-          </button>
+          <div style={{ minWidth: 0 }}>
+            <label
+              htmlFor="payment-transaction-status"
+              style={{
+                display: 'block',
+                minHeight: isMobile ? '14px' : '17px',
+                lineHeight: isMobile ? '14px' : '17px',
+                marginBottom: isMobile ? '4px' : '8px',
+                color: '#666',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+              }}
+            >
+              Select Status
+            </label>
+            <select
+              id="payment-transaction-status"
+              value={transactionStatus}
+              onChange={(event) => setTransactionStatus(event.target.value)}
+              style={{
+                boxSizing: 'border-box',
+                width: '100%',
+                minWidth: 0,
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 8px' : '10px 12px',
+                border: '1px solid #d0d0d0',
+                borderRadius: '6px',
+                background: '#fff',
+                color: '#444',
+                fontSize: isMobile ? '0.8rem' : '1rem',
+              }}
+            >
+              <option value="all">All statuses</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="pending">Pending</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div style={{
+            display: 'flex',
+            gap: '8px',
+            width: isMobile ? '100%' : 'auto',
+            alignSelf: 'end',
+          }}>
+            <button
+              type="submit"
+              style={{
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 10px' : '10px 24px',
+                border: 'none',
+                borderRadius: '6px',
+                background: '#2196f3',
+                color: '#fff',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flex: isMobile ? 1 : 'initial',
+                boxSizing: 'border-box',
+              }}
+            >
+              Search
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTransactionNameSearch('');
+                setTransactionDate('');
+                setTransactionRoute('all');
+                setTransactionStatus('all');
+                setSearchedTransactionDate('');
+                setSearchedTransactionRoute('all');
+                setSearchedTransactionStatus('all');
+                setCurrentPaymentPage(1);
+              }}
+              style={{
+                height: isMobile ? '32px' : '42px',
+                padding: isMobile ? '6px 10px' : '10px 20px',
+                border: '1px solid #d0d0d0',
+                borderRadius: '6px',
+                background: '#fff',
+                color: '#1e3a5f',
+                fontSize: isMobile ? '0.7rem' : '0.85rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                boxSizing: 'border-box',
+              }}
+            >
+              Clear
+            </button>
+          </div>
         </form>
-      </div>
-
-      <div
-        role="tablist"
-        aria-label="Payment views"
-        style={{
-          display: 'flex',
-          gap: '10px',
-          marginBottom: isMobile ? '14px' : '20px',
-          flexWrap: 'wrap',
-        }}
-      >
-        {[
-          { id: 'transactions', label: 'Payment Transactions' },
-          { id: 'history', label: 'Payment History' },
-        ].map((view) => (
-          <button
-            key={view.id}
-            type="button"
-            role="tab"
-            aria-selected={activePaymentView === view.id}
-            onClick={() => setActivePaymentView(view.id)}
-            style={{
-              padding: isMobile ? '9px 12px' : '11px 18px',
-              border: activePaymentView === view.id ? '2px solid #2876d2' : '1px solid #b8c9dc',
-              borderRadius: '7px',
-              background: activePaymentView === view.id ? '#eaf3fc' : '#fff',
-              color: activePaymentView === view.id ? '#1b5fa7' : '#444',
-              fontWeight: 700,
-              fontSize: isMobile ? '0.8rem' : '0.95rem',
-              cursor: 'pointer',
-            }}
-          >
-            {view.label}
-          </button>
-        ))}
       </div>
 
       {/* Transactions Table */}
@@ -719,11 +823,7 @@ function PaymentManagement() {
             marginBottom: isMobile ? '15px' : '25px',
           }}
         >
-          {isHistorySearch
-            ? `Payment History${searchedHistoryDate ? `: ${searchedHistoryDate}` : ''} · ${
-                searchedHistoryRoute === 'all' ? 'All routes' : searchedHistoryRoute
-              }`
-            : 'Payment Transactions'}
+          Payment Transactions
         </h2>
         <div
           style={{
@@ -743,16 +843,6 @@ function PaymentManagement() {
                   color: 'white',
                 }}
               >
-                <th
-                  style={{
-                    padding: isMobile ? '8px 6px' : '14px 12px',
-                    textAlign: 'left',
-                    fontWeight: 700,
-                    fontSize: isMobile ? '0.7rem' : '0.9rem',
-                  }}
-                >
-                  Booking ID
-                </th>
                 <th
                   style={{
                     padding: isMobile ? '8px 6px' : '14px 12px',
@@ -826,8 +916,8 @@ function PaymentManagement() {
               </tr>
             </thead>
             <tbody>
-              {(isHistorySearch ? completedPayments.length : transactionPayments.length) > 0 ? (
-                (isHistorySearch ? paginatedHistory : paginatedPayments).map((payment, index) => {
+              {transactionPayments.length > 0 ? (
+                paginatedPayments.map((payment, index) => {
                   const createdDate = new Date(payment.createdAt?.toDate?.() || payment.createdAt);
                   const dateStr = createdDate.toLocaleDateString();
                   const timeStr = createdDate.toLocaleTimeString([], {
@@ -852,17 +942,6 @@ function PaymentManagement() {
                         e.currentTarget.style.boxShadow = 'none';
                       }}
                     >
-                      <td
-                        style={{
-                          padding: isMobile ? '8px 6px' : '12px',
-                          fontWeight: 700,
-                          color: '#333',
-                          fontSize: isMobile ? '0.7rem' : '0.85rem',
-                          fontFamily: 'monospace',
-                        }}
-                      >
-                        {payment.bookingId?.substring(0, 8)}...
-                      </td>
                       <td
                         style={{
                           padding: isMobile ? '8px 6px' : '12px',
@@ -911,9 +990,9 @@ function PaymentManagement() {
                         <span
                           style={{
                             background:
-                              payment.method === 'gcash'
+                              payment.method === 'GCash'
                                 ? '#00D4FF'
-                                : payment.method === 'paymaya'
+                                : payment.method === 'PayMaya'
                                 ? '#1F3A93'
                                 : '#FF6B35',
                             color: 'white',
@@ -924,11 +1003,7 @@ function PaymentManagement() {
                             textTransform: 'uppercase',
                           }}
                         >
-                          {payment.method === 'gcash'
-                            ? 'GCash'
-                            : payment.method === 'paymaya'
-                            ? 'PayMaya'
-                            : payment.method}
+                          {payment.method}
                         </span>
                       </td>
                       <td
@@ -1126,7 +1201,7 @@ function PaymentManagement() {
               ) : (
                 <tr>
                   <td
-                    colSpan="8"
+                    colSpan="7"
                     style={{
                       padding: '50px 20px',
                       textAlign: 'center',
@@ -1134,10 +1209,11 @@ function PaymentManagement() {
                       fontSize: '0.95rem',
                     }}
                   >
-                    {isHistorySearch
-                      ? `No completed payments found${searchedHistoryDate ? ` for ${searchedHistoryDate}` : ''}${
-                          searchedHistoryRoute === 'all' ? '.' : ` on ${searchedHistoryRoute}.`
-                        }`
+                    {transactionNameSearch ||
+                    searchedTransactionDate ||
+                    searchedTransactionRoute !== 'all' ||
+                    searchedTransactionStatus !== 'all'
+                      ? 'No payment transactions match your search filters.'
                       : `No payment data available yet for ${
                           adminData ? adminData.assignedBoat : 'this boat'
                         }.`}
@@ -1149,8 +1225,7 @@ function PaymentManagement() {
         </div>
 
         {/* Pagination Controls */}
-        {(isHistorySearch ? completedPayments.length : transactionPayments.length) >
-          itemsPerPage && (
+        {transactionPayments.length > itemsPerPage && (
           <div
             style={{
               display: 'flex',
@@ -1162,38 +1237,28 @@ function PaymentManagement() {
             }}
           >
             <button
-              onClick={() =>
-                isHistorySearch
-                  ? setCurrentHistoryPage((prev) => Math.max(1, prev - 1))
-                  : setCurrentPaymentPage((prev) => Math.max(1, prev - 1))
-              }
-              disabled={isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1}
+              onClick={() => setCurrentPaymentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPaymentPage === 1}
               style={{
-                background: (isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)
-                  ? '#ccc'
-                  : '#2196f3',
+                background: currentPaymentPage === 1 ? '#ccc' : '#2196f3',
                 color: 'white',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 fontWeight: 700,
-                cursor: (isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)
-                  ? 'not-allowed'
-                  : 'pointer',
+                cursor: currentPaymentPage === 1 ? 'not-allowed' : 'pointer',
                 fontSize: '0.9rem',
                 transition: 'all 0.3s ease',
-                opacity: (isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)
-                  ? 0.5
-                  : 1,
+                opacity: currentPaymentPage === 1 ? 0.5 : 1,
               }}
               onMouseEnter={(e) => {
-                if (!(isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)) {
+                if (currentPaymentPage !== 1) {
                   e.currentTarget.style.background = '#1976d2';
                   e.currentTarget.style.boxShadow = '0 4px 8px rgba(33,150,243,0.3)';
                 }
               }}
               onMouseLeave={(e) => {
-                if (!(isHistorySearch ? currentHistoryPage === 1 : currentPaymentPage === 1)) {
+                if (currentPaymentPage !== 1) {
                   e.currentTarget.style.background = '#2196f3';
                   e.currentTarget.style.boxShadow = 'none';
                 }
@@ -1209,67 +1274,32 @@ function PaymentManagement() {
                 color: '#666',
               }}
             >
-              Page {isHistorySearch ? currentHistoryPage : currentPaymentPage} of{' '}
-              {isHistorySearch ? totalHistoryPages : totalPaymentPages}
+              Page {currentPaymentPage} of {totalPaymentPages}
             </span>
 
             <button
-              onClick={() =>
-                isHistorySearch
-                  ? setCurrentHistoryPage((prev) => Math.min(totalHistoryPages, prev + 1))
-                  : setCurrentPaymentPage((prev) => Math.min(totalPaymentPages, prev + 1))
-              }
-              disabled={
-                isHistorySearch
-                  ? currentHistoryPage === totalHistoryPages
-                  : currentPaymentPage === totalPaymentPages
-              }
+              onClick={() => setCurrentPaymentPage((prev) => Math.min(totalPaymentPages, prev + 1))}
+              disabled={currentPaymentPage === totalPaymentPages}
               style={{
-                background: (
-                  isHistorySearch
-                    ? currentHistoryPage === totalHistoryPages
-                    : currentPaymentPage === totalPaymentPages
-                )
-                  ? '#ccc'
-                  : '#2196f3',
+                background: currentPaymentPage === totalPaymentPages ? '#ccc' : '#2196f3',
                 color: 'white',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 fontWeight: 700,
-                cursor: (
-                  isHistorySearch
-                    ? currentHistoryPage === totalHistoryPages
-                    : currentPaymentPage === totalPaymentPages
-                )
-                  ? 'not-allowed'
-                  : 'pointer',
+                cursor: currentPaymentPage === totalPaymentPages ? 'not-allowed' : 'pointer',
                 fontSize: '0.9rem',
                 transition: 'all 0.3s ease',
-                opacity: (
-                  isHistorySearch
-                    ? currentHistoryPage === totalHistoryPages
-                    : currentPaymentPage === totalPaymentPages
-                )
-                  ? 0.5
-                  : 1,
+                opacity: currentPaymentPage === totalPaymentPages ? 0.5 : 1,
               }}
               onMouseEnter={(e) => {
-                if (
-                  !(isHistorySearch
-                    ? currentHistoryPage === totalHistoryPages
-                    : currentPaymentPage === totalPaymentPages)
-                ) {
+                if (currentPaymentPage !== totalPaymentPages) {
                   e.currentTarget.style.background = '#1976d2';
                   e.currentTarget.style.boxShadow = '0 4px 8px rgba(33,150,243,0.3)';
                 }
               }}
               onMouseLeave={(e) => {
-                if (
-                  !(isHistorySearch
-                    ? currentHistoryPage === totalHistoryPages
-                    : currentPaymentPage === totalPaymentPages)
-                ) {
+                if (currentPaymentPage !== totalPaymentPages) {
                   e.currentTarget.style.background = '#2196f3';
                   e.currentTarget.style.boxShadow = 'none';
                 }

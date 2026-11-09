@@ -15,10 +15,9 @@ function ScheduleManagement() {
   const [trips, setTrips] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [scheduleView, setScheduleView] = useState("upcoming"); // "upcoming" or "history"
+  const [scheduleView, setScheduleView] = useState("upcoming");
   const [bookingCounts, setBookingCounts] = useState({}); // { scheduleId: count }
-  const [currentPageUpcoming, setCurrentPageUpcoming] = useState(1);
-  const [currentPageHistory, setCurrentPageHistory] = useState(1);
+  const [currentPage, setCurrentPage] = useState(1);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [imagePreview, setImagePreview] = useState(null);
   const [newTrip, setNewTrip] = useState({
@@ -30,10 +29,16 @@ function ScheduleManagement() {
     routeDirection: "",
     price: "",
     cargoPerKilo: "",
-    allowPayLater: false,
+    paymentMethod: "gcash",
     status: "Upcoming",
     boatImage: ""
   });
+
+  const getTripDateValue = (value) => {
+    const parsedValue = value?.toDate?.() || value;
+    const date = parsedValue instanceof Date ? parsedValue : new Date(parsedValue);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
 
   // Fetch admin info (wait for auth to be ready)
   useEffect(() => {
@@ -81,8 +86,13 @@ function ScheduleManagement() {
             createdAt: data.createdAt ? data.createdAt.toDate() : null
           };
         });
-        // Sort by date (descending)
-        tripList.sort((a, b) => new Date(b.date) - new Date(a.date));
+        tripList.sort((a, b) => {
+          const dateDifference =
+            (getTripDateValue(b.date)?.getTime() || 0) -
+            (getTripDateValue(a.date)?.getTime() || 0);
+          if (dateDifference !== 0) return dateDifference;
+          return (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0);
+        });
         setTrips(tripList);
       }, (error) => {
         console.error("Error listening to schedules:", error);
@@ -113,7 +123,7 @@ function ScheduleManagement() {
 
   const handleSaveTrip = async (e) => {
   e.preventDefault();
-    if (!adminData || isPortStaff) return;
+    if (!adminData || (isPortStaff && !editingId)) return;
 
   try {
     // Use Base64 image preview if available, otherwise use existing image or empty string
@@ -128,14 +138,24 @@ function ScheduleManagement() {
         ...newTrip,
         boatImage: boatImageToSave,
         boat: adminData.assignedBoat,
-        route: adminData.assignedRoute,
+        route: newTrip.routeDirection,
         routeDirection: newTrip.routeDirection,
         price: newTrip.price,
+        allowPayLater: newTrip.paymentMethod === "pay_later",
         cargoPerKilo: parseFloat(newTrip.cargoPerKilo) || 20
       });
 
-      // Create notification if status changed to Cancelled
-      if (oldTrip?.status !== "Cancelled" && newTrip.status === "Cancelled") {
+      const oldStatus = String(oldTrip?.status || "").trim().toLowerCase();
+      const newStatus = String(newTrip.status || "").trim().toLowerCase();
+      const tripDetails = {
+        name: newTrip.name,
+        date: newTrip.date,
+        departure: newTrip.departure,
+        arrival: newTrip.arrival,
+        boat: adminData.assignedBoat
+      };
+
+      if (oldStatus !== newStatus && newStatus === "cancelled") {
         await createTripNotifications(
           adminData.assignedBoat,
           editingId,
@@ -143,17 +163,25 @@ function ScheduleManagement() {
           "Trip Cancelled",
           `Trip "${newTrip.name}" has been cancelled.`,
           `Your trip "${newTrip.name}" on ${newTrip.date} has been cancelled. You will receive a refund.`,
-          {
-            name: newTrip.name,
-            date: newTrip.date,
-            departure: newTrip.departure,
-            arrival: newTrip.arrival,
-            boat: adminData.assignedBoat
-          }
+          tripDetails
+        );
+      } else if (oldStatus !== newStatus && ["departed", "completed"].includes(newStatus)) {
+        const statusLabel = newStatus === "departed" ? "Departed" : "Completed";
+        const notificationType = `trip_${newStatus}`;
+        const message = `Trip "${newTrip.name}" on ${newTrip.date} is now ${statusLabel.toLowerCase()}.`;
+
+        await createTripNotifications(
+          adminData.assignedBoat,
+          editingId,
+          notificationType,
+          `Trip ${statusLabel}`,
+          message,
+          message,
+          tripDetails
         );
       }
       // Create notification for other updates
-      else if (oldTrip?.status !== newTrip.status || 
+      else if (oldStatus !== newStatus ||
                oldTrip?.departure !== newTrip.departure || 
                oldTrip?.arrival !== newTrip.arrival) {
         await createTripNotifications(
@@ -163,13 +191,7 @@ function ScheduleManagement() {
           "Trip Updated",
           `Trip "${newTrip.name}" details have been updated.`,
           `Trip "${newTrip.name}" on ${newTrip.date} has been updated. Please check the new details.`,
-          {
-            name: newTrip.name,
-            date: newTrip.date,
-            departure: newTrip.departure,
-            arrival: newTrip.arrival,
-            boat: adminData.assignedBoat
-          }
+          tripDetails
         );
       }
 
@@ -184,6 +206,7 @@ function ScheduleManagement() {
         route: adminData.assignedRoute,
         routeDirection: newTrip.routeDirection,
         price: newTrip.price,
+        allowPayLater: newTrip.paymentMethod === "pay_later",
         cargoPerKilo: parseFloat(newTrip.cargoPerKilo) || 20,
         date: newTrip.date,
         createdAt: new Date()
@@ -191,18 +214,22 @@ function ScheduleManagement() {
       alert("New trip added successfully!");
     }
 
+    if (getNormalizedTripStatus({ status: newTrip.status }) === "completed") {
+      setScheduleView("completed");
+      setCurrentPage(1);
+    }
+
     setShowForm(false);
     setImagePreview(null);
     const input = document.getElementById("boatImageInput");
     if (input) input.value = "";
-    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", allowPayLater: false });
+    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", paymentMethod: "gcash" });
   } catch (error) {
     alert("Error saving trip: " + error.message);
   }
 };
 
 const handleEditTrip = (trip) => {
-  if (isPortStaff) return;
   setNewTrip({
     name: trip.name,
     date: trip.date,
@@ -210,10 +237,10 @@ const handleEditTrip = (trip) => {
     arrival: trip.arrival,
     capacity: trip.capacity,
     status: trip.status,
-    routeDirection: trip.routeDirection,
+    routeDirection: trip.routeDirection || trip.route || adminData?.assignedRoute || "",
     price: trip.price,
     cargoPerKilo: trip.cargoPerKilo || "",
-    allowPayLater: trip.allowPayLater === true,
+    paymentMethod: trip.paymentMethod || (trip.allowPayLater ? "pay_later" : "gcash"),
     boatImage: trip.boatImage || ""
   });
   setImagePreview(trip.boatImage || null);
@@ -275,21 +302,23 @@ const handleImageChange = (e) => {
   }
 };
 
-// Separate trips strictly by admin-managed status.
-// A trip stays in upcoming until the admin explicitly changes it to Departed or Cancelled.
+const getNormalizedTripStatus = (trip) => String(trip.status || "").trim().toLowerCase();
 const upcomingTrips = trips.filter(
-  (t) => t.status !== "Departed" && t.status !== "Cancelled"
+  (trip) => !["departed", "cancelled", "completed"].includes(getNormalizedTripStatus(trip))
 );
-const historyTripsRaw = trips.filter(
-  (t) => t.status === "Departed" || t.status === "Cancelled"
-);
-// Sort history by date descending (latest dates first)
-const historyTrips = [...historyTripsRaw].sort((a, b) => new Date(b.date) - new Date(a.date));
+const departedTrips = trips.filter((trip) => getNormalizedTripStatus(trip) === "departed");
+const cancelledTrips = trips.filter((trip) => getNormalizedTripStatus(trip) === "cancelled");
+const completedTrips = trips.filter((trip) => getNormalizedTripStatus(trip) === "completed");
+const tripLists = {
+  upcoming: upcomingTrips,
+  departed: departedTrips,
+  cancelled: cancelledTrips,
+  completed: completedTrips,
+};
 
 // Pagination logic
 const ITEMS_PER_PAGE = 10;
-const currentPage = scheduleView === "upcoming" ? currentPageUpcoming : currentPageHistory;
-const tripList = scheduleView === "upcoming" ? upcomingTrips : historyTrips;
+const tripList = tripLists[scheduleView];
 const totalPages = Math.ceil(tripList.length / ITEMS_PER_PAGE);
 const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
 const endIndex = startIndex + ITEMS_PER_PAGE;
@@ -321,7 +350,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
       {showForm && adminData && (
         <div style={{
           position: "fixed",
-          top: "0",
+          top: isMobile ? "60px" : "70px",
           left: "0",
           right: "0",
           bottom: "0",
@@ -330,7 +359,8 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
           alignItems: "center",
           justifyContent: "center",
           zIndex: 1000,
-          padding: isMobile ? "8px" : "20px"
+          padding: isMobile ? "8px" : "20px",
+          boxSizing: "border-box"
         }}>
           <div style={{
             background: "white",
@@ -339,8 +369,9 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
             boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
             maxWidth: "600px",
             width: "100%",
-            maxHeight: "90vh",
-            overflowY: "auto"
+            maxHeight: isMobile ? "calc(100vh - 76px)" : "calc(100vh - 110px)",
+            overflowY: "auto",
+            overscrollBehavior: "contain"
           }}>
             <h3 style={{
               fontSize: isMobile ? "0.75rem" : "1.2rem",
@@ -502,7 +533,10 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     }}
                   >
                     <option value="">Select Route</option>
-                    {adminData?.availableRoutes?.map((route) => (
+                    {[...new Set([
+                      ...(adminData?.availableRoutes || []),
+                      newTrip.routeDirection
+                    ].filter(Boolean))].map((route) => (
                       <option key={route} value={route}>{route}</option>
                     ))}
                   </select>
@@ -532,22 +566,32 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     }}
                   />
                 </div>
-                <label style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "8px",
-                  color: "#333",
-                  fontSize: isMobile ? "0.7rem" : "0.85rem",
-                  lineHeight: 1.4
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={newTrip.allowPayLater}
-                    onChange={(e) => setNewTrip({ ...newTrip, allowPayLater: e.target.checked })}
-                    style={{ marginTop: "2px" }}
-                  />
-                  Booking only; passengers can reserve now and pay manually later.
-                </label>
+                <div>
+                  <label style={{
+                    display: "block",
+                    fontSize: isMobile ? "0.6rem" : "0.85rem",
+                    fontWeight: 700,
+                    color: "#333",
+                    marginBottom: isMobile ? "3px" : "8px"
+                  }}>Payment Method *</label>
+                  <select
+                    value={newTrip.paymentMethod}
+                    onChange={(e) => setNewTrip({ ...newTrip, paymentMethod: e.target.value })}
+                    required
+                    style={{
+                      width: "100%",
+                      padding: isMobile ? "4px 6px" : "10px 12px",
+                      border: "1px solid #ddd",
+                      borderRadius: "8px",
+                      fontSize: isMobile ? "11px" : "0.9rem",
+                      fontFamily: "inherit",
+                      boxSizing: "border-box"
+                    }}
+                  >
+                    <option value="gcash">GCash</option>
+                    <option value="pay_later">PayLater</option>
+                  </select>
+                </div>
                 <div>
                   <label style={{
                     display: "block",
@@ -597,6 +641,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     <option>Upcoming</option>
                     <option>Boarding</option>
                     <option>Departed</option>
+                    <option>Completed</option>
                     <option>Cancelled</option>
                   </select>
                 </div>
@@ -689,7 +734,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     setImagePreview(null);
                     const input = document.getElementById("boatImageInput");
                     if (input) input.value = "";
-                    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", allowPayLater: false });
+                    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", paymentMethod: "gcash" });
                   }}
                   style={{
                     background: "#f5f5f5",
@@ -752,76 +797,41 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
         marginBottom: isMobile ? "16px" : "20px",
         flexWrap: "wrap"
       }}>
-        <button
-          onClick={() => setScheduleView("upcoming")}
-          style={{
-            padding: isMobile ? "6px 10px" : "8px 16px",
-            border: "none",
-            borderRadius: "6px",
-            fontWeight: 700,
-            cursor: "pointer",
-            fontSize: isMobile ? "0.7rem" : "0.85rem",
-            background: scheduleView === "upcoming" ? "#2196f3" : "#e0e0e0",
-            color: scheduleView === "upcoming" ? "white" : "#333",
-            transition: "all 0.3s ease",
-            display: "flex",
-            alignItems: "center",
-            gap: isMobile ? "4px" : "6px"
-          }}
-          onMouseEnter={(e) => {
-            if (scheduleView !== "upcoming") {
-              e.currentTarget.style.background = "#d0d0d0";
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (scheduleView !== "upcoming") {
-              e.currentTarget.style.background = "#e0e0e0";
-            }
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="16" y1="2" x2="16" y2="6"></line>
-            <line x1="8" y1="2" x2="8" y2="6"></line>
-            <line x1="3" y1="10" x2="21" y2="10"></line>
-          </svg>
-          Upcoming ({upcomingTrips.length})
-        </button>
-        <button
-          onClick={() => setScheduleView("history")}
-          style={{
-            padding: isMobile ? "6px 10px" : "8px 16px",
-            border: "none",
-            borderRadius: "6px",
-            fontWeight: 700,
-            cursor: "pointer",
-            fontSize: isMobile ? "0.7rem" : "0.85rem",
-            background: scheduleView === "history" ? "#2196f3" : "#e0e0e0",
-            color: scheduleView === "history" ? "white" : "#333",
-            transition: "all 0.3s ease",
-            display: "flex",
-            alignItems: "center",
-            gap: isMobile ? "4px" : "6px"
-          }}
-          onMouseEnter={(e) => {
-            if (scheduleView !== "history") {
-              e.currentTarget.style.background = "#d0d0d0";
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (scheduleView !== "history") {
-              e.currentTarget.style.background = "#e0e0e0";
-            }
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
-            <polyline points="13 2 13 9 20 9"></polyline>
-            <line x1="9" y1="13" x2="15" y2="13"></line>
-            <line x1="9" y1="17" x2="15" y2="17"></line>
-          </svg>
-          History
-        </button>
+        {[
+          { id: "upcoming", label: "Upcoming" },
+          { id: "departed", label: "Departed" },
+          { id: "cancelled", label: "Cancelled" },
+          { id: "completed", label: "Completed" },
+        ].map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            onClick={() => {
+              setScheduleView(view.id);
+              setCurrentPage(1);
+            }}
+            style={{
+              padding: isMobile ? "6px 10px" : "8px 16px",
+              border: "none",
+              borderRadius: "6px",
+              fontWeight: 700,
+              cursor: "pointer",
+              fontSize: isMobile ? "0.7rem" : "0.85rem",
+              background: scheduleView === view.id ? "#2196f3" : "#e0e0e0",
+              color: scheduleView === view.id ? "white" : "#333",
+              transition: "all 0.3s ease",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(event) => {
+              if (scheduleView !== view.id) event.currentTarget.style.background = "#d0d0d0";
+            }}
+            onMouseLeave={(event) => {
+              if (scheduleView !== view.id) event.currentTarget.style.background = "#e0e0e0";
+            }}
+          >
+            {view.label}
+          </button>
+        ))}
       </div>
 
       {/* Detailed Schedule Table */}
@@ -946,6 +956,13 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                   fontWeight: 700,
                   fontSize: isMobile ? "0.65rem" : "0.9rem",
                   whiteSpace: "nowrap"
+                }}>Payment</th>
+                <th style={{
+                  padding: isMobile ? "8px 6px" : "14px 12px",
+                  textAlign: "center",
+                  fontWeight: 700,
+                  fontSize: isMobile ? "0.65rem" : "0.9rem",
+                  whiteSpace: "nowrap"
                 }}>Available</th>
                 <th style={{
                   padding: isMobile ? "8px 6px" : "14px 12px",
@@ -964,13 +981,13 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
             <tbody>
               {displayedTrips.length === 0 ? (
                 <tr>
-                  <td colSpan="11" style={{
+                  <td colSpan="12" style={{
                     padding: isMobile ? "24px 12px" : "40px 20px",
                     textAlign: "center",
                     color: "#999",
                     fontSize: isMobile ? "0.85rem" : "0.95rem"
                   }}>
-                    No {scheduleView === "upcoming" ? "upcoming" : "history"} trips yet.
+                    No {scheduleView} trips yet.
                   </td>
                 </tr>
               ) : (
@@ -1064,6 +1081,14 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     }}>₱{trip.price}</td>
                     <td style={{
                       padding: isMobile ? "8px 4px" : "12px",
+                      textAlign: "center",
+                      color: "#38516d",
+                      fontSize: isMobile ? "0.7rem" : "0.85rem",
+                      fontWeight: 700,
+                      whiteSpace: "nowrap"
+                    }}>{(trip.paymentMethod || (trip.allowPayLater ? "pay_later" : "gcash")) === "pay_later" ? "PayLater" : "GCash"}</td>
+                    <td style={{
+                      padding: isMobile ? "8px 4px" : "12px",
                       textAlign: "center"
                     }}>
                       <span style={{
@@ -1085,7 +1110,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     }}>
                       <span style={{
                         display: "inline-block",
-                        background: trip.status === "Departed" ? "#4caf50" : trip.status === "Boarding" ? "#ff9800" : trip.status === "Cancelled" ? "#f44336" : "#2196f3",
+                        background: getNormalizedTripStatus(trip) === "completed" ? "#2e7d32" : getNormalizedTripStatus(trip) === "departed" ? "#4caf50" : getNormalizedTripStatus(trip) === "boarding" ? "#ff9800" : getNormalizedTripStatus(trip) === "cancelled" ? "#f44336" : "#2196f3",
                         color: "white",
                         padding: isMobile ? "3px 6px" : "4px 12px",
                         borderRadius: "20px",
@@ -1108,9 +1133,9 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                       alignItems: "center",
                       width: "100%"
                     }}>
-                      {!isPortStaff && scheduleView === "upcoming" && (
+                      {["upcoming", "departed"].includes(scheduleView) && (
                         <>
-                          <button 
+                          <button type="button"
                             onClick={() => handleEditTrip(trip)}
                             style={{
                               background: "#ffc107",
@@ -1135,34 +1160,36 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                           >
                             Edit
                           </button>
-                          <button 
-                            onClick={() => handleDeleteTrip(trip.id)}
-                            style={{
-                              background: "#f44336",
-                              color: "white",
-                              border: "none",
-                              padding: isMobile ? "4px 6px" : "6px 12px",
-                              borderRadius: "6px",
-                              fontWeight: 700,
-                              cursor: "pointer",
-                              fontSize: isMobile ? "0.65rem" : "0.8rem",
-                              transition: "all 0.3s ease",
-                              whiteSpace: "nowrap"
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background = "#d32f2f";
-                              e.currentTarget.style.boxShadow = "0 4px 12px rgba(244,67,54,0.3)";
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = "#f44336";
-                              e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
-                            }}
-                          >
-                            Delete
-                          </button>
+                          {!isPortStaff && (
+                            <button type="button"
+                              onClick={() => handleDeleteTrip(trip.id)}
+                              style={{
+                                background: "#f44336",
+                                color: "white",
+                                border: "none",
+                                padding: isMobile ? "4px 6px" : "6px 12px",
+                                borderRadius: "6px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                fontSize: isMobile ? "0.65rem" : "0.8rem",
+                                transition: "all 0.3s ease",
+                                whiteSpace: "nowrap"
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = "#d32f2f";
+                                e.currentTarget.style.boxShadow = "0 4px 12px rgba(244,67,54,0.3)";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = "#f44336";
+                                e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
+                              }}
+                            >
+                              Delete
+                            </button>
+                          )}
                         </>
                       )}
-                      {!isPortStaff && scheduleView === "history" && (
+                      {!isPortStaff && scheduleView !== "upcoming" && (
                         <button 
                           onClick={() => handleDeleteTrip(trip.id)}
                           style={{
@@ -1210,13 +1237,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
             flexWrap: "wrap"
           }}>
             <button
-              onClick={() => {
-                if (scheduleView === "upcoming") {
-                  setCurrentPageUpcoming(prev => Math.max(prev - 1, 1));
-                } else {
-                  setCurrentPageHistory(prev => Math.max(prev - 1, 1));
-                }
-              }}
+              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
               disabled={currentPage === 1}
               style={{
                 background: currentPage === 1 ? "#e0e0e0" : "#2196f3",
@@ -1256,13 +1277,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
             </span>
 
             <button
-              onClick={() => {
-                if (scheduleView === "upcoming") {
-                  setCurrentPageUpcoming(prev => Math.min(prev + 1, totalPages));
-                } else {
-                  setCurrentPageHistory(prev => Math.min(prev + 1, totalPages));
-                }
-              }}
+              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
               disabled={currentPage === totalPages}
               style={{
                 background: currentPage === totalPages ? "#e0e0e0" : "#2196f3",

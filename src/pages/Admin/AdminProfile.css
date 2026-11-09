@@ -1,0 +1,305 @@
+.admin-profile-page {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  padding: 0 0 36px;
+  color: #172b4d;
+}
+
+.admin-profile-title {
+  margin: 0 0 6px !important;
+  font-size: 1.65rem !important;
+  letter-spacing: 0 !important;
+}
+
+.admin-profile-subtitle {
+  margin: 0 0 22px !important;
+  color: #718096 !important;
+}
+
+.admin-profile-content {
+  display: grid;
+  gap: 20px;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none !important;
+}
+
+.admin-profile-hero {
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 22px;
+  row-gap: 8px;
+  margin: 0 !important;
+  padding: 22px 26px !important;
+  border: 1px solid #e6ebf2 !important;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(31, 51, 73, 0.06);
+}
+
+.admin-profile-hero > div:first-child {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: 104px !important;
+  height: 104px !important;
+  margin: 0 !important;
+  border: 3px solid #dce9f8 !important;
+  box-shadow: none !important;
+}
+
+.admin-profile-picture-actions {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  margin: 0 !important;
+}
+
+.admin-profile-hero > p:not(.admin-profile-role) {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  font-size: 1.35rem !important;
+}
+
+.admin-profile-role {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  margin: 0;
+  color: #718096;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.admin-profile-hero-actions {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-profile-edit-button,
+.admin-profile-logout-button {
+  border: 0;
+  border-radius: 7px;
+  padding: 10px 16px;
+  color: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.18s ease, transform 0.18s ease;
+}
+
+.admin-profile-edit-button {
+  background: #2874c8;
+}
+
+.admin-profile-edit-button:hover {
+  background: #1d5fa8;
+  transform: translateY(-1px);
+}
+
+.admin-profile-logout-button {
+  background: #d94343;
+  color: #fff;
+}
+
+.admin-profile-logout-button:hover {
+  background: #bc3030;
+}
+
+.admin-profile-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 20px;
+}
+
+.admin-profile-panel,
+.admin-profile-security {
+  min-width: 0;
+  padding: 24px !important;
+  border: 1px solid #e6ebf2 !important;
+  border-radius: 12px !important;
+  background: #fff !important;
+  box-shadow: 0 3px 12px rgba(31, 51, 73, 0.05);
+}
+
+.admin-profile-panel-title {
+  margin: 0 0 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #edf0f5;
+  color: #223b5b;
+  font-size: 1.05rem;
+  font-weight: 750;
+}
+
+.admin-profile-fields {
+  gap: 20px 24px !important;
+  margin-bottom: 0 !important;
+}
+
+.admin-profile-fields > div {
+  min-width: 0;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  margin: 0 !important;
+}
+
+.admin-profile-fields label,
+.admin-profile-routes label {
+  color: #718096 !important;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.06em !important;
+}
+
+.admin-profile-fields p {
+  overflow-wrap: anywhere;
+}
+
+.admin-profile-extra-value {
+  margin: 0;
+  color: #172b4d;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.admin-profile-role-value {
+  color: #278044;
+  text-transform: capitalize;
+}
+
+.admin-profile-routes {
+  margin: 22px 0 0 !important;
+  padding: 18px 0 0 !important;
+  border-top: 1px solid #edf0f5 !important;
+}
+
+.admin-profile-form-actions {
+  justify-content: flex-end !important;
+  padding-top: 0 !important;
+  border-top: 0 !important;
+}
+
+.admin-profile-security {
+  margin-top: 0 !important;
+}
+
+.admin-profile-logout-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.admin-profile-logout-footer .admin-profile-logout-button {
+  min-width: 140px;
+}
+
+.admin-profile-security > div:first-child {
+  margin-bottom: 16px !important;
+}
+
+@media (max-width: 900px) {
+  .admin-profile-page {
+    padding: 0 0 30px;
+  }
+
+  .admin-profile-info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .admin-profile-page {
+    padding: 0 0 26px;
+  }
+
+  .admin-profile-title {
+    font-size: 1.35rem !important;
+  }
+
+  .admin-profile-subtitle {
+    margin-bottom: 18px !important;
+  }
+
+  .admin-profile-content {
+    gap: 14px;
+  }
+
+  .admin-profile-hero {
+    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    column-gap: 14px;
+    padding: 16px !important;
+  }
+
+  .admin-profile-hero > div:first-child {
+    width: 72px !important;
+    height: 72px !important;
+  }
+
+  .admin-profile-hero > p:not(.admin-profile-role) {
+    font-size: 1.05rem !important;
+  }
+
+  .admin-profile-hero-actions {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-content: center;
+    flex-wrap: nowrap;
+    align-self: start;
+  }
+
+  .admin-profile-hero.is-editing .admin-profile-hero-actions {
+    display: none;
+  }
+
+  .admin-profile-edit-button,
+  .admin-profile-logout-button {
+    padding: 8px 11px;
+    font-size: 0.8rem;
+  }
+
+  .admin-profile-picture-actions {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    gap: 6px !important;
+    justify-content: flex-start !important;
+    margin-bottom: 0 !important;
+  }
+
+  .admin-profile-logout-footer {
+    margin-top: 14px;
+  }
+
+  .admin-profile-logout-footer .admin-profile-logout-button {
+    width: auto;
+    max-width: 100%;
+  }
+
+  .admin-profile-panel,
+  .admin-profile-security {
+    padding: 18px 16px !important;
+  }
+
+  .admin-profile-panel-title {
+    margin-bottom: 18px;
+  }
+
+  .admin-profile-fields {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  .admin-profile-form-actions {
+    justify-content: stretch !important;
+  }
+
+  .admin-profile-form-actions button {
+    flex: 1;
+  }
+}
