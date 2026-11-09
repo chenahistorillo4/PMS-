@@ -82,14 +82,14 @@ const faqs = [
   ["Do I need to print my QR boarding pass?", "No, passengers may present the QR boarding pass using their mobile device during boarding."],
 ];
 
-function Home({ user }) {
+function Home({ user, role, authReady }) {
   const navigate = useNavigate();
   const [selectedDestination, setSelectedDestination] = useState(null);
   const [showFaqs, setShowFaqs] = useState(false);
+  const isAuthenticatedPassenger = authReady && Boolean(user?.uid) && role === "user";
 
   const handleBookClick = () => {
-    if (!user) {
-      alert("You need to log in first.");
+    if (!isAuthenticatedPassenger) {
       navigate("/login");
       return;
     }
@@ -97,8 +97,7 @@ function Home({ user }) {
   };
 
   const handleManageClick = () => {
-    if (!user) {
-      alert("You need to log in first.");
+    if (!isAuthenticatedPassenger) {
       navigate("/login");
       return;
     }
