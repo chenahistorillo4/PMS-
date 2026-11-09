@@ -81,7 +81,7 @@ function SuperadminLayout({ children }) {
       <div style={{
         background: "linear-gradient(135deg, #3b7ecc 0%, #4a8bd4 50%, #5a99db 100%)",
         width: !isMobile ? "280px" : "260px",
-        padding: !isMobile ? "30px 20px 20px 20px" : "20px",
+        padding: !isMobile ? "30px 20px 20px" : "20px",
         color: "white",
         position: "fixed",
         height: "100vh",
@@ -102,7 +102,7 @@ function SuperadminLayout({ children }) {
           <div style={{
             paddingBottom: "25px",
             borderBottom: "1px solid rgba(255,255,255,0.1)",
-            marginBottom: "30px",
+            marginBottom: "12px",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -160,22 +160,22 @@ function SuperadminLayout({ children }) {
             fontWeight: "900",
             textTransform: "uppercase",
             color: "rgba(255,255,255,0.6)",
-            marginBottom: "16px",
             letterSpacing: "1px",
-            margin: "0 0 16px 0"
+            margin: "0 10px 15px"
           }}>
             Main Menu
           </h6>
           <div style={{
             display: "flex",
             flexDirection: "column",
-            gap: "10px"
+            gap: "8px",
+            margin: "0 10px"
           }}>
             <NavLink
               to="/superadmin-dashboard"
               onClick={handleNavClick}
               style={({ isActive }) => ({
-                padding: "14px 16px",
+                padding: "12px 0",
                 borderRadius: "8px",
                 textDecoration: "none",
                 color: isActive ? "white" : "rgba(255,255,255,0.85)",
@@ -206,7 +206,7 @@ function SuperadminLayout({ children }) {
               to="/superadmin-reports"
               onClick={handleNavClick}
               style={({ isActive }) => ({
-                padding: "14px 16px",
+                padding: "12px 0",
                 borderRadius: "8px",
                 textDecoration: "none",
                 color: isActive ? "white" : "rgba(255,255,255,0.85)",
@@ -237,7 +237,7 @@ function SuperadminLayout({ children }) {
               to="/manage-admins"
               onClick={handleNavClick}
               style={({ isActive }) => ({
-                padding: "14px 16px",
+                padding: "12px 0",
                 borderRadius: "8px",
                 textDecoration: "none",
                 color: isActive ? "white" : "rgba(255,255,255,0.85)",
@@ -268,7 +268,7 @@ function SuperadminLayout({ children }) {
               to="/manage-port-staff"
               onClick={handleNavClick}
               style={({ isActive }) => ({
-                padding: "14px 16px",
+                padding: "12px 0",
                 borderRadius: "8px",
                 textDecoration: "none",
                 color: isActive ? "white" : "rgba(255,255,255,0.85)",
@@ -336,7 +336,9 @@ function SuperadminLayout({ children }) {
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        width: "100%",
+        width: !isMobile ? "calc(100% - 280px)" : "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
         minHeight: "100vh",
         marginLeft: !isMobile ? "280px" : "0",
         overflowX: "hidden"
@@ -448,7 +450,7 @@ function SuperadminLayout({ children }) {
         {/* Content */}
         <div style={{
           flex: 1,
-          padding: isMobile ? "20px 15px" : "30px",
+          padding: isMobile ? "20px 16px" : "30px",
           paddingTop: isMobile ? "100px" : "110px",
           overflowY: "auto",
           overflowX: "hidden",

@@ -1,7 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "../../firebase";
 import jsPDF from "jspdf";
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend } from "chart.js";
+import { Line } from "react-chartjs-2";
+import { FiBookOpen, FiCheckCircle, FiDollarSign, FiXCircle } from "react-icons/fi";
 import SuperadminLayout from "./SuperadminLayout";
 import "./ReportsAnalytics.css";
 import {
@@ -10,25 +13,45 @@ import {
   getBookingCreatedAt,
   getBookingTripDate,
   getBookingRouteLabel,
+  getBookingAmount,
+  getPeriodRange,
+  isGcashBooking,
+  isPayLaterBooking,
   attachPaymentStatuses,
-  isReportableBooking,
   summarizeBookings,
 } from "../../utils/reportHelpers";
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
+
+function normalizeBoatSearch(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/['’;,.-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPaidReportBooking(booking) {
+  const paymentStatus = String(booking.paymentStatus || "").toLowerCase();
+  const paymongoStatus = String(booking.paymongoStatus || "").toLowerCase();
+  return ["paid", "completed", "confirmed"].includes(paymentStatus) || paymongoStatus === "paid";
+}
+
+function summarizeReportBookings(items) {
+  const summary = summarizeBookings(items);
+  const paidItems = items.filter(isPaidReportBooking);
+  summary.totalRevenue = summarizeBookings(paidItems).totalRevenue;
+  return summary;
+}
 
 function ReportsAnalytics() {
   const [boats, setBoats] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [reportPeriod, setReportPeriod] = useState("weekly");
   const [reportRoute, setReportRoute] = useState("all");
-  const [boatRouteSelections, setBoatRouteSelections] = useState({});
   const [searchTerm, setSearchTerm] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [reportPage, setReportPage] = useState(0);
-  const reportGesture = useRef(null);
-  const reportPageRefs = useRef([]);
-  const [carouselHeight, setCarouselHeight] = useState(null);
-  const [dragOffset, setDragOffset] = useState(0);
+  const [selectedBoatName, setSelectedBoatName] = useState("");
+  const [reportPreview, setReportPreview] = useState(null);
 
   useEffect(() => {
     const fetchReportData = async () => {
@@ -43,18 +66,20 @@ function ReportsAnalytics() {
           id: boatDoc.id,
           ...boatDoc.data(),
         })));
+        const payments = paymentsSnapshot.docs.map((paymentDoc) => ({
+          id: paymentDoc.id,
+          ...paymentDoc.data(),
+        }));
+        const bookingData = bookingsSnapshot.docs.map((bookingDoc) => ({
+          id: bookingDoc.id,
+          ...bookingDoc.data(),
+        }));
         setBookings(attachPaymentStatuses(
-          bookingsSnapshot.docs.map((bookingDoc) => ({
-            id: bookingDoc.id,
-            ...bookingDoc.data(),
-          })),
-          paymentsSnapshot.docs.map((paymentDoc) => paymentDoc.data())
+          bookingData,
+          payments
         ));
       } catch (error) {
         console.error("Error fetching boat reports:", error);
-        setErrorMessage("Unable to load boat reports right now.");
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -62,25 +87,50 @@ function ReportsAnalytics() {
   }, []);
 
   const searchedBoatNames = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const normalizedSearch = normalizeBoatSearch(searchTerm);
     if (!normalizedSearch) return [];
+    if (selectedBoatName) {
+      return boats
+        .filter((boat) => normalizeBoatSearch(boat.name) === normalizeBoatSearch(selectedBoatName))
+        .map((boat) => boat.name);
+    }
     return boats
-      .filter((boat) => boat.name?.toLowerCase().includes(normalizedSearch))
+      .filter((boat) => normalizeBoatSearch(boat.name).includes(normalizedSearch))
       .map((boat) => boat.name);
+  }, [boats, searchTerm, selectedBoatName]);
+  const boatSuggestions = useMemo(() => {
+    const normalizedSearch = normalizeBoatSearch(searchTerm);
+    if (!normalizedSearch) return boats.filter((boat) => boat.name).slice(0, 8);
+    return boats
+      .filter((boat) => normalizeBoatSearch(boat.name).includes(normalizedSearch))
+      .slice(0, 8);
   }, [boats, searchTerm]);
 
   const reportableBookings = useMemo(
-    () => bookings.filter(isReportableBooking),
+    () => bookings.filter((booking) => !["failed"].includes(String(booking.status || "").toLowerCase())),
     [bookings]
   );
 
+  const allRoutes = useMemo(
+    () => [...new Set(boats.flatMap((boat) => (
+      Array.isArray(boat.availableRoutes) ? boat.availableRoutes : []
+    )).filter((route) => route && route !== "N/A"))].sort(),
+    [boats]
+  );
+  const hasBoatFilter = normalizeBoatSearch(searchTerm).length > 0 || reportRoute !== "all";
+  const normalizedSearch = normalizeBoatSearch(searchTerm);
+  const selectedBoatNames = normalizedSearch
+    ? searchedBoatNames
+    : boats.map((boat) => boat.name).filter(Boolean);
   const filteredBookings = useMemo(
     () => filterBookingsByPeriod(reportableBookings, reportPeriod).filter((booking) => {
-      if (reportRoute === "all" || searchedBoatNames.length === 0) return true;
       const boatName = booking.boat || "Unassigned boat";
-      return !searchedBoatNames.includes(boatName) || getBookingRouteLabel(booking) === reportRoute;
+      const matchesBoat = !normalizedSearch
+        || selectedBoatNames.some((name) => normalizeBoatSearch(name) === normalizeBoatSearch(boatName));
+      const matchesRoute = reportRoute === "all" || getBookingRouteLabel(booking) === reportRoute;
+      return matchesBoat && matchesRoute;
     }),
-    [reportableBookings, reportPeriod, reportRoute, searchedBoatNames]
+    [normalizedSearch, reportableBookings, reportPeriod, reportRoute, selectedBoatNames]
   );
 
   const boatReports = useMemo(() => {
@@ -94,11 +144,7 @@ function ReportsAnalytics() {
 
     filteredBookings.forEach((booking) => {
       const boatName = booking.boat || "Unassigned boat";
-      const selectedRoute = boatRouteSelections[boatName] || "all";
-      if (selectedRoute !== "all" && getBookingRouteLabel(booking) !== selectedRoute) {
-        return;
-      }
-      if (!reportsByBoat.has(boatName)) {
+        if (!reportsByBoat.has(boatName)) {
         reportsByBoat.set(boatName, []);
       }
       reportsByBoat.get(boatName).push(booking);
@@ -109,23 +155,128 @@ function ReportsAnalytics() {
       .map(([name, boatBookings]) => ({
         name,
         bookings: boatBookings,
-        summary: summarizeBookings(boatBookings),
+        summary: summarizeReportBookings(boatBookings),
       }));
-  }, [boats, filteredBookings, boatRouteSelections]);
+  }, [boats, filteredBookings]);
 
-  const totalSummary = useMemo(
-    () => summarizeBookings(filteredBookings),
-    [filteredBookings]
+  const overallBookings = useMemo(
+    () => filterBookingsByPeriod(reportableBookings, reportPeriod),
+    [reportableBookings, reportPeriod]
   );
+  const reportScopeBookings = hasBoatFilter ? filteredBookings : overallBookings;
+  const reportScopeSummary = useMemo(
+    () => summarizeReportBookings(reportScopeBookings),
+    [reportScopeBookings]
+  );
+  const trendData = useMemo(() => {
+    const range = getPeriodRange(reportPeriod);
+    const isCalendarMonth = reportPeriod === "monthly" || reportPeriod === "lastMonth";
+    const dayCount = reportPeriod === "today"
+      ? 1
+      : isCalendarMonth
+        ? new Date(range.start.getFullYear(), range.start.getMonth() + 1, 0).getDate()
+        : 7;
+    const days = Array.from({ length: dayCount }, (_, index) => {
+      if (isCalendarMonth) {
+        return new Date(range.start.getFullYear(), range.start.getMonth(), index + 1);
+      }
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (dayCount - 1 - index));
+      return date;
+    });
+    const formatDate = (date) => date.toLocaleDateString("en-PH", { month: "short", day: "numeric" });
+    const bookingsByDay = days.map((day) => reportScopeBookings.filter((booking) => {
+      return [getBookingCreatedAt(booking), getBookingTripDate(booking)]
+        .filter(Boolean)
+        .some((date) => date.toDateString() === day.toDateString());
+    }));
+    const payLaterAmountsByDay = bookingsByDay.map((dayBookings) =>
+      dayBookings.filter((booking) => {
+        const status = String(booking.status || "").toLowerCase();
+        return isPayLaterBooking(booking) &&
+          !["cancelled", "canceled", "failed"].includes(status);
+      }).reduce((total, booking) => total + getBookingAmount(booking), 0)
+    );
+
+    return {
+      labels: days.map(formatDate),
+      datasets: [
+        {
+          label: "Bookings",
+          data: bookingsByDay.map((dayBookings) => dayBookings.length),
+          borderColor: "#2f78bd",
+          backgroundColor: "rgba(47, 120, 189, 0.12)",
+          pointBackgroundColor: "#2f78bd",
+          pointRadius: 4,
+          tension: 0.35,
+          yAxisID: "y",
+          fill: true,
+        },
+        {
+          label: "GCash Revenue",
+          data: bookingsByDay.map((dayBookings) => dayBookings
+            .filter((booking) => isGcashBooking(booking) && isPaidReportBooking(booking))
+            .reduce((total, booking) => total + getBookingAmount(booking), 0)),
+          borderColor: "#e4a454",
+          backgroundColor: "rgba(228, 164, 84, 0.08)",
+          pointBackgroundColor: "#e4a454",
+          pointRadius: 4,
+          tension: 0.35,
+          yAxisID: "revenue",
+        },
+        {
+          label: "PayLater Amount",
+          data: payLaterAmountsByDay,
+          borderColor: "#7e57c2",
+          backgroundColor: "rgba(126, 87, 194, 0.1)",
+          pointBackgroundColor: "#7e57c2",
+          pointRadius: 4,
+          tension: 0.35,
+          yAxisID: "revenue",
+        },
+      ],
+    };
+  }, [reportPeriod, reportScopeBookings]);
+  const chartOptions = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { position: "top", align: "end", labels: { usePointStyle: true, boxWidth: 8 } },
+      tooltip: {
+        callbacks: {
+          label: (context) => ["GCash Revenue", "PayLater Amount"].includes(context.dataset.label)
+            ? ` ${context.dataset.label}: ₱${Number(context.parsed.y || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`
+            : ` ${context.dataset.label}: ${context.parsed.y}`,
+        },
+      },
+    },
+    scales: {
+      y: { beginAtZero: true, title: { display: true, text: "Bookings" }, grid: { color: "#e7eef5" } },
+      revenue: {
+        beginAtZero: true,
+        position: "right",
+        title: { display: true, text: "Revenue (PHP)" },
+        grid: { drawOnChartArea: false },
+      },
+      x: { grid: { display: false } },
+    },
+  }), []);
   const visibleBoatReports = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    if (!normalizedSearch) return boatReports;
-    return boatReports.filter((boatReport) => boatReport.name.toLowerCase().includes(normalizedSearch));
-  }, [boatReports, searchTerm]);
+    const normalizedSearch = normalizeBoatSearch(searchTerm);
+    return boatReports.filter((boatReport) => {
+      const matchesSearch = !normalizedSearch || normalizeBoatSearch(boatReport.name).includes(normalizedSearch);
+      const matchesRoute = reportRoute === "all" || boatReport.summary.totalBookings > 0;
+      return matchesSearch && matchesRoute;
+    });
+  }, [boatReports, reportRoute, searchTerm]);
   const boatRoutes = useMemo(() => {
     const routesByBoat = new Map();
     boats.forEach((boat) => {
-      routesByBoat.set(boat.name, new Set(Array.isArray(boat.availableRoutes) ? boat.availableRoutes : [boat.route]));
+      routesByBoat.set(boat.name, new Set(
+        Array.isArray(boat.availableRoutes) ? boat.availableRoutes : []
+      ));
     });
     return new Map([...routesByBoat.entries()].map(([boatName, routes]) => [
       boatName,
@@ -133,97 +284,28 @@ function ReportsAnalytics() {
     ]));
   }, [boats]);
   const searchedBoatRoutes = useMemo(() => {
-    if (searchedBoatNames.length === 0) return [];
+    if (!normalizedSearch) return allRoutes;
     return [...new Set(searchedBoatNames.flatMap((boatName) => boatRoutes.get(boatName) || []))].sort();
-  }, [boatRoutes, searchedBoatNames]);
+  }, [allRoutes, boatRoutes, normalizedSearch, searchedBoatNames]);
 
   useEffect(() => {
     if (reportRoute !== "all" && !searchedBoatRoutes.includes(reportRoute)) {
       setReportRoute("all");
     }
   }, [reportRoute, searchedBoatRoutes]);
-  const dailyBoatReports = useMemo(() => {
-    const dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    const currentDate = new Date();
-    const dayOfWeek = currentDate.getDay();
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const weekStart = new Date(currentDate);
-    weekStart.setDate(currentDate.getDate() + mondayOffset);
-    weekStart.setHours(0, 0, 0, 0);
-    const weekDays = dayNames.map((name, index) => {
-      const start = new Date(weekStart);
-      start.setDate(weekStart.getDate() + index);
-      const end = new Date(start);
-      end.setHours(23, 59, 59, 999);
-      return { name, start, end };
-    });
-    const reportsByBoat = new Map();
-
-    boats.forEach((boat) => {
-      if (boat.name) {
-        reportsByBoat.set(boat.name, weekDays.map(() => []));
-      }
-    });
-
-    const routeBookings = reportableBookings.filter((booking) => {
-      const boatName = booking.boat || "Unassigned boat";
-      const selectedRoute = boatRouteSelections[boatName] || "all";
-      return selectedRoute === "all" || getBookingRouteLabel(booking) === selectedRoute;
-    });
-    routeBookings.forEach((booking) => {
-      const bookingDates = [getBookingCreatedAt(booking), getBookingTripDate(booking)].filter(Boolean);
-      const dayIndex = weekDays.findIndex(({ start, end }) =>
-        bookingDates.some((date) => date >= start && date <= end)
-      );
-      if (dayIndex === -1) return;
-      const boatName = booking.boat || "Unassigned boat";
-      if (!reportsByBoat.has(boatName)) {
-        reportsByBoat.set(boatName, weekDays.map(() => []));
-      }
-      reportsByBoat.get(boatName)[dayIndex].push(booking);
-    });
-
-    return [...reportsByBoat.entries()]
-      .sort(([firstName], [secondName]) => firstName.localeCompare(secondName))
-      .map(([name, days]) => ({
-        name,
-        days: days.map((dayBookings, index) => ({
-          name: weekDays[index].name,
-          summary: summarizeBookings(dayBookings),
-        })),
-      }));
-  }, [boats, reportableBookings, boatRouteSelections]);
-  const visibleDailyBoatReports = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    if (!normalizedSearch) return dailyBoatReports;
-    return dailyBoatReports.filter((boatReport) => boatReport.name.toLowerCase().includes(normalizedSearch));
-  }, [dailyBoatReports, searchTerm]);
   const filterLabel = buildReportFilterLabel({ reportPeriod });
-  const reportPageCount = 3;
-
-  const changeReportPage = (direction) => {
-    setReportPage((currentPage) => Math.max(0, Math.min(reportPageCount - 1, currentPage + direction)));
-  };
-
-  useLayoutEffect(() => {
-    const activePage = reportPageRefs.current[reportPage];
-    if (!activePage) return undefined;
-
-    const updateCarouselHeight = () => {
-      setCarouselHeight(activePage.scrollHeight);
-    };
-
-    updateCarouselHeight();
-    const observer = new ResizeObserver(updateCarouselHeight);
-    observer.observe(activePage);
-    return () => observer.disconnect();
-  }, [reportPage, loading, searchTerm, reportPeriod, reportRoute, boatRouteSelections, visibleDailyBoatReports, visibleBoatReports]);
 
   const getReportExportData = () => ({
     generatedAt: new Date().toISOString(),
     period: filterLabel,
     boatSearch: searchTerm || "All boats",
-    overall: { bookings: totalSummary.totalBookings, revenue: totalSummary.totalRevenue },
+    overall: {
+      bookings: reportScopeSummary.totalBookings,
+      confirmed: reportScopeSummary.completedBookings,
+      cancelled: reportScopeSummary.cancelledBookings,
+      revenue: reportScopeSummary.totalRevenue,
+    },
+    routes: reportRoute === "all" ? "All routes" : reportRoute,
     boats: visibleBoatReports.map(({ name, summary }) => ({
       name,
       bookings: summary.totalBookings,
@@ -234,56 +316,93 @@ function ReportsAnalytics() {
     })),
   });
 
-  const exportAsJSON = () => {
-    const blob = new Blob([JSON.stringify(getReportExportData(), null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
+  const closeReportPreview = () => {
+    if (reportPreview?.url) {
+      setTimeout(() => URL.revokeObjectURL(reportPreview.url), 1000);
+    }
+    setReportPreview(null);
+  };
+
+  const downloadReportPreview = () => {
+    if (!reportPreview) return;
     const link = document.createElement("a");
-    link.href = url;
-    link.download = `boat-reports-${reportPeriod}-${new Date().toISOString().split("T")[0]}.json`;
+    link.href = reportPreview.url;
+    link.download = reportPreview.filename;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(link);
+    closeReportPreview();
+  };
+
+  const exportAsJSON = () => {
+    try {
+      const content = JSON.stringify(getReportExportData(), null, 2);
+      const blob = new Blob([content], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      if (reportPreview?.url) URL.revokeObjectURL(reportPreview.url);
+      setReportPreview({
+        format: "json",
+        filename: `reports-${searchTerm.trim() || "all-boats"}-${reportPeriod}-${new Date().toISOString().split("T")[0]}.json`,
+        url,
+        content,
+      });
+    } catch (error) {
+      console.error("Error preparing JSON report preview:", error);
+      alert("Failed to prepare JSON report preview. Please try again.");
+    }
   };
 
   const saveAsPDF = () => {
-    const pdf = new jsPDF();
-    let yPosition = 18;
-    const addLine = (text, size = 10, color = [51, 51, 51]) => {
-      if (yPosition > 280) {
-        pdf.addPage();
-        yPosition = 18;
-      }
-      pdf.setFontSize(size);
-      pdf.setTextColor(...color);
-      pdf.text(String(text), 15, yPosition);
-      yPosition += 6;
-    };
-    addLine("PMS Port - Boat Reports", 18, [47, 120, 189]);
-    addLine(`Period: ${filterLabel}`);
-    addLine(`Overall: ${totalSummary.totalBookings} bookings | PHP ${Number(totalSummary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`, 10, [102, 102, 102]);
-    visibleBoatReports.forEach((boatReport) => {
-      addLine(boatReport.name, 13, [49, 93, 143]);
-      addLine(`Bookings: ${boatReport.summary.totalBookings} | Confirmed: ${boatReport.summary.completedBookings} | Revenue: PHP ${Number(boatReport.summary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`, 9);
-    });
-    pdf.save(`boat-reports-${reportPeriod}-${new Date().toISOString().split("T")[0]}.pdf`);
+    try {
+      const pdf = new jsPDF();
+      let yPosition = 18;
+      const addLine = (text, size = 10, color = [51, 51, 51]) => {
+        if (yPosition > 280) {
+          pdf.addPage();
+          yPosition = 18;
+        }
+        pdf.setFontSize(size);
+        pdf.setTextColor(...color);
+        pdf.text(String(text), 15, yPosition);
+        yPosition += 6;
+      };
+      addLine("PMS Port - Boat Reports", 18, [47, 120, 189]);
+      addLine(`Period: ${filterLabel}`);
+      addLine(`Overall: ${reportScopeSummary.totalBookings} bookings | PHP ${Number(reportScopeSummary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`, 10, [102, 102, 102]);
+      visibleBoatReports.forEach((boatReport) => {
+        addLine(boatReport.name, 13, [49, 93, 143]);
+        addLine(`Bookings: ${boatReport.summary.totalBookings} | Confirmed: ${boatReport.summary.completedBookings} | Revenue: PHP ${Number(boatReport.summary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`, 9);
+      });
+      const url = URL.createObjectURL(pdf.output("blob"));
+      if (reportPreview?.url) URL.revokeObjectURL(reportPreview.url);
+      setReportPreview({
+        format: "pdf",
+        filename: `reports-${searchTerm.trim() || "all-boats"}-${reportPeriod}-${new Date().toISOString().split("T")[0]}.pdf`,
+        url,
+      });
+    } catch (error) {
+      console.error("Error preparing PDF report preview:", error);
+      alert("Failed to prepare PDF report preview. Please try again.");
+    }
   };
 
   const printReports = () => {
     const printWindow = window.open("", "", "height=700,width=1000");
     if (!printWindow) return;
     const sections = visibleBoatReports.map(({ name }) => {
-      const selectedRoute = boatRouteSelections[name] || "all";
+      const selectedRoute = reportRoute;
       const routes = selectedRoute === "all" ? (boatRoutes.get(name) || ["All routes"]) : [selectedRoute];
       const routeSections = routes.map((route) => {
         const routeBookings = filteredBookings.filter((booking) =>
           (booking.boat || "Unassigned boat") === name &&
           (route === "All routes" || getBookingRouteLabel(booking) === route)
         );
-        const summary = summarizeBookings(routeBookings);
+        const summary = summarizeReportBookings(routeBookings);
         return `<div class="route-section"><h3>${route}</h3><p>${summary.totalBookings} bookings | ${summary.completedBookings} confirmed | ${summary.pendingBookings} pending | PHP ${Number(summary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p></div>`;
       }).join("");
       return `<section><h2>${name}</h2>${routeSections}</section>`;
     }).join("");
-    printWindow.document.write(`<html><head><title>Boat Reports</title><style>body{font-family:Arial;margin:32px;color:#333}h1{color:#4a8bd4;border-bottom:2px solid #4a8bd4;padding-bottom:8px}h2{color:#315d8f;border-bottom:1px solid #ddd;padding-bottom:6px}h3{color:#666;margin-bottom:4px}.route-section{padding:8px 12px;margin:8px 0;background:#f5f9fd;border-left:3px solid #e4a454}section{page-break-inside:avoid;margin-top:20px}.meta{color:#666}</style></head><body><h1>Boat Reports</h1><p class="meta">${filterLabel} | ${searchTerm || "All boats"} | ${reportRoute === "all" ? "All routes" : reportRoute}</p><p><strong>Overall:</strong> ${totalSummary.totalBookings} bookings | PHP ${Number(totalSummary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>${sections}</body></html>`);
+    printWindow.document.write(`<html><head><title>Reports & Analytics</title><style>body{font-family:Arial;margin:32px;color:#333}h1{color:#4a8bd4;border-bottom:2px solid #4a8bd4;padding-bottom:8px}h2{color:#315d8f;border-bottom:1px solid #ddd;padding-bottom:6px}h3{color:#666;margin-bottom:4px}.route-section{padding:8px 12px;margin:8px 0;background:#f5f9fd;border-left:3px solid #e4a454}section{page-break-inside:avoid;margin-top:20px}.meta{color:#666}</style></head><body><h1>Reports & Analytics</h1><p class="meta">${filterLabel} | ${searchTerm || "All boats"} | ${reportRoute === "all" ? "All routes" : reportRoute}</p><p><strong>Overall:</strong> ${reportScopeSummary.totalBookings} bookings | PHP ${Number(reportScopeSummary.totalRevenue || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}</p>${sections}</body></html>`);
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
@@ -291,6 +410,144 @@ function ReportsAnalytics() {
 
   return (
     <SuperadminLayout>
+      {reportPreview && (
+        <div
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeReportPreview();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1200,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "clamp(10px, 3vw, 24px)",
+            background: "rgba(0,0,0,0.55)",
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="superadmin-report-preview-title"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              width: "100%",
+              maxWidth: 1050,
+              maxHeight: "92vh",
+              padding: "clamp(14px, 3vw, 22px)",
+              borderRadius: 12,
+              background: "#fff",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <div style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 12,
+              marginBottom: 14,
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <h2 id="superadmin-report-preview-title" style={{
+                  margin: 0,
+                  color: "#1e3a5f",
+                  fontSize: "clamp(1rem, 3vw, 1.2rem)",
+                  fontWeight: 800,
+                }}>
+                  {reportPreview.format.toUpperCase()} Report Preview
+                </h2>
+                <p style={{
+                  margin: "5px 0 0",
+                  color: "#666",
+                  fontSize: "0.85rem",
+                  overflowWrap: "anywhere",
+                }}>{reportPreview.filename}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close report preview"
+                onClick={closeReportPreview}
+                style={{
+                  flexShrink: 0,
+                  border: "1px solid #d0d0d0",
+                  borderRadius: 6,
+                  background: "#fff",
+                  color: "#444",
+                  padding: "5px 10px",
+                  fontSize: "1.1rem",
+                  cursor: "pointer",
+                }}
+              >×</button>
+            </div>
+            {reportPreview.format === "pdf" ? (
+              <iframe
+                title="PDF report preview"
+                src={reportPreview.url}
+                style={{
+                  width: "100%",
+                  minHeight: "min(68vh, 700px)",
+                  border: "1px solid #dbe3eb",
+                  borderRadius: 7,
+                  background: "#f4f6f8",
+                }}
+              />
+            ) : (
+              <pre style={{
+                boxSizing: "border-box",
+                width: "100%",
+                minHeight: "min(68vh, 700px)",
+                maxHeight: "68vh",
+                overflow: "auto",
+                margin: 0,
+                padding: "clamp(10px, 2vw, 16px)",
+                border: "1px solid #dbe3eb",
+                borderRadius: 7,
+                background: "#f7f9fb",
+                color: "#243447",
+                fontSize: "clamp(0.68rem, 1.5vw, 0.8rem)",
+                lineHeight: 1.5,
+                whiteSpace: "pre",
+              }}>{reportPreview.content}</pre>
+            )}
+            <div style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 10,
+              marginTop: 14,
+            }}>
+              <button
+                type="button"
+                onClick={closeReportPreview}
+                style={{
+                  padding: "9px 16px",
+                  border: "1px solid #d0d0d0",
+                  borderRadius: 6,
+                  background: "#fff",
+                  color: "#444",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >Cancel</button>
+              <button
+                type="button"
+                onClick={downloadReportPreview}
+                style={{
+                  padding: "9px 16px",
+                  border: "none",
+                  borderRadius: 6,
+                  background: "#2196f3",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >{reportPreview.format === "pdf" ? "Save PDF" : "Download JSON"}</button>
+            </div>
+          </section>
+        </div>
+      )}
       <div className="reports-page">
         <div className="reports-header">
           <div>
@@ -300,20 +557,45 @@ function ReportsAnalytics() {
         </div>
 
         <div className="reports-toolbar">
-          <input
-            className="reports-search"
-            type="search"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search boat reports..."
-            aria-label="Search boat reports"
-          />
+          <div className="reports-search-wrapper">
+            <input
+              className="reports-search"
+              type="search"
+              value={searchTerm}
+              onChange={(event) => {
+                setSelectedBoatName("");
+                setSearchTerm(event.target.value);
+              }}
+              placeholder="Search boat reports..."
+              aria-label="Search boat reports"
+              autoComplete="off"
+            />
+            {searchTerm.trim() && !selectedBoatName && boatSuggestions.length > 0 && (
+              <div className="reports-search-suggestions" role="listbox" aria-label="Possible boats">
+                {boatSuggestions.map((boat) => (
+                  <button
+                    type="button"
+                    key={boat.id || boat.name}
+                    className="reports-search-suggestion"
+                    onClick={() => {
+                      setSearchTerm(boat.name);
+                      setSelectedBoatName(boat.name);
+                    }}
+                  >
+                    <strong>{boat.name}</strong>
+                    <span>{boat.route || (Array.isArray(boat.availableRoutes) ? boat.availableRoutes[0] : "All routes")}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <label className="reports-period-choice">
             <span>Report period</span>
             <select value={reportPeriod} onChange={(event) => setReportPeriod(event.target.value)}>
               <option value="today">Today</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
+              <option value="lastMonth">Last month</option>
             </select>
           </label>
           <label className="reports-period-choice">
@@ -330,185 +612,44 @@ function ReportsAnalytics() {
           </div>
         </div>
 
-        <div
-          className="reports-carousel"
-          style={carouselHeight ? { height: `${carouselHeight}px` } : undefined}
-          onPointerDown={(event) => {
-            if (event.pointerType === "mouse" && event.button !== 0) return;
-            event.currentTarget.setPointerCapture?.(event.pointerId);
-            reportGesture.current = {
-              x: event.clientX,
-              y: event.clientY,
-              moved: false
-            };
-            setDragOffset(0);
-          }}
-          onPointerMove={(event) => {
-            if (!reportGesture.current) return;
-            const distanceX = event.clientX - reportGesture.current.x;
-            const distanceY = event.clientY - reportGesture.current.y;
-            if (Math.abs(distanceX) > Math.abs(distanceY) && Math.abs(distanceX) > 10) {
-              reportGesture.current.moved = true;
-              setDragOffset(distanceX);
-              event.preventDefault();
-            }
-          }}
-          onPointerUp={(event) => {
-            if (!reportGesture.current) return;
-            const distance = event.clientX - reportGesture.current.x;
-            if (reportGesture.current.moved && Math.abs(distance) > 35) {
-              changeReportPage(distance < 0 ? 1 : -1);
-            }
-            reportGesture.current = null;
-            setDragOffset(0);
-          }}
-          onPointerCancel={() => {
-            reportGesture.current = null;
-            setDragOffset(0);
-          }}
-        >
-          <div
-            className="reports-carousel-track"
-            style={{
-              transform: `translateX(calc(-${reportPage * 100}% + ${dragOffset}px))`,
-              transition: reportGesture.current ? "none" : undefined
-            }}
-          >
-            <section className="reports-carousel-page" ref={(element) => { reportPageRefs.current[0] = element; }}>
+        <div className="reports-sections">
+            <section className="reports-section">
+        <div className="report-context">
+          <strong>{selectedBoatName || (hasBoatFilter ? searchTerm : "All boats")}</strong>
+          <span>{filterLabel} · {reportRoute === "all" ? "All routes" : reportRoute}</span>
+        </div>
         <div className="reports-overview">
           {[
-            ["Total bookings", totalSummary.totalBookings],
-            ["Confirmed", totalSummary.completedBookings],
-            ["Cancelled", totalSummary.cancelledBookings],
-            ["Revenue", `₱${totalSummary.totalRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`],
-          ].map(([label, value]) => (
-            <div className="reports-stat" key={label}>
+            ["Total bookings", reportScopeSummary.totalBookings, hasBoatFilter ? "selected boats" : "all boats", "bookings"],
+            ["Confirmed", reportScopeSummary.completedBookings, "completed bookings", "ferries"],
+            ["Cancelled", reportScopeSummary.cancelledBookings, "cancelled bookings", "pending"],
+            ["Paid revenue", `₱${reportScopeSummary.totalRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`, "from reportable bookings", "revenue"],
+          ].map(([label, value, caption, tone]) => (
+            <div className={`reports-stat reports-stat-${tone}`} key={label}>
+              <span className="reports-stat-icon" aria-hidden="true">
+                {tone === "bookings" ? <FiBookOpen /> : tone === "ferries" ? <FiCheckCircle /> : tone === "pending" ? <FiXCircle /> : <FiDollarSign />}
+              </span>
               <span className="reports-stat-label">{label}</span>
               <strong className="reports-stat-value">{value}</strong>
+              <small>{caption}</small>
             </div>
           ))}
         </div>
-
-            </section>
-            <section className="reports-carousel-page" ref={(element) => { reportPageRefs.current[1] = element; }}>
-        <div className="reports-section-heading">
-          <h2>Daily comparison per boat</h2>
-          <span>Monday to Sunday · {visibleDailyBoatReports.length} boat{visibleDailyBoatReports.length !== 1 ? "s" : ""}</span>
-        </div>
-
-        {loading && <p style={{ color: "#667085" }}>Loading boat reports...</p>}
-        {!loading && errorMessage && <p style={{ color: "#c62828" }}>{errorMessage}</p>}
-        {!loading && !errorMessage && dailyBoatReports.length === 0 && (
-          <div className="reports-empty">No boats or bookings found.</div>
-        )}
-        <div className="boat-analytics-grid">
-          {visibleDailyBoatReports.map((boatReport) => {
-            const maxBookings = Math.max(...boatReport.days.map((day) => day.summary.totalBookings), 1);
-            const maxRevenue = Math.max(...boatReport.days.map((day) => day.summary.totalRevenue), 1);
-            return (
-              <div className="analytics-card" key={boatReport.name}>
-                <div className="analytics-card-heading">
-                  <div>
-                    <p className="reports-eyebrow">Monday to Sunday</p>
-                    <h2>{boatReport.name}</h2>
-                  </div>
-                  <div>
-                    <select
-                      value={boatRouteSelections[boatReport.name] || "all"}
-                      onChange={(event) => setBoatRouteSelections((current) => ({
-                        ...current,
-                        [boatReport.name]: event.target.value,
-                      }))}
-                      aria-label={`Route for ${boatReport.name}`}
-                      className="boat-route-select"
-                    >
-                      <option value="all">All routes</option>
-                      {(boatRoutes.get(boatReport.name) || []).map((route) => (
-                        <option key={route} value={route}>{route}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="analytics-legend">
-                  <span><i className="legend-swatch bookings" />Bookings</span>
-                  <span><i className="legend-swatch revenue" />Revenue</span>
-                </div>
-                <div className="analytics-days">
-                  {boatReport.days.map((day) => (
-                    <div className="analytics-day-row" key={day.name}>
-                      <span className="analytics-day-label">{day.name.slice(0, 3)}</span>
-                      <div className="analytics-series">
-                        <div className="analytics-series-track"><div className="analytics-bar-fill bookings" style={{ width: `${(day.summary.totalBookings / maxBookings) * 100}%` }} /></div>
-                        <strong>{day.summary.totalBookings}</strong>
-                      </div>
-                      <div className="analytics-series">
-                        <div className="analytics-series-track"><div className="analytics-bar-fill revenue" style={{ width: `${(day.summary.totalRevenue / maxRevenue) * 100}%` }} /></div>
-                        <strong>₱{Number(day.summary.totalRevenue).toLocaleString("en-PH", { maximumFractionDigits: 0 })}</strong>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+        <div className="overview-dashboard-grid">
+          <div className="overview-panel overview-chart-panel">
+            <div className="overview-panel-heading">
+              <div>
+                <h3>Booking &amp; Revenue Trends</h3>
+                <span>{filterLabel} · {selectedBoatName || (hasBoatFilter ? searchTerm : "all boats")}</span>
               </div>
-            );
-          })}
+            </div>
+            <div className="overview-chart">
+              <Line data={trendData} options={chartOptions} />
+            </div>
+          </div>
         </div>
 
             </section>
-            <section className="reports-carousel-page" ref={(element) => { reportPageRefs.current[2] = element; }}>
-        <div className="reports-section-heading">
-          <h2>Boat performance</h2>
-          <span>{filterLabel} · {visibleBoatReports.length} boat{visibleBoatReports.length !== 1 ? "s" : ""}</span>
-        </div>
-
-        {loading && <p style={{ color: "#667085" }}>Loading boat reports...</p>}
-        {!loading && errorMessage && <p style={{ color: "#c62828" }}>{errorMessage}</p>}
-        {!loading && !errorMessage && boatReports.length === 0 && (
-          <div className="reports-empty">No boats or bookings found.</div>
-        )}
-        {!loading && !errorMessage && visibleBoatReports.map((boatReport) => (
-          <div className="boat-aggregate-report" key={boatReport.name}>
-            <div>
-              <h3>{boatReport.name}</h3>
-              <span>{filterLabel}</span>
-            </div>
-            <div className="boat-aggregate-stats">
-              <select
-                value={boatRouteSelections[boatReport.name] || "all"}
-                onChange={(event) => setBoatRouteSelections((current) => ({
-                  ...current,
-                  [boatReport.name]: event.target.value,
-                }))}
-                aria-label={`Route summary for ${boatReport.name}`}
-                className="boat-route-select"
-              >
-                <option value="all">All routes</option>
-                {(boatRoutes.get(boatReport.name) || []).map((route) => (
-                  <option key={route} value={route}>{route}</option>
-                ))}
-              </select>
-              <span><strong>{boatReport.summary.totalBookings}</strong> bookings</span>
-              <span><strong>{boatReport.summary.completedBookings}</strong> confirmed</span>
-              <span><strong>₱{boatReport.summary.totalRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</strong> revenue</span>
-            </div>
-          </div>
-        ))}
-        {!loading && !errorMessage && boatReports.length > 0 && visibleBoatReports.length === 0 && (
-          <div className="reports-empty">No boat reports match your search.</div>
-        )}
-            </section>
-          </div>
-        </div>
-        <div className="reports-carousel-dots" aria-label="Report pages">
-          {["Overview", "Daily comparison", "Boat performance"].map((label, index) => (
-            <button
-              type="button"
-              key={label}
-              className={`reports-carousel-dot${reportPage === index ? " active" : ""}`}
-              onClick={() => setReportPage(index)}
-              aria-label={`Go to ${label}`}
-              aria-current={reportPage === index ? "page" : undefined}
-            />
-          ))}
         </div>
 
       </div>
