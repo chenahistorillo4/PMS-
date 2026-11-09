@@ -13,6 +13,30 @@ function toDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+async function createInAppPaymentNotification(db, userId, type, title, message, paymentId, booking) {
+  if (!userId) return;
+
+  const notificationRef = db
+    .collection('notifications')
+    .doc(`user_${type}_${paymentId}`);
+  await db.runTransaction(async (transaction) => {
+    const notificationSnap = await transaction.get(notificationRef);
+    if (notificationSnap.exists) return;
+
+    transaction.set(notificationRef, {
+      userId,
+      type,
+      title,
+      message,
+      recipientType: 'user',
+      bookingId: booking.id,
+      tripId: booking.tripId || null,
+      isRead: false,
+      createdAt: new Date(),
+    });
+  });
+}
+
 async function processPendingPaymentDoc(db, paymentDoc, now = new Date()) {
   const payment = paymentDoc.data();
   if (payment.paymongoStatus === 'paid') {
@@ -41,16 +65,28 @@ async function processPendingPaymentDoc(db, paymentDoc, now = new Date()) {
   }
 
   if (now >= expiresAt) {
-    await paymentDoc.ref.update({
-      status: 'failed',
-      autoCancelledAt: now,
-      cancelReason: 'payment_expired',
-    });
-    await bookingRef.update({
+    const batch = db.batch();
+    batch.update(paymentDoc.ref, {
       status: 'cancelled',
       autoCancelledAt: now,
       cancelReason: 'payment_expired',
     });
+    batch.update(bookingRef, {
+      status: 'cancelled',
+      autoCancelledAt: now,
+      cancelReason: 'payment_expired',
+    });
+    await batch.commit();
+
+    await createInAppPaymentNotification(
+      db,
+      payment.userId || booking.userId,
+      'payment_expired',
+      'Payment Expired - Booking Cancelled',
+      `The payment time limit for ${booking.tripName || 'your trip'} has expired. Your booking was automatically cancelled.`,
+      paymentDoc.id,
+      { ...booking, id: bookingId }
+    );
 
     if (!payment.paymentExpiredNotified) {
       await dispatchNotification({
@@ -83,6 +119,16 @@ async function processPendingPaymentDoc(db, paymentDoc, now = new Date()) {
   const reminderAt = new Date(expiresAt.getTime() - 15 * 60 * 1000);
   if (now >= reminderAt && !payment.paymentReminderSent) {
     const paymentUrl = `${APP_URL}/payment-qr?paymentId=${paymentDoc.id}`;
+
+    await createInAppPaymentNotification(
+      db,
+      payment.userId || booking.userId,
+      'payment_reminder',
+      'Payment Reminder',
+      `Your payment for ${booking.tripName || 'your trip'} expires in 15 minutes. Complete your payment to keep your booking.`,
+      paymentDoc.id,
+      { ...booking, id: bookingId }
+    );
 
     await dispatchNotification({
       type: 'passenger_payment_pending_reminder',

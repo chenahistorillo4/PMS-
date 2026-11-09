@@ -61,7 +61,7 @@ const HIDDEN_NAVBAR_ROUTES = [
 ];
 
 function AppWrapper() {
-  const { user } = useAuth();
+  const { user, role, authReady } = useAuth();
   const location = useLocation();
 
   useEffect(() => {
@@ -76,12 +76,14 @@ function AppWrapper() {
     <>
       <SeoManager />
       {/* Show Navbar only if NOT in admin/superadmin routes */}
-      {!HIDDEN_NAVBAR_ROUTES.includes(location.pathname) && <Navbar user={user} />}
+      {!HIDDEN_NAVBAR_ROUTES.includes(location.pathname) && (
+        <Navbar user={user} role={role} authReady={authReady} />
+      )}
 
       <Routes>
         {/* User routes */}
         <Route path="/" element={<Navigate to="/home" />} />
-        <Route path="/home" element={<Home user={user} />} />
+        <Route path="/home" element={<Home user={user} role={role} authReady={authReady} />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/booking" element={<ProtectedRoute requiredRole="user"><Booking /></ProtectedRoute>} />

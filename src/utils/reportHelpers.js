@@ -51,6 +51,13 @@ export function getPeriodRange(period) {
     return { start, end, label: 'Monthly (this month)' };
   }
 
+  if (period === 'lastMonth') {
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    return { start, end, label: 'Last month' };
+  }
+
   return null;
 }
 
@@ -99,6 +106,21 @@ export function getBookingRouteLabel(booking) {
 
 export function getBookingTripNameLabel(booking) {
   return booking.tripName || 'N/A';
+}
+
+function normalizeBookingPaymentValue(value) {
+  return String(value || '').toLowerCase().replace(/[\s_-]/g, '');
+}
+
+export function isPayLaterBooking(booking) {
+  return [booking?.paymentMode, booking?.paymentMethod, booking?.payment]
+    .some((value) => normalizeBookingPaymentValue(value) === 'paylater');
+}
+
+export function isGcashBooking(booking) {
+  return !isPayLaterBooking(booking) &&
+    [booking?.paymentMethod, booking?.payment]
+      .some((value) => normalizeBookingPaymentValue(value).includes('gcash'));
 }
 
 export function normalizeBookingForReport(booking) {

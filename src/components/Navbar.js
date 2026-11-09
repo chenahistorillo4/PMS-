@@ -3,13 +3,17 @@ import { useEffect, useState } from "react";
 import { useUserUnreadNotificationCount } from "../hooks/useUnreadNotificationCount";
 import { NavNotificationBadge } from "./NotificationBadge";
 
-function Navbar({ user }) {
+function Navbar({ user, role, authReady }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const location = useLocation();
   const isAuthPage = ["/login", "/register"].includes(location.pathname);
-  const showAuthenticatedLinks = Boolean(user && !isAuthPage);
-  const unreadNotificationCount = useUserUnreadNotificationCount(user?.uid);
+  const isAuthenticated = authReady && Boolean(user?.uid);
+  const showAuthenticatedLinks = isAuthenticated && role === "user" && !isAuthPage;
+  const showGuestLinks = !showAuthenticatedLinks;
+  const unreadNotificationCount = useUserUnreadNotificationCount(
+    showAuthenticatedLinks ? user.uid : null
+  );
 
   useEffect(() => {
     const handleResize = () => {
@@ -111,7 +115,7 @@ function Navbar({ user }) {
                 </>
               )}
 
-              {!showAuthenticatedLinks && (
+              {showGuestLinks && (
                 <>
                   <li className="nav-item">
                     <Link className="nav-link nav-link-custom" to="/login" onClick={handleNavClick}>Login</Link>
@@ -238,7 +242,7 @@ function Navbar({ user }) {
             <line x1="3" y1="12" x2="21" y2="12"></line>
             <line x1="3" y1="18" x2="21" y2="18"></line>
           </svg>
-          <NavNotificationBadge count={unreadNotificationCount} />
+          <NavNotificationBadge count={showAuthenticatedLinks ? unreadNotificationCount : 0} />
         </button>
       </div>
 
@@ -496,7 +500,7 @@ function Navbar({ user }) {
             </>
           )}
 
-          {!showAuthenticatedLinks && (
+          {showGuestLinks && (
             <>
               <Link
                 to="/login"

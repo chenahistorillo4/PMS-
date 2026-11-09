@@ -1,4 +1,14 @@
-import { collection, addDoc, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs,
+  doc,
+  getDoc,
+  updateDoc,
+  runTransaction,
+} from 'firebase/firestore';
 import { db } from '../firebase';
 import {
   sendNotification,
@@ -7,6 +17,144 @@ import {
   getUserPhone,
   pickBookingFields,
 } from './emailNotifications';
+
+const createInAppNotification = async (notification, eventId) => {
+  if (!eventId) {
+    throw new Error('An event ID is required to create an in-app notification.');
+  }
+
+  const notificationId = `${notification.recipientType}_${notification.type}_${eventId}`;
+  const notificationRef = doc(db, 'notifications', notificationId);
+  return runTransaction(db, async (transaction) => {
+    const existingNotification = await transaction.get(notificationRef);
+    if (existingNotification.exists()) return false;
+
+    transaction.set(notificationRef, {
+      ...notification,
+      isRead: false,
+      createdAt: new Date(),
+    });
+    return true;
+  });
+};
+
+const createAdminInAppNotification = async ({
+  boat,
+  type,
+  title,
+  message,
+  eventId,
+  ...details
+}) => {
+  if (!boat) return false;
+
+  return createInAppNotification(
+    { boat, type, title, message, recipientType: 'admin', ...details },
+    eventId
+  );
+};
+
+export const notifyNewBookingReceived = async (booking, bookingId, capacity) => {
+  await createAdminInAppNotification({
+    boat: booking.boat,
+    type: 'new_booking_received',
+    title: 'New Booking Received',
+    message: `${booking.customerName || 'A passenger'} booked ${booking.tripName || 'a trip'}.`,
+    eventId: bookingId,
+    bookingId,
+    tripId: booking.tripId,
+    tripDetails: {
+      name: booking.tripName,
+      date: booking.date,
+      departure: booking.departure,
+      arrival: booking.arrival,
+      boat: booking.boat,
+    },
+  });
+
+  const tripCapacity = Number(capacity);
+  if (!booking.tripId || !Number.isFinite(tripCapacity) || tripCapacity <= 0) return;
+
+  const bookingsSnapshot = await getDocs(
+    query(collection(db, 'bookings'), where('tripId', '==', booking.tripId))
+  );
+  const occupiedSeats = bookingsSnapshot.docs.filter((bookingDoc) => {
+    const status = String(bookingDoc.data().status || '').toLowerCase();
+    return !['cancelled', 'failed'].includes(status);
+  }).length;
+
+  if (occupiedSeats >= tripCapacity) {
+    await createAdminInAppNotification({
+      boat: booking.boat,
+      type: 'fully_booked_trip',
+      title: 'Fully Booked Trip Alert',
+      message: `Trip "${booking.tripName || 'Schedule'}" is fully booked (${occupiedSeats}/${tripCapacity} seats).`,
+      eventId: booking.tripId,
+      tripId: booking.tripId,
+      tripDetails: {
+        name: booking.tripName,
+        date: booking.date,
+        departure: booking.departure,
+        arrival: booking.arrival,
+        boat: booking.boat,
+      },
+    });
+  }
+};
+
+export const notifyPaymentReceived = async ({ paymentId, bookingId, notifyAdmin = true }) => {
+  if (!paymentId || !bookingId) return null;
+
+  const [paymentSnap, bookingSnap] = await Promise.all([
+    getDoc(doc(db, 'payments', paymentId)),
+    getDoc(doc(db, 'bookings', bookingId)),
+  ]);
+  if (!paymentSnap.exists() || !bookingSnap.exists()) return null;
+
+  const payment = paymentSnap.data();
+  const booking = { id: bookingSnap.id, ...bookingSnap.data() };
+  const reference = booking.referenceCode ? ` (${booking.referenceCode})` : '';
+  const bookingConfirmed = payment.status === 'completed' || booking.status === 'confirmed';
+  const paymentMessage = `We received your payment of ₱${Number(payment.amount || booking.finalPrice || 0).toFixed(2)} for ${booking.tripName || 'your trip'}${reference}.`;
+  const tasks = [];
+
+  if (booking.userId) {
+    tasks.push(
+      createInAppNotification(
+        {
+          userId: booking.userId,
+          type: 'payment_confirmation',
+          title: bookingConfirmed ? 'Payment Confirmed' : 'Payment Received',
+          message: bookingConfirmed
+            ? `${paymentMessage} Your booking is confirmed.`
+            : `${paymentMessage} Your booking is awaiting port staff confirmation.`,
+          recipientType: 'user',
+          bookingId,
+          tripId: booking.tripId,
+        },
+        paymentId
+      )
+    );
+  }
+
+  if (notifyAdmin) {
+    tasks.push(
+      createAdminInAppNotification({
+        boat: booking.boat || payment.boat,
+        type: 'new_payment_received',
+        title: 'New Payment Received',
+        message: `Payment of ₱${Number(payment.amount || booking.finalPrice || 0).toFixed(2)} received for ${booking.tripName || 'a trip'}${reference}.`,
+        eventId: paymentId,
+        paymentId,
+        bookingId,
+        tripId: booking.tripId,
+      })
+    );
+  }
+
+  await Promise.all(tasks);
+  return { ok: true };
+};
 
 /**
  * Create a notification for admin about trip update/cancellation
@@ -43,8 +191,11 @@ export const createUserNotifications = async (
   try {
     const bookingsQuery = query(collection(db, 'bookings'), where('tripId', '==', tripId));
     const bookingsSnap = await getDocs(bookingsQuery);
+    const passengerBookings = bookingsSnap.docs.filter((bookingDoc) =>
+      Boolean(bookingDoc.data().userId)
+    );
 
-    const notificationPromises = bookingsSnap.docs.map((bookingDoc) => {
+    const notificationPromises = passengerBookings.map((bookingDoc) => {
       const bookingData = bookingDoc.data();
       return addDoc(collection(db, 'notifications'), {
         userId: bookingData.userId,
@@ -62,11 +213,11 @@ export const createUserNotifications = async (
     });
 
     await Promise.all(notificationPromises);
-    console.log(`User notifications created for ${bookingsSnap.docs.length} users`);
+    console.log(`User notifications created for ${passengerBookings.length} passengers`);
 
     if (type === 'trip_cancelled') {
       const results = await Promise.all(
-        bookingsSnap.docs.map(async (bookingDoc) => {
+        passengerBookings.map(async (bookingDoc) => {
           const bookingData = bookingDoc.data();
           const toPhone =
             bookingData.userPhone || (await getUserPhone(bookingData.userId));
@@ -165,6 +316,25 @@ export const notifyNewBooking = async (booking, boat) => {
 };
 
 export const notifyBookingConfirmed = async (booking, userEmail, userPhone) => {
+  if (booking.userId) {
+    try {
+      await createInAppNotification(
+        {
+          userId: booking.userId,
+          type: 'booking_confirmation',
+          title: 'Booking Confirmed',
+          message: `Your booking for ${booking.tripName || 'your trip'} is confirmed.`,
+          recipientType: 'user',
+          bookingId: booking.id,
+          tripId: booking.tripId,
+        },
+        booking.id
+      );
+    } catch (error) {
+      console.error('Booking confirmation in-app notification failed:', error);
+    }
+  }
+
   if (!userEmail && !userPhone) return null;
 
   const resolvedPhone =
@@ -194,8 +364,6 @@ export const notifyPaymentSuccess = async ({
     if (!paymentSnap.exists()) return null;
 
     const paymentData = paymentSnap.data();
-    if (paymentData.confirmationNotified) return null;
-
     const bookingSnap = await getDoc(doc(db, 'bookings', bookingId));
     if (!bookingSnap.exists()) return null;
 
@@ -204,6 +372,31 @@ export const notifyPaymentSuccess = async ({
       ...bookingSnap.data(),
       status: 'confirmed',
     });
+
+    await notifyPaymentReceived({ paymentId, bookingId, notifyAdmin: true }).catch((error) =>
+      console.error('Payment in-app notification failed:', error)
+    );
+
+    if (booking.userId) {
+      try {
+        await createInAppNotification(
+          {
+            userId: booking.userId,
+            type: 'booking_confirmation',
+            title: 'Booking Confirmed',
+            message: `Your booking for ${booking.tripName || 'your trip'} is confirmed.`,
+            recipientType: 'user',
+            bookingId,
+            tripId: booking.tripId,
+          },
+          bookingId
+        );
+      } catch (error) {
+        console.error('Booking confirmation in-app notification failed:', error);
+      }
+    }
+
+    if (paymentData.confirmationNotified) return { ok: true, alreadyNotified: true };
 
     const tasks = [
       notifyBookingConfirmed(
@@ -235,6 +428,24 @@ export const notifyPaymentSuccess = async ({
 };
 
 export const notifyRefundRequest = async (refund, boat) => {
+  const refundId = refund.id || refund.refundId;
+  if (refund.userId && refundId) {
+    try {
+      await createAdminInAppNotification({
+        boat,
+        type: 'refund_request_submitted',
+        title: 'Refund Request Submitted',
+        message: `${refund.userEmail || 'A passenger'} submitted a refund request for ${refund.tripName || 'a trip'}.`,
+        eventId: refundId,
+        refundId,
+        bookingId: refund.bookingId,
+        tripId: refund.tripId,
+      });
+    } catch (error) {
+      console.error('Refund request in-app notification failed:', error);
+    }
+  }
+
   const [adminEmails, adminPhones] = await Promise.all([
     getAdminEmailsForBoat(boat),
     getAdminPhonesForBoat(boat),
