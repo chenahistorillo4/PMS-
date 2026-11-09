@@ -2,6 +2,18 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from "react"
 import { useNavigate } from "react-router-dom";
 import jsQR from "jsqr";
 import jsPDF from "jspdf";
+import {
+  FiCalendar,
+  FiChevronRight,
+  FiCreditCard,
+  FiEdit2,
+  FiKey,
+  FiLock,
+  FiLogOut,
+  FiMail,
+  FiShield,
+  FiUser,
+} from "react-icons/fi";
 import { auth, db } from "../../firebase";
 import { doc, updateDoc, setDoc, serverTimestamp, getDoc, collection, query, where, getDocs, addDoc, onSnapshot, runTransaction } from "firebase/firestore";
 import {
@@ -133,7 +145,38 @@ function getTripDateKey(scan) {
 }
 
 function getScanRoute(scan) {
-  return scan.route || `${scan.departure || "N/A"} → ${scan.destination || "N/A"}`;
+  const route = scan.routeDirection || scan.route;
+  if (route && !/→\s*N\/A$/i.test(route)) return route;
+
+  const departure = scan.departurePort || scan.departure_port || scan.departure;
+  const destination = scan.destinationPort || scan.destination_port || scan.destination;
+  if (!departure || !destination || destination === "N/A" || /^\d{1,2}:\d{2}/.test(departure)) {
+    return "N/A";
+  }
+  return `${departure} → ${destination}`;
+}
+
+function getBookingRouteDetails(bookingData) {
+  const route = String(bookingData.routeDirection || bookingData.route || "").trim();
+  const routeParts = route.split(/\s*(?:→|->|[-–—]|\bto\b)\s*/i);
+  const hasRouteParts = routeParts.length > 1;
+  const departure = bookingData.departure_port || bookingData.departurePort ||
+    (hasRouteParts ? routeParts[0] : "N/A");
+  const destination = bookingData.destination_port || bookingData.destinationPort ||
+    (hasRouteParts ? routeParts.slice(1).join(" - ") : "N/A");
+
+  return {
+    route: route || (departure !== "N/A" && destination !== "N/A" ? `${departure} → ${destination}` : ""),
+    departure,
+    destination
+  };
+}
+
+function getBookingScheduleTime(bookingData) {
+  const departure = bookingData.departure_time || bookingData.departureTime || bookingData.departure;
+  const arrival = bookingData.arrival_time || bookingData.arrivalTime || bookingData.arrival;
+  if (departure && arrival) return `${departure} → ${arrival}`;
+  return departure || arrival || "N/A";
 }
 
 function getScanDisplayStatus(scan) {
@@ -173,10 +216,15 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
   const [notificationMessage, setNotificationMessage] = useState("");
   const [notificationType, setNotificationType] = useState(""); // "success" or "error"
   const [recentScans, setRecentScans] = useState([]);
+  const [availableBoatRoutes, setAvailableBoatRoutes] = useState([]);
   const [manualBookingId, setManualBookingId] = useState("");
-  const [showHistory, setShowHistory] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showHistoryDownloadPreview, setShowHistoryDownloadPreview] = useState(false);
+  const [historyDownloadError, setHistoryDownloadError] = useState("");
   const [historyDate, setHistoryDate] = useState("");
   const [historyRoute, setHistoryRoute] = useState("");
+  const [appliedHistoryDate, setAppliedHistoryDate] = useState("");
+  const [appliedHistoryRoute, setAppliedHistoryRoute] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
   const showProfile = profileOnly;
   const [, setSuccessfulScan] = useState(null);
@@ -211,6 +259,9 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
     return {
       bookingDocId: bookingDocId || "",
       bookingId: details?.booking_id || "N/A",
+      userAccount: details?.bookedBy && details.bookedBy !== "N/A"
+        ? details.bookedBy
+        : details?.email || "N/A",
       passengerName: details?.passengerName || "N/A",
       departure: details?.departure || "N/A",
       destination: details?.destination || "N/A",
@@ -220,6 +271,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
       tripTime: details?.time || "N/A",
       tripId: details?.tripId || "",
       referenceCode: details?.referenceCode || details?.reference_number || "N/A",
+      paymentMethod: details?.paymentMethod || "N/A",
       paymentStatus: details?.paymentStatus || "pending",
       paymentAmount: details?.totalAmount || details?.finalPrice || 0,
       actionStatus: action,
@@ -310,6 +362,31 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
             });
 
           setRecentScans(historyList);
+
+          const unresolvedBookingIds = [...new Set(
+            historyList
+              .filter((scan) => getScanRoute(scan) === "N/A" && scan.bookingDocId)
+              .map((scan) => scan.bookingDocId)
+          )];
+          if (!unresolvedBookingIds.length) return;
+
+          Promise.all(unresolvedBookingIds.map(async (bookingId) => {
+            const bookingSnapshot = await getDoc(doc(db, "bookings", bookingId));
+            return [
+              bookingId,
+              bookingSnapshot.exists() ? getBookingRouteDetails(bookingSnapshot.data()) : null
+            ];
+          }))
+            .then((resolvedRoutes) => {
+              const routeByBookingId = new Map(resolvedRoutes);
+              setRecentScans((currentScans) => currentScans.map((scan) => {
+                const routeDetails = routeByBookingId.get(scan.bookingDocId);
+                return routeDetails?.route ? { ...scan, ...routeDetails } : scan;
+              }));
+            })
+            .catch((error) => {
+              console.error("Error resolving routes for recent scans:", error);
+            });
         });
       } catch (error) {
         console.error("Error initializing profile/history:", error);
@@ -323,6 +400,30 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!profile.assignedBoat) {
+      setAvailableBoatRoutes([]);
+      return undefined;
+    }
+
+    const schedulesQuery = query(
+      collection(db, "schedules"),
+      where("boat", "==", profile.assignedBoat)
+    );
+    return onSnapshot(
+      schedulesQuery,
+      (snapshot) => {
+        const routes = snapshot.docs
+          .map((scheduleDoc) => getBookingRouteDetails(scheduleDoc.data()).route)
+          .filter((route) => route && route !== "N/A" && !route.includes("→ N/A"));
+        setAvailableBoatRoutes([...new Set(routes)].sort((a, b) => a.localeCompare(b)));
+      },
+      (error) => {
+        console.error("Error loading routes for assigned boat:", error);
+      }
+    );
+  }, [profile.assignedBoat]);
 
   // Auto-scroll to booking details on mobile when booking is detected
   useEffect(() => {
@@ -823,16 +924,18 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
         const bookingStatus = String(bookingData.status || "").toLowerCase();
         const canAccept = isPaid &&
           !["cancelled", "departed", "scanned", "boarded"].includes(bookingStatus);
+        const routeDetails = getBookingRouteDetails(bookingData);
 
         // Extract relevant booking information
         const details = {
           passengerName: bookingData.customerName || bookingData.passenger_name || bookingData.name || "N/A",
           booking_id: bookingData.booking_id || scannedCode,
           referenceCode: bookingData.referenceCode || bookingData.reference_number || "N/A",
-          departure: bookingData.departure_port || bookingData.departure || bookingData.routeDirection?.split(" to ")[0] || "N/A",
-          destination: bookingData.destination_port || bookingData.destination || bookingData.routeDirection?.split(" to ")[1] || "N/A",
+          route: routeDetails.route,
+          departure: routeDetails.departure,
+          destination: routeDetails.destination,
           date: bookingData.departure_date || bookingData.departureDate || bookingData.date || "N/A",
-          time: bookingData.departure_time || bookingData.departureTime || bookingData.arrival || "N/A",
+          time: getBookingScheduleTime(bookingData),
           vessel: bookingData.vessel_name || bookingData.vessel || bookingData.boat || bookingData.tripName || "N/A",
           status: isPaid ? bookingData.status || "Pending" : "Pending",
           userType: bookingData.userType || "Regular",
@@ -842,6 +945,10 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
           basePrice: bookingData.basePrice || bookingData.price || 0,
           discountRate: bookingData.discountRate || 0,
           discountAmount: bookingData.discountAmount || 0,
+          passengerDiscountAmount: bookingData.passengerDiscountAmount ?? Math.max(0, (bookingData.discountAmount || 0) - (bookingData.promoDiscountAmount || 0)),
+          promoName: bookingData.promoName || "",
+          promoPercentage: bookingData.promoPercentage || 0,
+          promoDiscountAmount: bookingData.promoDiscountAmount || 0,
           finalPrice: bookingData.finalPrice || bookingData.total_amount || "0",
           ticketCount: bookingData.ticket_count || bookingData.passengers?.length || 1,
           totalAmount: bookingData.total_amount || bookingData.finalPrice || "0",
@@ -1013,6 +1120,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
               const bookingStatus = String(bookingData.status || "").toLowerCase();
               const canAccept = isPaid &&
                 !["cancelled", "departed", "scanned", "boarded"].includes(bookingStatus);
+              const routeDetails = getBookingRouteDetails(bookingData);
 
               // Check if ticket is already scanned/used
               if (
@@ -1034,10 +1142,11 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                 passengerName: bookingData.customerName || bookingData.passenger_name || bookingData.name || "N/A",
                 booking_id: bookingData.booking_id || scannedCode,
                 referenceCode: bookingData.referenceCode || bookingData.reference_number || "N/A",
-                departure: bookingData.departure_port || bookingData.departure || bookingData.routeDirection?.split(" to ")[0] || "N/A",
-                destination: bookingData.destination_port || bookingData.destination || bookingData.routeDirection?.split(" to ")[1] || "N/A",
+                route: routeDetails.route,
+                departure: routeDetails.departure,
+                destination: routeDetails.destination,
                 date: bookingData.departure_date || bookingData.departureDate || bookingData.date || "N/A",
-                time: bookingData.departure_time || bookingData.departureTime || bookingData.arrival || "N/A",
+                time: getBookingScheduleTime(bookingData),
                 vessel: bookingData.vessel_name || bookingData.vessel || bookingData.boat || bookingData.tripName || "N/A",
                 status: isPaid ? bookingData.status || "Pending" : "Pending",
                 userType: bookingData.userType || "Regular",
@@ -1047,6 +1156,10 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                 basePrice: bookingData.basePrice || bookingData.price || 0,
                 discountRate: bookingData.discountRate || 0,
                 discountAmount: bookingData.discountAmount || 0,
+                passengerDiscountAmount: bookingData.passengerDiscountAmount ?? Math.max(0, (bookingData.discountAmount || 0) - (bookingData.promoDiscountAmount || 0)),
+                promoName: bookingData.promoName || "",
+                promoPercentage: bookingData.promoPercentage || 0,
+                promoDiscountAmount: bookingData.promoDiscountAmount || 0,
                 finalPrice: bookingData.finalPrice || bookingData.total_amount || "0",
                 ticketCount: bookingData.ticket_count || bookingData.passengers?.length || 1,
                 totalAmount: bookingData.total_amount || bookingData.finalPrice || "0",
@@ -1117,22 +1230,23 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
   scanQRCodeRef.current = scanQRCode;
 
   const historyRoutes = useMemo(
-    () => [...new Set(
-      recentScans
+    () => [...new Set([
+      ...availableBoatRoutes,
+      ...recentScans
         .map(getScanRoute)
         .filter((route) => route && !route.includes("N/A"))
-    )].sort(),
-    [recentScans]
+    ])].sort((a, b) => a.localeCompare(b)),
+    [availableBoatRoutes, recentScans]
   );
   const filteredRecentScans = useMemo(() => {
     return recentScans.filter((scan) => {
-      const matchesDate = !historyDate ||
-        getScanDateKey(scan) === historyDate ||
-        getTripDateKey(scan) === historyDate;
-      const matchesRoute = !historyRoute || getScanRoute(scan) === historyRoute;
+      const matchesDate = !appliedHistoryDate ||
+        getScanDateKey(scan) === appliedHistoryDate ||
+        getTripDateKey(scan) === appliedHistoryDate;
+      const matchesRoute = !appliedHistoryRoute || getScanRoute(scan) === appliedHistoryRoute;
       return matchesDate && matchesRoute;
     });
-  }, [recentScans, historyDate, historyRoute]);
+  }, [recentScans, appliedHistoryDate, appliedHistoryRoute]);
   const historyPageSize = 10;
   const historyTotalPages = Math.max(1, Math.ceil(filteredRecentScans.length / historyPageSize));
   const paginatedHistoryScans = filteredRecentScans.slice(
@@ -1141,45 +1255,135 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
   );
   useEffect(() => {
     setHistoryPage(1);
-  }, [historyDate, historyRoute]);
+  }, [appliedHistoryDate, appliedHistoryRoute]);
 
   useEffect(() => {
     if (historyPage > historyTotalPages) setHistoryPage(historyTotalPages);
   }, [historyPage, historyTotalPages]);
 
+  const getHistoryExportRows = () => [
+    ["Passenger", "Booking ID", "Route", "Schedule", "Status"],
+    ...filteredRecentScans.map((scan) => [
+      scan.passengerName || "N/A",
+      scan.bookingId || "N/A",
+      getScanRoute(scan),
+      [scan.travelDate, scan.tripTime].filter((value) => value && value !== "N/A").join(" · ") || "N/A",
+      getScanDisplayStatus(scan),
+    ])
+  ];
+
+  const getHistoryExportFileName = () => {
+    const routeFilePart = (appliedHistoryRoute || "all-routes").replace(/[\\/:*?"<>|]+/g, "-");
+    return `boarding-history-${appliedHistoryDate || "all-dates"}-${routeFilePart}.pdf`;
+  };
+
   const downloadHistoryPdf = () => {
     if (filteredRecentScans.length === 0) return;
-
+    const exportRows = getHistoryExportRows();
     const pdf = new jsPDF();
     pdf.setFontSize(16);
     pdf.text("Boarding Passenger History", 14, 18);
     pdf.setFontSize(9);
     pdf.text(
-      `Date: ${historyDate || "All"} | Route: ${historyRoute || "All routes"} | Total: ${filteredRecentScans.length}`,
+      `Date: ${appliedHistoryDate || "All"} | Route: ${appliedHistoryRoute || "All routes"} | Total: ${filteredRecentScans.length}`,
       14,
       26
     );
 
     pdf.autoTable({
       startY: 32,
-      head: [["#", "Passenger", "Booking ID", "Route", "Schedule", "Status"]],
-      body: filteredRecentScans.map((scan, index) => [
-        index + 1,
-        scan.passengerName || "N/A",
-        scan.bookingId || "N/A",
-        getScanRoute(scan),
-        [scan.travelDate, scan.tripTime].filter((value) => value && value !== "N/A").join(" · ") || "N/A",
-        getScanDisplayStatus(scan),
-      ]),
+      head: [["#", ...exportRows[0]]],
+      body: exportRows.slice(1).map((row, index) => [index + 1, ...row]),
       styles: { fontSize: 8 },
       headStyles: { fillColor: [33, 150, 243] },
     });
-    const routeFilePart = (historyRoute || "all-routes").replace(/[\\/:*?"<>|]+/g, "-");
-    pdf.save(`boarding-history-${historyDate || "all-dates"}-${routeFilePart}.pdf`);
+    pdf.save(getHistoryExportFileName());
   };
 
   return (
     <div className={`qr-scanner-container${embedded ? " embedded" : ""}${profileOnly ? " profile-only" : ""}`}>
+      {showHistoryDownloadPreview && (
+        <div
+          className="history-download-preview-overlay"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowHistoryDownloadPreview(false);
+              setHistoryDownloadError("");
+            }
+          }}
+        >
+          <section
+            className="history-download-preview-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-download-preview-title"
+          >
+            <header className="history-download-preview-header">
+              <div>
+                <h2 id="history-download-preview-title">PDF Download Preview</h2>
+                <p>{getHistoryExportFileName()} · {filteredRecentScans.length} scan{filteredRecentScans.length === 1 ? "" : "s"}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close preview"
+                onClick={() => {
+                  setShowHistoryDownloadPreview(false);
+                  setHistoryDownloadError("");
+                }}
+              >
+                ×
+              </button>
+            </header>
+            {historyDownloadError && <p className="history-download-preview-error" role="alert">{historyDownloadError}</p>}
+            <div className="history-download-preview-table-wrap">
+              <table className="history-download-preview-table">
+                <tbody>
+                  {getHistoryExportRows().map((row, rowIndex) => (
+                    <tr key={`history-export-row-${rowIndex}`} className={rowIndex === 0 ? "preview-heading-row" : ""}>
+                      {rowIndex === 0
+                        ? <th scope="col">#</th>
+                        : <th scope="row">{rowIndex}</th>}
+                      {row.map((cell, cellIndex) => {
+                        const Cell = rowIndex === 0 ? "th" : "td";
+                        return <Cell key={`history-export-cell-${rowIndex}-${cellIndex}`}>{cell}</Cell>;
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <footer className="history-download-preview-actions">
+              <button
+                type="button"
+                className="history-preview-cancel-button"
+                onClick={() => {
+                  setShowHistoryDownloadPreview(false);
+                  setHistoryDownloadError("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="history-preview-confirm-button"
+                onClick={() => {
+                  try {
+                    downloadHistoryPdf();
+                    setHistoryDownloadError("");
+                    setShowHistoryDownloadPreview(false);
+                  } catch (error) {
+                    console.error("Error downloading recent scans PDF:", error);
+                    setHistoryDownloadError("Could not download the PDF. Please try again.");
+                  }
+                }}
+              >
+                Confirm Download
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
       {/* Drawer Overlay */}
       {!embedded && showDrawer && (
         <div
@@ -1418,17 +1622,23 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                   <span className="detail-label">Base Price:</span>
                   <span className="detail-value">₱{parseFloat(bookingDetails.basePrice).toFixed(2)}</span>
                 </div>
-                {bookingDetails.discountRate > 0 && (
+                {bookingDetails.passengerDiscountAmount > 0 && (
                   <>
                     <div className="detail-item">
-                      <span className="detail-label">Discount Rate:</span>
+                      <span className="detail-label">Passenger Discount Rate:</span>
                       <span className="detail-value">{(bookingDetails.discountRate * 100).toFixed(0)}%</span>
                     </div>
                     <div className="detail-item">
-                      <span className="detail-label">Discount Amount:</span>
-                      <span className="detail-value">₱{parseFloat(bookingDetails.discountAmount).toFixed(2)}</span>
+                      <span className="detail-label">Passenger Discount:</span>
+                      <span className="detail-value">₱{parseFloat(bookingDetails.passengerDiscountAmount).toFixed(2)}</span>
                     </div>
                   </>
+                )}
+                {bookingDetails.promoDiscountAmount > 0 && (
+                  <div className="detail-item">
+                    <span className="detail-label">Promo ({bookingDetails.promoName}, {bookingDetails.promoPercentage}%):</span>
+                    <span className="detail-value">-₱{parseFloat(bookingDetails.promoDiscountAmount).toFixed(2)}</span>
+                  </div>
                 )}
                 <div className="detail-item" style={{backgroundColor: "#f0f8ff", padding: "10px", borderRadius: "8px", fontWeight: "bold"}}>
                   <span className="detail-label">Final Price:</span>
@@ -1617,35 +1827,56 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                   ))}
                 </select>
               </label>
-              {(historyDate || historyRoute) && (
-                <button
-                  type="button"
-                  className="history-clear-button"
-                  onClick={() => {
-                    setHistoryDate("");
-                    setHistoryRoute("");
-                    setHistoryPage(1);
-                  }}
-                >
-                  Clear filters
-                </button>
-              )}
-              <span className="history-result-count">
-                {filteredRecentScans.length} passenger{filteredRecentScans.length === 1 ? "" : "s"}
-              </span>
+              <button
+                type="button"
+                className="history-search-button"
+                onClick={() => {
+                  setAppliedHistoryDate(historyDate);
+                  setAppliedHistoryRoute(historyRoute);
+                  setHistoryPage(1);
+                }}
+              >
+                Search
+              </button>
+              <button
+                type="button"
+                className="history-clear-button"
+                onClick={() => {
+                  setHistoryDate("");
+                  setHistoryRoute("");
+                  setAppliedHistoryDate("");
+                  setAppliedHistoryRoute("");
+                  setHistoryPage(1);
+                }}
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="history-results-header">
+              <h3>
+                Recent Scans for {appliedHistoryDate || "All Dates"} · {appliedHistoryRoute || "All Routes"}
+                <span>
+                  {filteredRecentScans.length} passenger{filteredRecentScans.length === 1 ? "" : "s"}
+                </span>
+              </h3>
               <button
                 type="button"
                 className="history-download-button"
-                onClick={downloadHistoryPdf}
+                onClick={() => {
+                  setHistoryDownloadError("");
+                  setShowHistoryDownloadPreview(true);
+                }}
                 disabled={!filteredRecentScans.length}
               >
-                Download PDF
+                Preview & Download PDF
               </button>
             </div>
 
             {filteredRecentScans.length > 0 ? (
               <div className="history-list">
                 <div className="history-list-header" aria-hidden="true">
+                  <span>User Account</span>
                   <span>Passenger</span>
                   <span>Route</span>
                   <span>Date</span>
@@ -1657,16 +1888,26 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                 {paginatedHistoryScans.map((scan, index) => (
                   <div key={scan.id || `${scan.bookingId}-${index}`} className="history-item">
                     <div className="history-item-content">
+                      <span className="detail-badge history-user-account" data-label="User Account">
+                        {scan.userAccount && scan.userAccount !== "N/A"
+                          ? scan.userAccount
+                          : scan.bookedBy && scan.bookedBy !== "N/A"
+                            ? scan.bookedBy
+                            : scan.email || "N/A"}
+                      </span>
                       <h3>{scan.passengerName || "N/A"}</h3>
                       <div className="history-details">
-                        <span className="detail-badge">{getScanRoute(scan)}</span>
-                        <span className="detail-badge">{scan.travelDate || "N/A"}</span>
-                        <span className="detail-badge">{scan.tripTime || "N/A"}</span>
-                        <span className={`detail-badge payment-${getScanPaymentStatus(scan).toLowerCase()}`}>
-                          {getScanPaymentStatus(scan)}
+                        <span className="detail-badge" data-label="Route">{getScanRoute(scan)}</span>
+                        <span className="detail-badge" data-label="Date">{scan.travelDate || "N/A"}</span>
+                        <span className="detail-badge" data-label="Time">{scan.tripTime || "N/A"}</span>
+                        <span className="detail-badge history-payment" data-label="Payment">
+                          <span className="history-payment-method">{scan.paymentMethod || "N/A"}</span>
+                          <span className={`history-payment-status payment-${getScanPaymentStatus(scan).toLowerCase()}`}>
+                            {getScanPaymentStatus(scan)}
+                          </span>
                         </span>
-                        <span className="detail-badge">{getScanPaymentAmount(scan)}</span>
-                        <span className={`detail-badge status-${getScanDisplayStatus(scan).toLowerCase()}`}>
+                        <span className="detail-badge" data-label="Amount">{getScanPaymentAmount(scan)}</span>
+                        <span className={`detail-badge status-${getScanDisplayStatus(scan).toLowerCase()}`} data-label="Status">
                           {getScanDisplayStatus(scan)}
                         </span>
                       </div>
@@ -1711,7 +1952,11 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
         {showProfile && (
           // Profile View
           <div className="profile-view">
-            {!isEditingProfile && !isChangingPassword ? (
+            <header className="profile-only-page-header">
+              <h1>{isEditingProfile ? "Edit Profile" : "My Profile"}</h1>
+              <p>Manage your personal information and account security.</p>
+            </header>
+            {!isEditingProfile ? (
               // View Mode
               <div className="profile-card">
                 {/* Profile Picture Section */}
@@ -1727,15 +1972,20 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                       <span>No Photo</span>
                     </div>
                   )}
+                  <div className="profile-only-identity">
+                    <h2>{profile?.name || "Port Staff"}</h2>
+                    <span>Port Staff</span>
+                  </div>
                 </div>
 
                 {/* Info Header with Edit Button */}
                 <div className="profile-info-header">
-                  <h2>Personal Information</h2>
+                  <h2><FiCreditCard aria-hidden="true" />Personal Information</h2>
                   <button 
                     className="profile-edit-btn"
                     onClick={handleEditProfile}
                   >
+                    <FiEdit2 aria-hidden="true" />
                     Edit Profile
                   </button>
                 </div>
@@ -1743,21 +1993,21 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                 <div className="profile-content">
                   <div className="profile-fields">
                     <div className="profile-item">
-                      <label>Full Name</label>
+                      <label><FiUser aria-hidden="true" />Full Name</label>
                       <p>{profile?.name || "Not set"}</p>
                     </div>
                     <div className="profile-item">
-                      <label>Email</label>
+                      <label><FiMail aria-hidden="true" />Email</label>
                       <p>{profile?.email || "Not set"}</p>
                     </div>
                     <div className="profile-item">
-                      <label>Role</label>
+                      <label><FiShield aria-hidden="true" />Role</label>
                       <p>{profile?.role || "Not set"}</p>
                     </div>
                   </div>
 
                   <div className="profile-section">
-                    <h3>Account Status</h3>
+                    <h3><FiShield aria-hidden="true" />Account Status</h3>
                     <div className="profile-item">
                       <label>Status</label>
                       <p className={`status-badge ${profile?.status === "active" ? "active" : "inactive"}`}>
@@ -1767,7 +2017,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                   </div>
 
                   <div className="profile-section">
-                    <h3>Activity Log</h3>
+                    <h3><FiCalendar aria-hidden="true" />Activity Log</h3>
                     <div className="profile-item">
                       <label>Created Date</label>
                       <p>{profile?.createdAt ? new Date(profile.createdAt.seconds * 1000).toLocaleDateString() : "Not available"}</p>
@@ -1778,23 +2028,97 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                     </div>
                   </div>
 
+                  <div className={`profile-password-section${isChangingPassword ? " is-open" : ""}`}>
+                    <div className="profile-password-header">
+                      <div className="profile-password-description">
+                        <FiLock aria-hidden="true" />
+                        <div>
+                          <h3>Change Password</h3>
+                          <p>Update your account password for security.</p>
+                        </div>
+                      </div>
+                      {!isChangingPassword && (
+                        <button
+                          type="button"
+                          className="profile-password-btn"
+                          onClick={() => setIsChangingPassword(true)}
+                        >
+                          <FiKey aria-hidden="true" />
+                          <span>Change Password</span>
+                          <FiChevronRight className="profile-password-chevron" aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                    {isChangingPassword && (
+                      <div className="profile-password-card">
+                        {passwordError && <div className="password-error" role="alert">{passwordError}</div>}
+                        <div className="password-form portstaff-password-fields">
+                          <div className="password-field">
+                            <label>Current Password</label>
+                            <input
+                              type="password"
+                              value={passwordForm.currentPassword}
+                              onChange={(event) => setPasswordForm({ ...passwordForm, currentPassword: event.target.value })}
+                              disabled={isUpdatingPassword}
+                              placeholder="Enter your current password"
+                              autoComplete="current-password"
+                            />
+                          </div>
+                          <div className="password-field">
+                            <label>New Password</label>
+                            <input
+                              type="password"
+                              value={passwordForm.newPassword}
+                              onChange={(event) => setPasswordForm({ ...passwordForm, newPassword: event.target.value })}
+                              disabled={isUpdatingPassword}
+                              placeholder="Enter your new password"
+                              autoComplete="new-password"
+                            />
+                          </div>
+                          <div className="password-field">
+                            <label>Confirm New Password</label>
+                            <input
+                              type="password"
+                              value={passwordForm.confirmPassword}
+                              onChange={(event) => setPasswordForm({ ...passwordForm, confirmPassword: event.target.value })}
+                              disabled={isUpdatingPassword}
+                              placeholder="Confirm your new password"
+                              autoComplete="new-password"
+                            />
+                          </div>
+                        </div>
+                        <div className="password-actions portstaff-password-actions">
+                          <button
+                            className="btn-cancel"
+                            onClick={handleCancelPasswordChange}
+                            disabled={isUpdatingPassword}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className="btn-update-password"
+                            onClick={handlePasswordChange}
+                            disabled={isUpdatingPassword}
+                          >
+                            {isUpdatingPassword ? "Updating..." : "Update Password"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="profile-action-buttons">
-                    <button 
-                      className="profile-password-btn"
-                      onClick={() => setIsChangingPassword(true)}
-                    >
-                      Change Password
-                    </button>
                     <button 
                       className="profile-logout-btn" 
                       onClick={handleLogout}
                     >
+                      <FiLogOut aria-hidden="true" />
                       Logout
                     </button>
                   </div>
                 </div>
               </div>
-            ) : isEditingProfile ? (
+            ) : (
               // Edit Mode
               <div className="profile-card edit-mode">
                 <div className="profile-header">
@@ -1867,7 +2191,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                 {/* Edit Fields */}
                 <div className="profile-edit-fields">
                   <div className="profile-field">
-                    <label>Full Name</label>
+                    <label><FiUser aria-hidden="true" />Full Name</label>
                     <input 
                       type="text"
                       value={profile.name}
@@ -1877,7 +2201,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                   </div>
 
                   <div className="profile-field">
-                    <label>Email</label>
+                    <label><FiMail aria-hidden="true" />Email</label>
                     <input 
                       type="email"
                       value={profile.email}
@@ -1887,7 +2211,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                   </div>
 
                   <div className="profile-field">
-                    <label>Role</label>
+                    <label><FiShield aria-hidden="true" />Role</label>
                     <input 
                       type="text"
                       value={profile.role}
@@ -1911,68 +2235,6 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                     disabled={isSaving}
                   >
                     Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              // Change Password Mode
-              <div className="profile-card password-mode">
-                <div className="password-header">
-                  <h2>Change Password</h2>
-                </div>
-
-                {passwordError && (
-                  <div className="password-error">
-                    {passwordError}
-                  </div>
-                )}
-
-                <div className="password-form">
-                  <div className="password-field">
-                    <label>Current Password</label>
-                    <input 
-                      type="password"
-                      value={passwordForm.currentPassword}
-                      onChange={(e) => setPasswordForm({...passwordForm, currentPassword: e.target.value})}
-                      placeholder="Enter your current password"
-                    />
-                  </div>
-
-                  <div className="password-field">
-                    <label>New Password</label>
-                    <input 
-                      type="password"
-                      value={passwordForm.newPassword}
-                      onChange={(e) => setPasswordForm({...passwordForm, newPassword: e.target.value})}
-                      placeholder="Enter your new password"
-                    />
-                  </div>
-
-                  <div className="password-field">
-                    <label>Confirm New Password</label>
-                    <input 
-                      type="password"
-                      value={passwordForm.confirmPassword}
-                      onChange={(e) => setPasswordForm({...passwordForm, confirmPassword: e.target.value})}
-                      placeholder="Confirm your new password"
-                    />
-                  </div>
-                </div>
-
-                <div className="password-actions">
-                  <button 
-                    className="btn-cancel"
-                    onClick={handleCancelPasswordChange}
-                    disabled={isUpdatingPassword}
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    className="btn-update-password"
-                    onClick={handlePasswordChange}
-                    disabled={isUpdatingPassword}
-                  >
-                    {isUpdatingPassword ? "Updating..." : "Update Password"}
                   </button>
                 </div>
               </div>

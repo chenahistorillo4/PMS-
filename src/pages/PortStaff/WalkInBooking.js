@@ -4,6 +4,13 @@ import { db, auth } from "../../firebase";
 import AdminLayout from "../Admin/AdminLayout";
 import { getStaffAccount } from "../../utils/staffAccount";
 import { useAuthUser } from "../../hooks/useAuthUser";
+import {
+  calculatePromoDiscount,
+  getActivePromo,
+  getPromoReservationCounts,
+} from "../../utils/promotionHelpers";
+import { notifyNewBookingReceived } from "../../utils/notificationHelper";
+import "./WalkInBooking.css";
 
 const generateReferenceCode = () => {
   const timestamp = Date.now().toString(36).toUpperCase().slice(-6);
@@ -32,6 +39,8 @@ function WalkInBookingPage() {
   const [trips, setTrips] = useState([]);
   const [bookingCounts, setBookingCounts] = useState({});
   const [discounts, setDiscounts] = useState({});
+  const [promos, setPromos] = useState([]);
+  const [promoReservationCounts, setPromoReservationCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState({ type: "", text: "" });
@@ -76,6 +85,10 @@ function WalkInBookingPage() {
           })
           .sort((a, b) => getTripDate(a.date) - getTripDate(b.date));
         const discountData = discountsSnapshot.docs[0]?.data()?.discounts || {};
+        const boatPromos = discountsSnapshot.docs[0]?.data()?.promos || [];
+        const promoCounts = getPromoReservationCounts(
+          bookingsSnapshot.docs.map((bookingDoc) => bookingDoc.data())
+        );
         const counts = {};
         bookingsSnapshot.docs.forEach((bookingDoc) => {
           const booking = bookingDoc.data();
@@ -89,6 +102,8 @@ function WalkInBookingPage() {
         setProfile(account.data);
         setTrips(availableTrips);
         setDiscounts(discountData);
+        setPromos(Array.isArray(boatPromos) ? boatPromos : []);
+        setPromoReservationCounts(promoCounts);
         setBookingCounts(counts);
         if (availableTrips.length > 0) {
           setForm((previous) => ({ ...previous, tripId: availableTrips[0].id }));
@@ -109,14 +124,20 @@ function WalkInBookingPage() {
 
   const selectedTrip = trips.find((trip) => trip.id === form.tripId);
   const isCargoOnly = form.bookingType === "cargo_only";
+  const isPassengerOnly = form.bookingType === "passenger_only";
+  const includesCargo = !isPassengerOnly;
   const cargoPrice = useMemo(() => {
+    if (!includesCargo) return 0;
     const weight = Number(form.cargoWeight);
     const rate = Number(selectedTrip?.cargoPerKilo || 20);
     return Number.isFinite(weight) && weight > 0 ? weight * rate : 0;
-  }, [form.cargoWeight, selectedTrip]);
+  }, [form.cargoWeight, includesCargo, selectedTrip]);
   const basePrice = isCargoOnly ? cargoPrice : Number(selectedTrip?.price || 0) + cargoPrice;
   const discountRate = isCargoOnly ? 0 : Number(discounts[form.userType] || 0);
-  const discountAmount = basePrice * discountRate;
+  const activePromo = isCargoOnly ? null : getActivePromo(promos, promoReservationCounts);
+  const passengerDiscountAmount = basePrice * discountRate;
+  const promoDiscountAmount = calculatePromoDiscount(basePrice - passengerDiscountAmount, activePromo);
+  const discountAmount = passengerDiscountAmount + promoDiscountAmount;
   const finalPrice = Math.max(0, basePrice - discountAmount);
   const availableSeats = selectedTrip
     ? Math.max(0, Number(selectedTrip.capacity || 0) - (bookingCounts[selectedTrip.id] || 0))
@@ -124,7 +145,13 @@ function WalkInBookingPage() {
 
   const handleChange = (event) => {
     const { name, value } = event.target;
-    setForm((previous) => ({ ...previous, [name]: value }));
+    setForm((previous) => ({
+      ...previous,
+      [name]: value,
+      ...(name === "bookingType" && value === "passenger_only"
+        ? { cargoType: "", cargoWeight: "" }
+        : {})
+    }));
     setMessage({ type: "", text: "" });
   };
 
@@ -170,6 +197,19 @@ function WalkInBookingPage() {
         throw new Error("This trip is already full. Please select another schedule.");
       }
 
+      const latestBoatBookings = await getDocs(
+        query(collection(db, "bookings"), where("boat", "==", selectedTrip.boat))
+      );
+      const latestPromo = isCargoOnly
+        ? null
+        : getActivePromo(
+          promos,
+          getPromoReservationCounts(latestBoatBookings.docs.map((bookingDoc) => bookingDoc.data()))
+        );
+      if ((latestPromo?.id || null) !== (activePromo?.id || null)) {
+        throw new Error("Promo availability has changed. Please review the updated price before booking.");
+      }
+
       const referenceCode = generateReferenceCode();
       const staffName = profile?.name || auth.currentUser?.email || "Port Staff";
       const bookingData = {
@@ -191,6 +231,11 @@ function WalkInBookingPage() {
         passengerPrice: isCargoOnly ? 0 : Number(selectedTrip.price || 0),
         discountRate,
         discountAmount,
+        passengerDiscountAmount,
+        promoName: promoDiscountAmount > 0 ? activePromo?.name || null : null,
+        promoId: promoDiscountAmount > 0 ? activePromo?.id || null : null,
+        promoPercentage: promoDiscountAmount > 0 ? Number(activePromo?.percentage) : 0,
+        promoDiscountAmount,
         finalPrice,
         payment: form.payment,
         paymentMode: "pay_now",
@@ -226,6 +271,9 @@ function WalkInBookingPage() {
         createdAt: serverTimestamp()
       });
       await batch.commit();
+      await notifyNewBookingReceived(bookingData, bookingReference.id, selectedTrip.capacity).catch((error) =>
+        console.warn("Walk-in booking in-app notification failed:", error)
+      );
       setBookingCounts((previous) => ({
         ...previous,
         [selectedTrip.id]: (previous[selectedTrip.id] || 0) + 1
@@ -246,33 +294,42 @@ function WalkInBookingPage() {
 
   return (
     <AdminLayout active="walk-in">
-      <main style={{ width: "100%", fontSize: "0.95rem" }}>
-        <div style={{ background: "#fff", borderRadius: 14, padding: "24px", boxShadow: "0 2px 10px rgba(0,0,0,.08)" }}>
-          <h1 style={{ margin: 0, color: "#244f86", fontSize: "1.3rem", fontWeight: 800 }}>Walk-in Booking</h1>
-          <p style={{ color: "#666", margin: "8px 0 24px", fontSize: "0.95rem", fontWeight: 500, lineHeight: 1.5 }}>
-            Create a booking for passengers who did not book online.
-          </p>
+      <main className="walk-in-page">
+        <section className="walk-in-card">
+          <header className="walk-in-header">
+            <div>
+              <h1>Walk-in Booking</h1>
+              <p>
+                Create a booking for passengers who did not book online.
+              </p>
+            </div>
+            {profile?.assignedBoat && (
+              <div className="walk-in-boat-badge">
+                <span>Assigned boat</span>
+                <strong>{profile.assignedBoat}</strong>
+              </div>
+            )}
+          </header>
 
           {message.text && (
-            <div role="alert" style={{
-              marginBottom: 18,
-              padding: "12px 14px",
-              borderRadius: 8,
-              background: message.type === "success" ? "#e8f7ee" : "#fdecec",
-              color: message.type === "success" ? "#23743c" : "#a12626"
-            }}>
+            <div className={`walk-in-message ${message.type}`} role="alert">
               {message.text}
             </div>
           )}
 
           {loading ? (
-            <p>Loading available trips...</p>
+            <p className="walk-in-state">Loading available trips...</p>
+          ) : trips.length === 0 ? (
+            <div className="walk-in-state walk-in-empty">
+              <strong>No available trips</strong>
+              <span>There are no upcoming schedules available for your assigned boat.</span>
+            </div>
           ) : (
-            <form onSubmit={handleSubmit}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
-                <label style={labelStyle}>
+            <form className="walk-in-form" onSubmit={handleSubmit}>
+              <div className="walk-in-fields">
+                <label className="walk-in-field">
                   Trip / Schedule
-                  <select name="tripId" value={form.tripId} onChange={handleChange} required style={inputStyle}>
+                  <select name="tripId" value={form.tripId} onChange={handleChange} required>
                     <option value="">Select a trip</option>
                     {trips.map((trip) => (
                       <option key={trip.id} value={trip.id}>
@@ -281,21 +338,22 @@ function WalkInBookingPage() {
                     ))}
                   </select>
                 </label>
-                <label style={labelStyle}>
+                <label className="walk-in-field">
                   Booking Type
-                  <select name="bookingType" value={form.bookingType} onChange={handleChange} style={inputStyle}>
+                  <select name="bookingType" value={form.bookingType} onChange={handleChange}>
+                    <option value="passenger_only">Passenger Only</option>
                     <option value="passenger_cargo">Passenger + Cargo</option>
                     <option value="cargo_only">Cargo Only</option>
                   </select>
                 </label>
-                <label style={labelStyle}>
+                <label className="walk-in-field">
                   Passenger Name
-                  <input name="customerName" value={form.customerName} onChange={handleChange} required style={inputStyle} />
+                  <input name="customerName" value={form.customerName} onChange={handleChange} required />
                 </label>
                 {!isCargoOnly && (
-                  <label style={labelStyle}>
+                  <label className="walk-in-field">
                     Passenger Type
-                    <select name="userType" value={form.userType} onChange={handleChange} style={inputStyle}>
+                    <select name="userType" value={form.userType} onChange={handleChange}>
                       <option value="regular">Regular</option>
                       {Object.keys(discounts).filter((type) => type !== "regular").map((type) => (
                         <option key={type} value={type}>{type}</option>
@@ -303,72 +361,50 @@ function WalkInBookingPage() {
                     </select>
                   </label>
                 )}
-                <label style={labelStyle}>
-                  Cargo Type
-                  <input name="cargoType" value={form.cargoType} onChange={handleChange} placeholder="Optional" style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  Cargo Weight (kg)
-                  <input name="cargoWeight" type="number" min="0" step="0.01" value={form.cargoWeight} onChange={handleChange} placeholder="Optional" style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
+                {includesCargo && (
+                  <>
+                    <label className="walk-in-field">
+                      Cargo Type
+                      <input name="cargoType" value={form.cargoType} onChange={handleChange} placeholder="Optional" />
+                    </label>
+                    <label className="walk-in-field">
+                      Cargo Weight (kg)
+                      <input name="cargoWeight" type="number" min="0" step="0.01" value={form.cargoWeight} onChange={handleChange} placeholder="Optional" />
+                    </label>
+                  </>
+                )}
+                <label className="walk-in-field">
                   Payment Method
-                  <input value="Cash" readOnly style={{ ...inputStyle, background: "#f4f6f8", fontWeight: 700 }} />
+                  <input value="Cash" readOnly />
                 </label>
               </div>
 
-              <div style={{ marginTop: 22, padding: 16, borderRadius: 10, background: "#f4f8fc", color: "#334b63" }}>
-                <strong>Amount to collect: ₱{finalPrice.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                <div style={{ marginTop: 6, fontSize: "0.85rem" }}>
-                  Route: {selectedTrip?.routeDirection || "N/A"} | Date: {formatDateValue(selectedTrip?.date) || "N/A"} | Time: {selectedTrip?.departure || "N/A"}
+              <section className="walk-in-summary" aria-label="Booking summary">
+                <div className="walk-in-total">
+                  <span>Amount to collect</span>
+                  <strong>₱{finalPrice.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                 </div>
-                <div style={{ marginTop: 6, fontSize: "0.85rem", fontWeight: 700 }}>
-                  Available seats: {availableSeats} of {selectedTrip?.capacity || 0}
+                <div className="walk-in-breakdown">
+                  {passengerDiscountAmount > 0 && (
+                    <span>{form.userType} discount ({(discountRate * 100).toFixed(0)}%): -₱{passengerDiscountAmount.toFixed(2)}</span>
+                  )}
+                  {promoDiscountAmount > 0 && (
+                    <span>Promo {activePromo.name} ({Number(activePromo.percentage)}%): -₱{promoDiscountAmount.toFixed(2)}</span>
+                  )}
+                  <span>{selectedTrip?.routeDirection || "Route N/A"} · {formatDateValue(selectedTrip?.date) || "Date N/A"} · {selectedTrip?.departure || "Time N/A"}</span>
+                  <strong>Available seats: {availableSeats} of {selectedTrip?.capacity || 0}</strong>
                 </div>
-              </div>
+              </section>
 
-              <button type="submit" disabled={saving || !trips.length || !availableSeats} style={buttonStyle}>
+              <button className="walk-in-submit" type="submit" disabled={saving || !trips.length || !availableSeats}>
                 {saving ? "Saving..." : "Save Walk-in Booking"}
               </button>
             </form>
           )}
-        </div>
+        </section>
       </main>
     </AdminLayout>
   );
 }
-
-const inputStyle = {
-  display: "block",
-  width: "100%",
-  marginTop: 7,
-  padding: "11px 12px",
-  border: "1px solid #d5e0eb",
-  borderRadius: 8,
-  background: "#fff",
-  font: "inherit",
-  fontSize: "0.95rem",
-  color: "#263c52"
-};
-
-const labelStyle = {
-  display: "block",
-  color: "#666",
-  fontSize: "0.85rem",
-  fontWeight: 600,
-  lineHeight: 1.25
-};
-
-const buttonStyle = {
-  marginTop: 22,
-  padding: "12px 18px",
-  border: 0,
-  borderRadius: 8,
-  background: "#2876d2",
-  color: "#fff",
-  fontWeight: 700,
-  fontSize: "0.95rem",
-  cursor: "pointer"
-};
 
 export default WalkInBookingPage;
