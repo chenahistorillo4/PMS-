@@ -164,6 +164,72 @@ export const notifyNewBooking = async (booking, boat) => {
   });
 };
 
+export const notifyNewBookingReceived = async (bookingData, bookingId, tripCapacity) => {
+  const boat = bookingData?.boat;
+  if (!boat) return null;
+
+  const customerName = bookingData.customerName || bookingData.bookedByName || 'Passenger';
+  const referenceCode = bookingData.referenceCode || 'N/A';
+  const tripName = bookingData.tripName || 'Trip';
+  const tripDetails = {
+    bookingId,
+    tripId: bookingData.tripId,
+    referenceCode,
+    customerName,
+    tripName,
+    date: bookingData.date,
+    departure: bookingData.departure,
+    arrival: bookingData.arrival,
+  };
+
+  await createAdminNotification(
+    boat,
+    'new_booking',
+    'New Booking Received',
+    `${customerName} booked ${tripName} (Ref: ${referenceCode}).`,
+    tripDetails
+  );
+
+  const tripId = bookingData.tripId;
+  const capacity = Number(tripCapacity);
+  if (!tripId || !Number.isFinite(capacity) || capacity <= 0) {
+    return { ok: true };
+  }
+
+  const bookingsSnap = await getDocs(
+    query(collection(db, 'bookings'), where('tripId', '==', tripId))
+  );
+  const activeCount = bookingsSnap.docs.filter((bookingDoc) => {
+    const status = String(bookingDoc.data().status || '').toLowerCase();
+    return !['cancelled', 'failed'].includes(status);
+  }).length;
+  const previousCount = Math.max(0, activeCount - 1);
+  const almostFullThreshold = Math.ceil(capacity * 0.8);
+
+  if (activeCount >= capacity && previousCount < capacity) {
+    await createAdminNotification(
+      boat,
+      'trip_full',
+      'Trip Is Full',
+      `${tripName} has reached its capacity (${capacity} passengers).`,
+      { ...tripDetails, capacity, activeCount }
+    );
+  } else if (
+    activeCount >= almostFullThreshold &&
+    previousCount < almostFullThreshold
+  ) {
+    await createAdminNotification(
+      boat,
+      'trip_almost_full',
+      'Trip Almost Full',
+      `${tripName} is almost full (${activeCount}/${capacity} seats booked).`,
+      { ...tripDetails, capacity, activeCount }
+    );
+  }
+
+  return { ok: true };
+};
+
 export const notifyBookingConfirmed = async (booking, userEmail, userPhone) => {
   if (!userEmail && !userPhone) return null;
 

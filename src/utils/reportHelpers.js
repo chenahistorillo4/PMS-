@@ -155,6 +155,26 @@ export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
 }
 
+function normalizePaymentMode(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
+}
+
+export function isPayLaterBooking(booking) {
+  const paymentMode = normalizePaymentMode(
+    booking?.paymentMode || booking?.paymentMethod || booking?.payment
+  );
+  return paymentMode === 'paylater';
+}
+
+export function isGcashBooking(booking) {
+  const payment = String(booking?.payment || '').toLowerCase();
+  const method = String(booking?.paymentMethod || booking?.method || '').toLowerCase();
+  const provider = String(booking?.paymentProvider || '').toLowerCase();
+
+  return payment.includes('gcash') || method.includes('gcash') || provider === 'paymongo';
+}
 
 export function attachPaymentStatuses(bookings = [], payments = []) {
   const paymentPriority = (payment) => {
@@ -214,21 +234,6 @@ export function isReportableBooking(booking) {
 export function isConfirmedBooking(booking) {
   const status = String(booking?.status || 'pending').toLowerCase();
   return ['confirmed', 'completed', 'departed', 'scanned', 'boarded'].includes(status);
-}
-
-export function isReportableBooking(booking) {
-  const bookingStatus = String(booking?.status || '').toLowerCase();
-  if (['cancelled', 'canceled', 'failed'].includes(bookingStatus)) return false;
-
-  const paymentStatus = String(booking?.paymentStatus || '').toLowerCase();
-  const paymongoStatus = String(booking?.paymongoStatus || '').toLowerCase();
-  const paymentIsComplete =
-    ['paid', 'completed', 'confirmed'].includes(paymentStatus) ||
-    paymongoStatus === 'paid';
-  const passengerQrWasScanned =
-    ['scanned', 'boarded'].includes(bookingStatus) || Boolean(booking?.scannedAt);
-
-  return paymentIsComplete && passengerQrWasScanned;
 }
 
 function bookingCreatedInRange(booking, range) {
