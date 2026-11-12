@@ -186,10 +186,10 @@ function PortStaffManagement() {
 
   return (
     <AdminLayout active="port-staff">
-      <main style={{ maxWidth: 1120, margin: '0 auto', padding: '28px 24px 48px' }}>
-        <header style={{ marginBottom: 24 }}>
-          <h1 style={{ margin: '6px 0', color: '#17324d', fontSize: 30 }}>Port Staff</h1>
-          <p style={{ margin: 0, color: '#607080' }}>
+      <main style={{ width: '100%', boxSizing: 'border-box', paddingBottom: 48 }}>
+        <header style={{ marginBottom: 20 }}>
+          <h1 style={{ margin: '0 0 6px', color: '#17324d', fontSize: '1.3rem', fontWeight: 800 }}>Port Staff</h1>
+          <p style={{ margin: 0, color: '#607080', fontSize: '0.95rem' }}>
             Create and manage Port Staff accounts for {adminData?.assignedBoat || 'your assigned boat'}.
           </p>
         </header>
@@ -198,7 +198,7 @@ function PortStaffManagement() {
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))',
-            gap: 20,
+            gap: 16,
             alignItems: 'start',
           }}
         >
@@ -207,12 +207,12 @@ function PortStaffManagement() {
             style={{
               background: '#fff',
               borderRadius: 14,
-              padding: 24,
+              padding: 20,
               boxShadow: '0 4px 18px rgba(23, 50, 77, 0.08)',
             }}
           >
-            <h2 style={{ margin: '0 0 6px', fontSize: 20, color: '#17324d' }}>Create a Port Staff account</h2>
-            <p style={{ margin: '0 0 20px', color: '#68798a', fontSize: 14 }}>
+            <h2 style={{ margin: '0 0 6px', fontSize: '1.1rem', fontWeight: 800, color: '#17324d' }}>Create a Port Staff account</h2>
+            <p style={{ margin: '0 0 20px', color: '#68798a', fontSize: '0.85rem' }}>
               The account will be linked to your assigned boat and route.
             </p>
 
@@ -238,7 +238,7 @@ function PortStaffManagement() {
               />
             </label>
             <label style={labelStyle}>
-              Phone number <span style={{ color: '#758596', fontWeight: 400 }}>(optional)</span>
+              Phone number <span style={{ color: '#758596', fontWeight: 400 }}></span>
               <input
                 type="tel"
                 autoComplete="tel"
@@ -267,8 +267,6 @@ function PortStaffManagement() {
               <strong>Assigned boat:</strong> {adminData?.assignedBoat || 'Not assigned'}
               <br />
               <strong>Assigned route:</strong> {adminData?.assignedRoute || 'Not specified'}
-              <br />
-              <strong>Permission:</strong> QR code scanning
             </div>
 
             {errorMessage && <p role="alert" style={messageStyle('#b42318', '#fff1f0')}>{errorMessage}</p>}
@@ -296,15 +294,15 @@ function PortStaffManagement() {
             style={{
               background: '#fff',
               borderRadius: 14,
-              padding: 24,
+              padding: 20,
               boxShadow: '0 4px 18px rgba(23, 50, 77, 0.08)',
               minHeight: 220,
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
               <div>
-                <h2 style={{ margin: '0 0 5px', fontSize: 20, color: '#17324d' }}>Manage Port Staff</h2>
-                <p style={{ margin: 0, color: '#68798a', fontSize: 14 }}>
+                <h2 style={{ margin: '0 0 5px', fontSize: '1.1rem', fontWeight: 800, color: '#17324d' }}>Manage Port Staff</h2>
+                <p style={{ margin: 0, color: '#68798a', fontSize: '0.85rem' }}>
                   Staff assigned to {adminData?.assignedBoat || 'your assigned boat'}
                 </p>
               </div>
@@ -331,7 +329,7 @@ function PortStaffManagement() {
                 placeholder="Search by name, email, or boat..."
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
-                style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #cad5df', borderRadius: 7, padding: '10px 12px', color: '#20384d', fontSize: 14 }}
+                style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #cad5df', borderRadius: 7, padding: '10px 12px', color: '#20384d', fontSize: '0.9rem' }}
               />
             </label>
 
@@ -396,7 +394,7 @@ const labelStyle = {
   gap: 7,
   marginBottom: 15,
   color: '#30475d',
-  fontSize: 14,
+  fontSize: '0.85rem',
   fontWeight: 700,
 };
 
@@ -407,7 +405,7 @@ const inputStyle = {
   borderRadius: 7,
   padding: '10px 12px',
   color: '#20384d',
-  fontSize: 15,
+  fontSize: '0.9rem',
 };
 
 const assignmentStyle = {
@@ -416,7 +414,7 @@ const assignmentStyle = {
   borderRadius: 8,
   background: '#f2f7fb',
   color: '#40596d',
-  fontSize: 14,
+  fontSize: '0.85rem',
   lineHeight: 1.7,
 };
 
@@ -453,7 +451,7 @@ const messageStyle = (color, background) => ({
   borderRadius: 8,
   background,
   color,
-  fontSize: 14,
+  fontSize: '0.85rem',
   lineHeight: 1.45,
 });
 

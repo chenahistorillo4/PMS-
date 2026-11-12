@@ -1,16 +1,26 @@
-import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs } from "firebase/firestore";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { collection, getDocs, onSnapshot } from "firebase/firestore";
 import { db } from "../../firebase";
 import SuperadminLayout from "./SuperadminLayout";
+import "./ReportsAnalytics.css";
 import jsPDF from "jspdf";
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend } from "chart.js";
+import { Line } from "react-chartjs-2";
 import {
   attachPaymentStatuses,
   filterBookingsByPeriod,
+  getBookingCreatedAt,
+  getBookingTripDate,
   getBookingRouteLabel,
+  getBookingAmount,
   getPeriodRange,
+  isGcashBooking,
+  isPayLaterBooking,
   isReportableBooking,
   summarizeBookings,
 } from "../../utils/reportHelpers";
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 function SuperadminDashboard() {
   const [stats, setStats] = useState({  
@@ -26,7 +36,10 @@ function SuperadminDashboard() {
   const [detailedData, setDetailedData] = useState([]);
   const [detailedLoading, setDetailedLoading] = useState(false);
   const [bookings, setBookings] = useState([]);
+  const [users, setUsers] = useState([]);
   const [boats, setBoats] = useState([]);
+  const [systemLastUpdated, setSystemLastUpdated] = useState(null);
+  const paymentsRef = useRef([]);
   const [overviewPeriod, setOverviewPeriod] = useState("weekly");
   const [overviewBoatRoutes, setOverviewBoatRoutes] = useState({});
   const [reportPeriod, setReportPeriod] = useState("weekly");
@@ -40,47 +53,41 @@ function SuperadminDashboard() {
   }, []);
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const adminsSnapshot = await getDocs(collection(db, "admins"));
-        const portStaffSnapshot = await getDocs(collection(db, "port_staff"));
-        const boatsSnapshot = await getDocs(collection(db, "boats"));
-        const [bookingsSnapshot, paymentsSnapshot] = await Promise.all([
-          getDocs(collection(db, "bookings")),
-          getDocs(collection(db, "payments")),
-        ]);
-
-        setBookings(attachPaymentStatuses(
-          bookingsSnapshot.docs.map((bookingDoc) => {
-            const data = bookingDoc.data();
-            const normalized = { id: bookingDoc.id, ...data };
-            if (normalized.date && normalized.date.toDate) {
-              normalized.date = normalized.date.toDate().toISOString().split("T")[0];
-            }
-            return normalized;
-          }),
-          paymentsSnapshot.docs.map((paymentDoc) => paymentDoc.data())
-        ));
-        setBoats(boatsSnapshot.docs.map((boatDoc) => ({
-          id: boatDoc.id,
-          ...boatDoc.data(),
-        })));
-
-        setStats({
-          totalAdmins: adminsSnapshot.size,
-          totalPortStaff: portStaffSnapshot.size,
-          totalBoats: boatsSnapshot.size
-        });
-        setSystemOperational(true);
-      } catch (error) {
-        console.error("Error fetching stats:", error);
-        setSystemOperational(false);
-      } finally {
-        setLoading(false);
-      }
+    let loadedCollections = 0;
+    const markLoaded = () => {
+      loadedCollections += 1;
+      if (loadedCollections >= 6) setLoading(false);
+      setSystemLastUpdated(new Date());
+      setSystemOperational(true);
     };
+    const handleError = (error) => {
+      console.error("Error listening to dashboard data:", error);
+      setSystemOperational(false);
+      setLoading(false);
+    };
+    const unsubscribe = [
+      ["admins", (items) => setStats((current) => ({ ...current, totalAdmins: items.length }))],
+      ["port_staff", (items) => setStats((current) => ({ ...current, totalPortStaff: items.length }))],
+      ["users", setUsers],
+      ["boats", (items) => {
+        setBoats(items);
+        setStats((current) => ({ ...current, totalBoats: items.length }));
+      }],
+      ["bookings", (items) => setBookings(attachPaymentStatuses(items, paymentsRef.current))],
+      ["payments", (items) => {
+        paymentsRef.current = items;
+        setBookings((current) => attachPaymentStatuses(current, items));
+      }],
+    ].map(([collectionName, update]) => onSnapshot(
+      collection(db, collectionName),
+      (snapshot) => {
+        update(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+        markLoaded();
+      },
+      handleError
+    ));
 
-    fetchStats();
+    return () => unsubscribe.forEach((stopListening) => stopListening());
   }, []);
 
   const openDetailedModal = async (cardType) => {
@@ -123,6 +130,17 @@ function SuperadminDashboard() {
     () => filterBookingsByPeriod(reportableBookings, overviewPeriod),
     [reportableBookings, overviewPeriod]
   );
+  const overviewPayLaterBookings = useMemo(
+    () => filterBookingsByPeriod(bookings, overviewPeriod).filter((booking) => {
+      const status = String(booking.status || "").toLowerCase();
+      const boatName = booking.boat || "Unassigned boat";
+      const selectedRoute = overviewBoatRoutes[boatName] || "all";
+      return isPayLaterBooking(booking) &&
+        !["cancelled", "canceled", "failed"].includes(status) &&
+        (selectedRoute === "all" || getBookingRouteLabel(booking) === selectedRoute);
+    }),
+    [bookings, overviewPeriod, overviewBoatRoutes]
+  );
   const overviewFilteredBookings = useMemo(
     () => overviewBookings.filter((booking) => {
       const boatName = booking.boat || "Unassigned boat";
@@ -135,6 +153,106 @@ function SuperadminDashboard() {
     () => summarizeBookings(overviewFilteredBookings),
     [overviewFilteredBookings]
   );
+  const overallSummary = useMemo(
+    () => summarizeBookings(overviewBookings),
+    [overviewBookings]
+  );
+  const totalUsers = useMemo(() => {
+    const periodUsers = users.filter((user) => {
+      const createdAt = getBookingCreatedAt({ createdAt: user.createdAt || user.registeredAt });
+      const range = getPeriodRange(overviewPeriod);
+      return !range || (createdAt && createdAt >= range.start && createdAt <= range.end);
+    });
+    return stats.totalAdmins + stats.totalPortStaff + periodUsers.length;
+  }, [users, overviewPeriod, stats.totalAdmins, stats.totalPortStaff]);
+  const trendData = useMemo(() => {
+    const range = getPeriodRange(overviewPeriod);
+    const isCalendarMonth = overviewPeriod === "monthly" || overviewPeriod === "lastMonth";
+    const dayCount = overviewPeriod === "today"
+      ? 1
+      : isCalendarMonth
+        ? new Date(range.start.getFullYear(), range.start.getMonth() + 1, 0).getDate()
+        : 7;
+    const days = Array.from({ length: dayCount }, (_, index) => {
+      if (isCalendarMonth) {
+        return new Date(range.start.getFullYear(), range.start.getMonth(), index + 1);
+      }
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (dayCount - 1 - index));
+      return date;
+    });
+    const bookingsByDay = days.map((day) => overviewBookings.filter((booking) =>
+      [getBookingCreatedAt(booking), getBookingTripDate(booking)]
+        .filter(Boolean)
+        .some((date) => date.toDateString() === day.toDateString())
+    ));
+    const payLaterAmountsByDay = days.map((day) => overviewPayLaterBookings
+      .filter((booking) =>
+        [getBookingCreatedAt(booking), getBookingTripDate(booking)]
+          .filter(Boolean)
+          .some((date) => date.toDateString() === day.toDateString())
+      )
+      .reduce((total, booking) => total + getBookingAmount(booking), 0));
+    return {
+      labels: days.map((date) => date.toLocaleDateString("en-PH", { month: "short", day: "numeric" })),
+      datasets: [
+        {
+          label: "Bookings",
+          data: bookingsByDay.map((items) => items.length),
+          borderColor: "#2f78bd",
+          backgroundColor: "rgba(47, 120, 189, 0.12)",
+          pointBackgroundColor: "#2f78bd",
+          pointRadius: 4,
+          tension: 0.35,
+          yAxisID: "y",
+          fill: true,
+        },
+        {
+          label: "GCash Revenue",
+          data: bookingsByDay.map((items) => items
+            .filter(isGcashBooking)
+            .reduce((total, booking) => total + getBookingAmount(booking), 0)),
+          borderColor: "#e4a454",
+          backgroundColor: "rgba(228, 164, 84, 0.08)",
+          pointBackgroundColor: "#e4a454",
+          pointRadius: 4,
+          tension: 0.35,
+          yAxisID: "revenue",
+        },
+        {
+          label: "PayLater Amount",
+          data: payLaterAmountsByDay,
+          borderColor: "#7e57c2",
+          backgroundColor: "rgba(126, 87, 194, 0.1)",
+          pointBackgroundColor: "#7e57c2",
+          pointRadius: 4,
+          tension: 0.35,
+          yAxisID: "revenue",
+        },
+      ],
+    };
+  }, [overviewBookings, overviewPayLaterBookings, overviewPeriod]);
+  const chartOptions = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { position: "top", align: "end", labels: { usePointStyle: true, boxWidth: 8 } },
+      tooltip: {
+        callbacks: {
+          label: (context) => ["GCash Revenue", "PayLater Amount"].includes(context.dataset.label)
+            ? ` ${context.dataset.label}: ₱${Number(context.parsed.y || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 })}`
+            : ` ${context.dataset.label}: ${context.parsed.y}`,
+        },
+      },
+    },
+    scales: {
+      y: { beginAtZero: true, title: { display: true, text: "Bookings" }, grid: { color: "#e7eef5" } },
+      revenue: { beginAtZero: true, position: "right", title: { display: true, text: "Revenue (PHP)" }, grid: { drawOnChartArea: false } },
+      x: { grid: { display: false } },
+    },
+  }), []);
   const overviewBoatReports = useMemo(() => {
     const grouped = new Map();
     boats.forEach((boat) => {
@@ -450,12 +568,68 @@ function SuperadminDashboard() {
   return (
     <SuperadminLayout active="dashboard">
       <div style={{
-        maxWidth: "1400px",
         width: "100%",
-        margin: "0 auto",
-        padding: isMobile ? "15px 12px" : "30px 20px",
+        margin: "0",
+        padding: isMobile ? "15px 0" : "30px 0",
         boxSizing: "border-box"
       }}>
+        <div className="overview-heading">
+          <div>
+            <p className="reports-eyebrow">Operational summary</p>
+            <h1 className="reports-title">Dashboard Overview</h1>
+            <p className="reports-subtitle">A quick glance at your operations and system activity.</p>
+          </div>
+          <span className="overview-period-label">{getPeriodRange(overviewPeriod)?.label || "Weekly"}</span>
+        </div>
+        <div className="reports-overview">
+          {[
+            ["Total users", totalUsers, "passengers, admins & staff", "users"],
+            ["Total bookings", overallSummary.totalBookings, "all boats", "bookings"],
+            ["Active ferries", boats.length, "currently in operation", "ferries"],
+            ["Total revenue", `₱${overallSummary.totalRevenue.toLocaleString("en-PH", { minimumFractionDigits: 2 })}`, "from paid bookings", "revenue"],
+          ].map(([label, value, caption, tone]) => (
+            <div className={`reports-stat reports-stat-${tone}`} key={label}>
+              <span className="reports-stat-icon" aria-hidden="true">{tone === "revenue" ? "₱" : "●"}</span>
+              <span className="reports-stat-label">{label}</span>
+              <strong className="reports-stat-value">{loading ? "-" : value}</strong>
+              <small>{caption}</small>
+            </div>
+          ))}
+        </div>
+        <div className="overview-dashboard-grid">
+          <div className="overview-panel overview-chart-panel">
+            <div className="overview-panel-heading">
+              <div><h3>Booking &amp; Revenue Trends</h3><span>{getPeriodRange(overviewPeriod)?.label || "Last 7 days"} · all boats</span></div>
+              <select value={overviewPeriod} onChange={(event) => setOverviewPeriod(event.target.value)} aria-label="Overview period">
+                <option value="today">Today</option>
+                <option value="weekly">Last 7 days</option>
+                <option value="monthly">This month</option>
+                <option value="lastMonth">Last month</option>
+              </select>
+            </div>
+            <div className="overview-chart"><Line data={trendData} options={chartOptions} /></div>
+          </div>
+        </div>
+        <div className="overview-operation-grid">
+          <div className="overview-panel">
+            <div className="overview-panel-heading"><div><h3>Active Ferries / Boarding Now</h3><span>{boats.length} ferry{boats.length !== 1 ? "s" : ""} in operation</span></div></div>
+            <div className="overview-ferry-list">
+              {boats.length === 0 ? <p className="overview-empty">No registered ferries.</p> : boats.map((boat) => (
+                <div className="overview-ferry" key={boat.id || boat.name}>
+                  <span className="overview-ferry-icon">⚓</span>
+                  <div><strong>{boat.name || "Unnamed ferry"}</strong><small>{boat.route || "Route not assigned"}</small></div>
+                  <span className="overview-status">Operational</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="overview-panel overview-status-panel">
+            <div className="overview-panel-heading"><div><h3>System Status</h3><span>Live database connection</span></div></div>
+            <div className="overview-system-status"><span>{systemOperational ? "✓" : "!"}</span><strong>{systemOperational ? "Operational" : "Unavailable"}</strong></div>
+            <div className="overview-status-metrics"><span><b>{systemOperational ? "Connected" : "Disconnected"}</b> Database</span><span><b>{systemLastUpdated ? systemLastUpdated.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }) : "—"}</b> Last Updated</span></div>
+          </div>
+        </div>
+        {false && (<>
         {/* Header */}
         <div style={{
           marginBottom: isMobile ? "12px" : "20px"
@@ -665,6 +839,8 @@ function SuperadminDashboard() {
             </div>
           )}
         </div>
+
+        </>)}
 
         {/* Detailed Data Modal */}
         {modalOpen && (

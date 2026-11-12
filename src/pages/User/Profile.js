@@ -7,6 +7,18 @@ import {
   updatePassword,
 } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
+import {
+  FiCreditCard,
+  FiChevronRight,
+  FiEdit2,
+  FiKey,
+  FiLock,
+  FiLogOut,
+  FiMail,
+  FiMapPin,
+  FiPhone,
+  FiUser,
+} from "react-icons/fi";
 import { auth, db } from "../../firebase";
 import "./Profile.css";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
@@ -19,6 +31,7 @@ function Profile() {
     address: "",
     photoURL: "",
   });
+
   const [preview, setPreview] = useState(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -30,6 +43,7 @@ function Profile() {
     newPassword: "",
     confirmPassword: "",
   });
+
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
@@ -65,7 +79,7 @@ function Profile() {
         setProfile(docSnap.data());
       }
     };
-
+    
     loadProfile();
 
     const handleResize = () => {
@@ -267,9 +281,12 @@ function Profile() {
     }
   };
 
-  const renderField = (label, value, onChange, disabled = false) => (
+  const renderField = (label, value, onChange, disabled = false, Icon = FiUser) => (
     <div className="profile-field">
-      <label className="profile-label">{label}</label>
+      <label className="profile-label">
+        <Icon aria-hidden="true" />
+        {label}
+      </label>
       <input
         className="profile-input"
         type="text"
@@ -288,11 +305,16 @@ function Profile() {
         minHeight: "100vh",
         background:
           "linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.40) 100%), url('/bg5.avif') center/cover fixed",
-        paddingTop: isMobile ? "70px" : "0",
+        paddingTop: isMobile ? "70px" : "110px",
       }}
     >
       <div className="profile-page-shell">
-        <h1 className="profile-title">My Profile</h1>
+        <header className="profile-page-header">
+          <h1 className="profile-title">
+            My Profile
+          </h1>
+          <p>Manage your personal information and account security.</p>
+        </header>
 
         <div className="profile-card">
           <div className="profile-picture-section">
@@ -312,51 +334,63 @@ function Profile() {
               style={{ display: "none" }}
             />
 
-            {isEditingProfile && (
-              <div className="profile-picture-actions">
-                {!preview && (
-                  <button className="profile-button profile-button-primary" onClick={() => fileInputRef.current?.click()}>
-                    Update
-                  </button>
-                )}
-                {preview && (
-                  <button className="profile-button profile-button-success" onClick={handleSavePicture}>
-                    Save
-                  </button>
-                )}
-                {preview && (
-                  <button className="profile-button profile-button-muted" onClick={handleCancelPicture}>
-                    Cancel
-                  </button>
-                )}
-                {!preview && profile.photoURL && (
-                  <button className="profile-button profile-button-danger" onClick={handleRemovePicture}>
-                    Remove
-                  </button>
-                )}
-              </div>
-            )}
-
-            <p className="profile-name">{profile.name || "User"}</p>
+            <div className="profile-identity">
+              <p className="profile-name">{profile.name || "User"}</p>
+              <span className="profile-role">
+                <FiUser aria-hidden="true" />
+                Passenger
+              </span>
+              {isEditingProfile && (
+                <div className="profile-picture-actions">
+                  {!preview && (
+                    <button className="profile-button profile-button-primary" onClick={() => fileInputRef.current?.click()}>
+                      Update
+                    </button>
+                  )}
+                  {preview && (
+                    <button className="profile-button profile-button-success" onClick={handleSavePicture}>
+                      Save
+                    </button>
+                  )}
+                  {preview && (
+                    <button className="profile-button profile-button-muted" onClick={handleCancelPicture}>
+                      Cancel
+                    </button>
+                  )}
+                  {!preview && profile.photoURL && (
+                    <button className="profile-button profile-button-danger" onClick={handleRemovePicture}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="profile-info-header">
-            <h2>User Information</h2>
+            <h2>
+              <FiCreditCard aria-hidden="true" />
+              User Information
+            </h2>
             {!isEditingProfile && (
               <button className="profile-button profile-button-primary" onClick={handleEditToggle}>
+                <FiEdit2 aria-hidden="true" />
                 Edit Profile
               </button>
             )}
           </div>
 
           <div className="profile-fields-grid">
-            {renderField("Full Name", profile.name, (e) => setProfile({ ...profile, name: e.target.value }), !isEditingProfile)}
+            {renderField("Full Name", profile.name, (e) => setProfile({ ...profile, name: e.target.value }), !isEditingProfile, FiUser)}
             <div className="profile-field">
-              <label className="profile-label">Email</label>
+              <label className="profile-label">
+                <FiMail aria-hidden="true" />
+                Email
+              </label>
               <input className="profile-input" type="email" value={profile.email || ""} disabled />
             </div>
-            {renderField("Phone", profile.phone, (e) => setProfile({ ...profile, phone: e.target.value }), !isEditingProfile)}
-            {renderField("Address", profile.address, (e) => setProfile({ ...profile, address: e.target.value }), !isEditingProfile)}
+            {renderField("Phone", profile.phone, (e) => setProfile({ ...profile, phone: e.target.value }), !isEditingProfile, FiPhone)}
+            {renderField("Address", profile.address, (e) => setProfile({ ...profile, address: e.target.value }), !isEditingProfile, FiMapPin)}
           </div>
 
           {isEditingProfile && (
@@ -372,10 +406,18 @@ function Profile() {
 
           <div className="profile-password-section">
             <div className="profile-password-header">
-              <h3>Change Password</h3>
+              <div className="profile-password-description">
+                <FiLock aria-hidden="true" />
+                <div>
+                  <h3>Change Password</h3>
+                  <p>Update your account password for security.</p>
+                </div>
+              </div>
               {!isChangingPassword && (
-                <button className="profile-button profile-button-warning" onClick={() => setIsChangingPassword(true)}>
-                  Change Password
+                <button className="profile-button profile-button-warning profile-password-toggle" onClick={() => setIsChangingPassword(true)}>
+                  <FiKey aria-hidden="true" />
+                  <span>Change Password</span>
+                  <FiChevronRight className="profile-password-chevron" aria-hidden="true" />
                 </button>
               )}
             </div>
@@ -431,10 +473,11 @@ function Profile() {
               </div>
             )}
 
-            <button className="profile-logout-button" onClick={handleLogout}>
-              Log Out
-            </button>
           </div>
+          <button className="profile-logout-button" onClick={handleLogout}>
+            <FiLogOut aria-hidden="true" />
+            Log Out
+          </button>
         </div>
 
         {showLogoutModal && (

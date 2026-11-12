@@ -1,12 +1,24 @@
 import { useEffect, useState } from "react";
 import { db } from "../../firebase";
-import { doc, getDoc, collection, getDocs, query, where, updateDoc } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, query, where, updateDoc, onSnapshot } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 import { getStaffAccount } from "../../utils/staffAccount";
 
 const normalizeRoute = (route) =>
   String(route || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const getBookingRoute = (booking) => booking.routeDirection || booking.route || "";
+
+const getPaymentMethodLabel = (method) => {
+  const normalizedMethod = String(method || "").trim().toLowerCase().replace(/[\s_-]/g, "");
+  if (normalizedMethod === "cash" || normalizedMethod.includes("gcash")) return "GCash";
+  if (normalizedMethod === "paylater") return "Pay Later";
+  if (normalizedMethod === "paymaya") return "PayMaya";
+  return method
+    ? String(method).charAt(0).toUpperCase() + String(method).slice(1)
+    : "Unknown";
+};
 
 function BookingManagement() {
   const [bookings, setBookings] = useState([]);
@@ -19,6 +31,7 @@ function BookingManagement() {
   const [selectedRoute, setSelectedRoute] = useState("all");
   const [hasSearched, setHasSearched] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [showDownloadPreview, setShowDownloadPreview] = useState(false);
   const { user, authReady } = useAuthUser();
   const reloadKey = useAuthReloadKey();
 
@@ -33,6 +46,9 @@ function BookingManagement() {
 
   useEffect(() => {
     if (!authReady) return;
+
+    let active = true;
+    let unsubscribeBookings;
 
     const fetchData = async () => {
       if (!user) {
@@ -49,6 +65,7 @@ function BookingManagement() {
       try {
           // Fetch the assigned boat for either an admin or Port Staff account.
           const adminAccount = await getStaffAccount(user.uid);
+          if (!active) return;
           
           if (adminAccount) {
             const admin = adminAccount.data;
@@ -113,9 +130,7 @@ function BookingManagement() {
               ].join("-");
               return { ...booking, date: localDate };
             });
-            const bookingRoutes = bookingsList
-              .map((booking) => booking.routeDirection || booking.route)
-              .filter(Boolean);
+            const bookingRoutes = bookingsList.map(getBookingRoute).filter(Boolean);
             const boatSnapshot = await getDocs(
               query(collection(db, "boats"), where("name", "==", admin.assignedBoat))
             );
@@ -125,14 +140,20 @@ function BookingManagement() {
               : assignedBoat?.route
                 ? [assignedBoat.route]
                 : [];
-            const routeOptions = [...new Set(
-              [
-                ...boatRoutes,
-                ...(Array.isArray(admin.availableRoutes) ? admin.availableRoutes : []),
-                admin.assignedRoute,
-                ...bookingRoutes
-              ].filter(Boolean)
-            )].sort();
+            const routeOptionsByDirection = new Map();
+            [
+              ...boatRoutes,
+              ...(Array.isArray(admin.availableRoutes) ? admin.availableRoutes : []),
+              admin.assignedRoute,
+              ...bookingRoutes
+            ].filter(Boolean).forEach((route) => {
+              const routeLabel = String(route).trim();
+              const routeKey = normalizeRoute(routeLabel);
+              if (routeKey && !routeOptionsByDirection.has(routeKey)) {
+                routeOptionsByDirection.set(routeKey, routeLabel);
+              }
+            });
+            const routeOptions = [...routeOptionsByDirection.values()].sort();
             setAvailableRoutes(routeOptions);
             setSelectedRoute((currentRoute) => {
               if (currentRoute === "all") return "all";
@@ -148,7 +169,7 @@ function BookingManagement() {
               const payment = doc.data();
               if (payment.bookingId) {
                 paymentMap[payment.bookingId] = {
-                  method: payment.method || payment.accountType || "Unknown",
+                  method: payment.method || payment.accountType || (payment.paymentMode === "pay_later" ? "Pay Later" : ""),
                   accountNumber: payment.accountNumber || payment.paymentAccountNumber || "N/A",
                   accountHolder: payment.accountHolder || "N/A",
                   status: payment.status || "pending"
@@ -157,15 +178,24 @@ function BookingManagement() {
             });
 
             // Merge payment info into bookings
-            bookingsList = bookingsList.map(booking => ({
-              ...booking,
-              paymentInfo: paymentMap[booking.id] || {
-                method: "Unknown",
+            bookingsList = bookingsList.map(booking => {
+              const paymentInfo = paymentMap[booking.id] || {
+                method: "",
                 accountNumber: "N/A",
                 accountHolder: "N/A",
                 status: "unknown"
-              }
-            }));
+              };
+              return {
+                ...booking,
+                paymentInfo: {
+                  ...paymentInfo,
+                  method: getPaymentMethodLabel(
+                    booking.payment || booking.paymentMethod || paymentInfo.method ||
+                    (booking.paymentMode === "pay_later" ? "Pay Later" : "")
+                  ),
+                },
+              };
+            });
 
             // Fetch user names for bookings that don't have bookedByName
             const userMap = {};
@@ -194,10 +224,10 @@ function BookingManagement() {
               bookedByName: booking.bookedByName || userMap[booking.userId] || booking.userEmail || "Unknown"
             }));
 
-            // Keep pending reservations visible; cancelled bookings are excluded from active records.
+            // Keep cancelled bookings visible so payment-expiry cancellations can be reviewed.
             bookingsList = bookingsList.filter((booking) => {
               const status = String(booking.status || "").toLowerCase();
-              return ["pending", "confirmed", "departed", "boarded", "scanned"].includes(status);
+              return ["pending", "confirmed", "cancelled", "departed", "boarded", "scanned"].includes(status);
             });
 
             // Sort by date descending (most recent first)
@@ -206,6 +236,74 @@ function BookingManagement() {
 
             // Check and update departed bookings
             updateDepartedBookings(bookingsList);
+
+            unsubscribeBookings = onSnapshot(
+              query(bookingsRef, where("boat", "==", admin.assignedBoat)),
+              (snapshot) => {
+                if (!active) return;
+
+                setBookings((currentBookings) => {
+                  const bookingsById = new Map(
+                    currentBookings
+                      .filter((booking) => booking.boat !== admin.assignedBoat)
+                      .map((booking) => [booking.id, booking])
+                  );
+
+                  snapshot.docs.forEach((bookingDoc) => {
+                    const data = bookingDoc.data();
+                    const previousBooking = currentBookings.find(
+                      (booking) => booking.id === bookingDoc.id
+                    );
+                    const dateValue = data.date?.toDate?.() || data.date;
+                    let date = dateValue;
+                    if (dateValue instanceof Date) {
+                      date = [
+                        dateValue.getFullYear(),
+                        String(dateValue.getMonth() + 1).padStart(2, "0"),
+                        String(dateValue.getDate()).padStart(2, "0")
+                      ].join("-");
+                    }
+
+                    bookingsById.set(bookingDoc.id, {
+                      ...previousBooking,
+                      ...data,
+                      id: bookingDoc.id,
+                      date,
+                      paymentInfo: previousBooking?.paymentInfo || {
+                        method: getPaymentMethodLabel(
+                          data.payment ||
+                          data.paymentMethod ||
+                          (data.paymentMode === "pay_later" ? "Pay Later" : "")
+                        ),
+                        accountNumber: "N/A",
+                        accountHolder: "N/A",
+                        status: data.paymentStatus || "unknown"
+                      },
+                      bookedByName:
+                        data.bookedByName ||
+                        previousBooking?.bookedByName ||
+                        data.userEmail ||
+                        "Unknown"
+                    });
+                  });
+
+                  const liveBookings = Array.from(bookingsById.values()).filter((booking) =>
+                    ["pending", "confirmed", "cancelled", "departed", "boarded", "scanned"].includes(
+                      String(booking.status || "").toLowerCase()
+                    )
+                  );
+                  liveBookings.sort(
+                    (a, b) => new Date(b.createdAt?.toDate?.() || b.createdAt || 0) -
+                      new Date(a.createdAt?.toDate?.() || a.createdAt || 0)
+                  );
+                  return liveBookings;
+                });
+              },
+              (error) => {
+                console.error("Error listening for booking updates:", error);
+                setFetchError("Unable to receive live booking updates. Please refresh the page.");
+              }
+            );
           } else {
             setBookings([]);
             setAvailableRoutes([]);
@@ -220,6 +318,11 @@ function BookingManagement() {
       setLoading(false);
     };
     fetchData();
+
+    return () => {
+      active = false;
+      unsubscribeBookings?.();
+    };
   }, [authReady, user, reloadKey]);
 
   // Auto-update bookings to "departed" if departure time has passed
@@ -265,6 +368,20 @@ function BookingManagement() {
     return Number.isNaN(date.getTime()) ? "N/A" : date.toLocaleDateString();
   };
 
+  const downloadBookings = () => {
+    const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const csvContent = `\uFEFF${getBookingExportRows().map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+    const file = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const downloadUrl = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = getBookingExportFileName();
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  };
+
   // Get bookings for selected date and schedule
   const getSelectedDateBookings = () => {
     let filtered = bookings.filter(
@@ -273,7 +390,7 @@ function BookingManagement() {
         ["pending", "confirmed", "departed", "boarded", "scanned"].includes(String(b.status || "").toLowerCase()) &&
         (selectedRoute === "all" ||
           !selectedRoute ||
-          normalizeRoute(b.routeDirection || b.route) === normalizeRoute(selectedRoute))
+          normalizeRoute(getBookingRoute(b)) === normalizeRoute(selectedRoute))
     );
     
     // Filter by schedule if not "all"
@@ -319,8 +436,171 @@ function BookingManagement() {
     return "#999";
   };
 
+  const getBookingExportRows = () => [
+    ["User Account", "Passenger", "Route", "Date", "Departure", "Arrival", "Payment Method", "Payment Status", "Amount", "Booking Status"],
+    ...selectedDateBookings.map((booking) => [
+      booking.bookedByName || booking.userEmail || "Unknown",
+      booking.customerName || "N/A",
+      getBookingRoute(booking) || "N/A",
+      formatBookingDate(booking.date || booking.bookingDate),
+      booking.departure || "N/A",
+      booking.arrival || "N/A",
+      booking.paymentInfo?.method || "Unknown",
+      booking.paymentInfo?.status || "Unknown",
+      Number(booking.finalPrice || 0).toFixed(2),
+      getDisplayBookingStatus(booking)
+    ])
+  ];
+
+  const getBookingExportFileName = () => {
+    const routePart = selectedRoute && selectedRoute !== "all"
+      ? normalizeRoute(selectedRoute)
+      : "all-routes";
+    return `bookings-${selectedDate || "all-dates"}-${routePart}.csv`;
+  };
+
   return (
     <AdminLayout active="booking">
+      {showDownloadPreview && (
+        <div
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setShowDownloadPreview(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: isMobile ? 12 : 24,
+            background: "rgba(0,0,0,0.5)",
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="booking-download-preview-title"
+            style={{
+              width: "100%",
+              maxWidth: 1100,
+              maxHeight: "90vh",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              background: "#fff",
+              borderRadius: 12,
+              padding: isMobile ? 14 : 24,
+              boxShadow: "0 10px 40px rgba(0,0,0,0.2)",
+            }}
+          >
+            <div style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 12,
+              marginBottom: 16,
+            }}>
+              <div>
+                <h2 id="booking-download-preview-title" style={{
+                  margin: 0,
+                  color: "#1e3a5f",
+                  fontSize: isMobile ? "1rem" : "1.2rem",
+                  fontWeight: 800,
+                }}>CSV Download Preview</h2>
+                <p style={{ margin: "6px 0 0", color: "#666", fontSize: isMobile ? "0.78rem" : "0.9rem" }}>
+                  {getBookingExportFileName()} · {selectedDateBookings.length} booking{selectedDateBookings.length === 1 ? "" : "s"}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Close preview"
+                onClick={() => setShowDownloadPreview(false)}
+                style={{
+                  border: "1px solid #d0d0d0",
+                  borderRadius: 6,
+                  background: "#fff",
+                  color: "#444",
+                  padding: "6px 10px",
+                  fontSize: "1.1rem",
+                  cursor: "pointer",
+                }}
+              >×</button>
+            </div>
+            <div style={{ overflow: "auto", border: "1px solid #cbd2d9", borderRadius: 4, background: "#fff" }}>
+              <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: "0.82rem", color: "#222" }}>
+                <tbody>
+                  {getBookingExportRows().map((row, rowIndex) => (
+                    <tr key={`export-row-${rowIndex}`} style={{ background: rowIndex === 0 ? "#eef2f5" : "#fff" }}>
+                      <th scope="row" style={{
+                        position: "sticky",
+                        left: 0,
+                        width: 42,
+                        padding: "8px",
+                        border: "1px solid #cbd2d9",
+                        background: rowIndex === 0 ? "#e1e7ec" : "#f7f9fa",
+                        color: "#66717b",
+                        textAlign: "right",
+                        fontWeight: 500,
+                      }}>{rowIndex + 1}</th>
+                      {row.map((cell, cellIndex) => {
+                        const Cell = rowIndex === 0 ? "th" : "td";
+                        return (
+                          <Cell key={`export-cell-${rowIndex}-${cellIndex}`} style={{
+                            padding: "8px 10px",
+                            border: "1px solid #cbd2d9",
+                            textAlign: "left",
+                            whiteSpace: "nowrap",
+                            fontWeight: rowIndex === 0 ? 700 : 400,
+                          }}>{cell}</Cell>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 10,
+              flexWrap: "wrap",
+              marginTop: 16,
+            }}>
+              <button
+                type="button"
+                onClick={() => setShowDownloadPreview(false)}
+                style={{
+                  padding: "9px 16px",
+                  border: "1px solid #d0d0d0",
+                  borderRadius: 6,
+                  background: "#fff",
+                  color: "#444",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >Cancel</button>
+              <button
+                type="button"
+                onClick={() => {
+                  downloadBookings();
+                  setShowDownloadPreview(false);
+                }}
+                style={{
+                  padding: "9px 16px",
+                  border: "none",
+                  borderRadius: 6,
+                  background: "#2196f3",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >Confirm Download</button>
+            </div>
+          </section>
+        </div>
+      )}
       <h2 style={{
         fontWeight: "800",
         fontSize: isMobile ? "1.1rem" : "1.3rem",
@@ -338,7 +618,7 @@ function BookingManagement() {
         fontWeight: "500",
         lineHeight: isMobile ? "1.4" : "1.5"
       }}>
-        View pending reservations and confirmed bookings for your assigned ferry boat. Pending payments can be confirmed or cancelled in Payment Management.
+        View pending reservations and confirmed bookings for your assigned ferry boat.
       </p>
 
 
@@ -377,9 +657,6 @@ function BookingManagement() {
                 cursor: "pointer"
               }}
             />
-            <div style={{ marginTop: "5px", color: "#777", fontSize: isMobile ? "0.65rem" : "0.75rem" }}>
-              Leave blank to show bookings for all dates.
-            </div>
           </div>
           <div style={{ flex: 1, minWidth: isMobile ? "100%" : "200px" }}>
             <label style={{ display: "block", minHeight: isMobile ? "14px" : "17px", lineHeight: isMobile ? "14px" : "17px", fontSize: isMobile ? "0.7rem" : "0.85rem", fontWeight: 600, color: "#666", marginBottom: isMobile ? "4px" : "8px", textTransform: "uppercase" }}>
@@ -436,49 +713,79 @@ function BookingManagement() {
               <option value="afternoonExpress">Afternoon Express</option>
             </select>
           </div>
-          <button
-            onClick={() => {
-              setHasSearched(true);
-              // Scroll to selected date bookings
-              setTimeout(() => {
-                const element = document.getElementById("search-results");
-                if (element) {
-                  element.scrollIntoView({ behavior: "smooth", block: "start" });
-                }
-              }, 100);
-            }}
-            style={{
-              padding: isMobile ? "6px 10px" : "10px 24px",
-              height: isMobile ? "32px" : "42px",
-              background: "#2196f3",
-              color: "white",
-              border: "none",
-              borderRadius: "6px",
-              fontSize: isMobile ? "0.7rem" : "0.85rem",
-              fontWeight: 600,
-              cursor: "pointer",
-              transition: "all 0.3s ease",
-              whiteSpace: "nowrap",
-              alignSelf: "flex-start",
-              marginTop: isMobile ? "18px" : "25px",
-              flex: "0 0 auto",
-              minWidth: isMobile ? "80px" : "auto",
-              marginLeft: isMobile ? "auto" : "0",
-              boxSizing: "border-box"
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.background = "#1976d2";
-              e.target.style.transform = "translateY(-2px)";
-              e.target.style.boxShadow = "0 4px 12px rgba(33, 150, 243, 0.3)";
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.background = "#2196f3";
-              e.target.style.transform = "translateY(0)";
-              e.target.style.boxShadow = "none";
-            }}
-          >
-            Search
-          </button>
+          <div style={{
+            display: "flex",
+            gap: "8px",
+            alignSelf: "flex-start",
+            marginTop: isMobile ? "18px" : "25px",
+            marginLeft: isMobile ? "auto" : "0",
+          }}>
+            <button
+              onClick={() => {
+                setHasSearched(true);
+                setTimeout(() => {
+                  const element = document.getElementById("search-results");
+                  if (element) {
+                    element.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }
+                }, 100);
+              }}
+              style={{
+                padding: isMobile ? "6px 10px" : "10px 24px",
+                height: isMobile ? "32px" : "42px",
+                background: "#2196f3",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                fontSize: isMobile ? "0.7rem" : "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all 0.3s ease",
+                whiteSpace: "nowrap",
+                flex: "0 0 auto",
+                minWidth: isMobile ? "80px" : "auto",
+                boxSizing: "border-box"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#1976d2";
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.boxShadow = "0 4px 12px rgba(33, 150, 243, 0.3)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#2196f3";
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "none";
+              }}
+            >
+              Search
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedDate("");
+                setSelectedRoute("all");
+                setSelectedSchedule("all");
+                setCurrentPage(1);
+                setHasSearched(true);
+              }}
+              style={{
+                padding: isMobile ? "6px 10px" : "10px 20px",
+                height: isMobile ? "32px" : "42px",
+                background: "#fff",
+                color: "#1e3a5f",
+                border: "1px solid #d0d0d0",
+                borderRadius: "6px",
+                fontSize: isMobile ? "0.7rem" : "0.85rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                minWidth: isMobile ? "70px" : "auto",
+                boxSizing: "border-box"
+              }}
+            >
+              Clear
+            </button>
+          </div>
         </div>
       </div>
 
@@ -492,9 +799,46 @@ function BookingManagement() {
           border: "1px solid #e0e8f0",
           marginBottom: isMobile ? "15px" : "30px"
         }}>
-          <h2 style={{ fontSize: isMobile ? "0.9rem" : "1.25rem", fontWeight: 800, color: "#1e3a5f", marginBottom: isMobile ? "12px" : "20px" }}>
-            Bookings for {selectedDate ? formatDate(selectedDate) : "All Dates"} · {selectedRoute === "all" ? "All Routes" : selectedRoute || "All Routes"}
-          </h2>
+          <div style={{
+            display: "flex",
+            alignItems: isMobile ? "flex-start" : "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            flexDirection: "row",
+            marginBottom: isMobile ? "12px" : "20px"
+          }}>
+            <h2 style={{
+              fontSize: isMobile ? "0.9rem" : "1.25rem",
+              fontWeight: 800,
+              color: "#1e3a5f",
+              margin: 0,
+              minWidth: 0,
+              flex: "1 1 auto",
+              overflowWrap: "anywhere",
+            }}>
+              Bookings for {selectedDate ? formatDate(selectedDate) : "All Dates"} · {selectedRoute === "all" ? "All Routes" : selectedRoute || "All Routes"}
+            </h2>
+            <button
+              type="button"
+              onClick={() => setShowDownloadPreview(true)}
+              disabled={loading || Boolean(fetchError) || selectedDateBookings.length === 0}
+              style={{
+                padding: isMobile ? "8px 12px" : "10px 16px",
+                border: "none",
+                borderRadius: "6px",
+                background: loading || fetchError || selectedDateBookings.length === 0 ? "#aab7c4" : "#16845b",
+                color: "#fff",
+                fontSize: isMobile ? "0.75rem" : "0.85rem",
+                fontWeight: 700,
+                cursor: loading || fetchError || selectedDateBookings.length === 0 ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap",
+                flex: "0 0 auto",
+                alignSelf: "flex-start",
+              }}
+            >
+              {isMobile ? "Download" : "Download Bookings"}
+            </button>
+          </div>
 
           {loading ? (
             <p style={{ textAlign: "center", color: "#666", padding: "40px 20px", fontSize: "0.95rem" }}>
@@ -509,94 +853,64 @@ function BookingManagement() {
               No bookings found for this date and schedule
             </p>
           ) : isMobile ? (
-            <div style={{ width: "100%", overflowX: "auto", overflowY: "visible" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", minWidth: "100%" }}>
-                {/* Mobile Header Row */}
-                <div style={{ display: "flex", gap: "6px", background: "#f5f5f5", padding: "10px 12px", borderRadius: "8px", marginBottom: "4px", fontSize: "0.65rem", fontWeight: 700, color: "#1e3a5f", textTransform: "uppercase" }}>
-                  <div style={{ flex: "0 0 20%", minWidth: "60px" }}>User Account</div>
-                  <div style={{ flex: "0 0 20%", minWidth: "60px" }}>Passenger</div>
-                  <div style={{ flex: "0 0 18%", minWidth: "50px" }}>Route</div>
-                  <div style={{ flex: "0 0 15%", minWidth: "55px" }}>Date</div>
-                  <div style={{ flex: "0 0 15%", minWidth: "45px" }}>Time</div>
-                  <div style={{ flex: "0 0 13%", minWidth: "40px" }}>Payment</div>
-                  <div style={{ flex: "0 0 14%", minWidth: "45px" }}>Amount</div>
-                </div>
-
-                {paginatedBookings.map((booking) => (
-                  (() => {
-                    const displayStatus = getDisplayBookingStatus(booking);
-                    return (
-                  <div key={booking.id} style={{
-                    display: "flex",
-                    gap: "6px",
-                    alignItems: "center",
-                    padding: "10px 12px",
-                    background: "#ffffff",
-                    border: "1px solid #e0e8f0",
-                    borderRadius: "8px",
-                    transition: "all 0.3s ease",
-                    fontSize: "0.7rem"
-                  }}>
-                    <div style={{ flex: "0 0 20%", minWidth: "60px", fontWeight: 600, color: "#1976d2", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.65rem" }}>
-                      {booking.bookedByName || booking.userEmail || "Unknown"}
-                    </div>
-                    <div style={{ flex: "0 0 20%", minWidth: "60px", fontWeight: 600, color: "#333", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {booking.customerName}
-                    </div>
-                    <div style={{ flex: "0 0 18%", minWidth: "50px", color: "#666", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.65rem" }}>
-                      {booking.routeDirection}
-                    </div>
-                    <div style={{ flex: "0 0 15%", minWidth: "55px", color: "#666", fontSize: "0.6rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {formatBookingDate(booking.date || booking.bookingDate)}
-                    </div>
-                    <div style={{ flex: "0 0 15%", minWidth: "45px", color: "#666", fontSize: "0.6rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {booking.departure} → {booking.arrival}
-                    </div>
-                    <div style={{ flex: "0 0 13%", minWidth: "40px", color: "#ff9800", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "0.6rem" }}>
-                      <div>
-                        {booking.paymentInfo?.method === "gcash" ? "GCash" : booking.paymentInfo?.method === "paymaya" ? "PayMaya" : booking.paymentInfo?.method?.charAt(0).toUpperCase() + booking.paymentInfo?.method?.slice(1)}
-                      </div>
-                      <div style={{
-                        color: booking.paymentInfo?.status === "completed"
-                          ? "#4caf50"
-                          : booking.paymentInfo?.status === "pending"
-                            ? "#ff9800"
-                            : "#999"
-                      }}>
-                        {booking.paymentInfo?.status === "completed"
-                          ? "Paid"
-                          : booking.paymentInfo?.status === "pending"
-                            ? "Payment Pending"
-                            : booking.status === "pending"
-                              ? "Pending"
-                              : "Unknown"}
-                      </div>
-                    </div>
-                    <div style={{ flex: "0 0 14%", minWidth: "45px", display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <div style={{ color: "#2196f3", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        ₱{Number(booking.finalPrice).toFixed(2)}
-                      </div>
-                      <span style={{
-                        display: "inline-block",
-                        width: "100%",
-                        boxSizing: "border-box",
-                        padding: "4px",
-                        border: `1px solid ${getStatusColor(displayStatus)}`,
-                        borderRadius: "4px",
-                        color: getStatusColor(displayStatus),
+            <div style={{ width: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+              <table style={{ width: "100%", minWidth: "700px", borderCollapse: "separate", borderSpacing: "0 6px", fontSize: "0.72rem" }}>
+                <thead>
+                  <tr style={{ background: "#f5f7fa" }}>
+                    {["Passenger", "Route", "Date", "Time", "Payment", "Amount", "Status"].map((heading) => (
+                      <th key={heading} style={{
+                        padding: "10px 8px",
+                        color: "#1e3a5f",
+                        fontSize: "0.65rem",
                         fontWeight: 700,
-                        fontSize: "0.55rem",
-                        textAlign: "center",
-                        textTransform: "capitalize"
-                      }}>
-                        {displayStatus}
-                      </span>
-                    </div>
-                  </div>
+                        textAlign: "left",
+                        textTransform: "uppercase",
+                        whiteSpace: "nowrap",
+                      }}>{heading}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedBookings.map((booking) => {
+                    const displayStatus = getDisplayBookingStatus(booking);
+                    const paymentStatus = booking.paymentInfo?.status === "completed"
+                      ? "Paid"
+                      : booking.paymentInfo?.status === "pending"
+                        ? "Payment Pending"
+                        : booking.status === "pending"
+                          ? "Pending"
+                          : "Unknown";
+                    return (
+                      <tr key={booking.id} style={{ background: "#fff" }}>
+                        <td style={{ maxWidth: "125px", padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", borderLeft: "1px solid #dce5ef", color: "#263b55", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {booking.customerName || "N/A"}
+                        </td>
+                        <td style={{ maxWidth: "140px", padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", color: "#596579", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {booking.routeDirection || "N/A"}
+                        </td>
+                        <td style={{ padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", color: "#596579", whiteSpace: "nowrap" }}>
+                          {formatBookingDate(booking.date || booking.bookingDate)}
+                        </td>
+                        <td style={{ padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", color: "#596579", whiteSpace: "nowrap" }}>
+                          {booking.departure || "N/A"}{booking.arrival ? ` → ${booking.arrival}` : ""}
+                        </td>
+                        <td style={{ padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", whiteSpace: "nowrap" }}>
+                          <div style={{ color: "#d88700", fontWeight: 600 }}>{booking.paymentInfo?.method || "Unknown"}</div>
+                          <div style={{ color: booking.paymentInfo?.status === "completed" ? "#258443" : "#d88700" }}>{paymentStatus}</div>
+                        </td>
+                        <td style={{ padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", color: "#1687d9", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          ₱{Number(booking.finalPrice || 0).toFixed(2)}
+                        </td>
+                        <td style={{ padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", borderRight: "1px solid #dce5ef", whiteSpace: "nowrap" }}>
+                          <span style={{ padding: "4px 6px", border: `1px solid ${getStatusColor(displayStatus)}`, borderRadius: "5px", color: getStatusColor(displayStatus), fontSize: "0.62rem", fontWeight: 700, textTransform: "capitalize" }}>
+                            {displayStatus}
+                          </span>
+                        </td>
+                      </tr>
                     );
-                  })()
-                ))}
-              </div>
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div style={{ overflowX: "auto" }}>
@@ -660,7 +974,7 @@ function BookingManagement() {
                       </td>
                       <td style={{ padding: "12px", color: "#ff9800", fontWeight: 600, fontSize: "0.9rem" }}>
                         <div style={{ marginBottom: "4px" }}>
-                          {booking.paymentInfo?.method === "gcash" ? "GCash" : booking.paymentInfo?.method === "paymaya" ? "PayMaya" : booking.paymentInfo?.method?.charAt(0).toUpperCase() + booking.paymentInfo?.method?.slice(1)}
+                          {booking.paymentInfo?.method || "Unknown"}
                         </div>
                         <div style={{
                           fontSize: "0.75rem",

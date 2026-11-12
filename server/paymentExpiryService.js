@@ -1,7 +1,7 @@
 const { dispatchNotification } = require('./notificationService');
 
 const PAYMENT_NOTICE =
-  'Please note: Your booking will only be confirmed once payment is received. QR codes are valid for 30 minutes. If payment is not completed within this time, your booking will be automatically cancelled.';
+  'Please note: Port staff will confirm your booking after payment is received. QR codes are valid for 30 minutes. If payment is not completed within this time, your booking will be automatically cancelled.';
 
 const APP_URL = process.env.APP_URL || 'https://ferry-app-minsu.vercel.app';
 
@@ -15,6 +15,10 @@ function toDate(value) {
 
 async function processPendingPaymentDoc(db, paymentDoc, now = new Date()) {
   const payment = paymentDoc.data();
+  if (payment.paymongoStatus === 'paid') {
+    return { action: 'paid_awaiting_confirmation', paymentId: paymentDoc.id };
+  }
+
   const expiresAt = toDate(payment.paymentExpiresAt);
   if (!expiresAt) {
     return { action: 'skipped' };

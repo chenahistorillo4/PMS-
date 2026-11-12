@@ -1,7 +1,6 @@
 .manage-scanners-container {
-  padding: 15px;
-  max-width: 1200px;
-  margin: 0 auto;
+  padding: 15px 0;
+  margin: 0;
   width: 100%;
   box-sizing: border-box;
 }
@@ -212,7 +211,7 @@
 /* MOBILE RESPONSIVE */
 @media (max-width: 768px) {
   .manage-scanners-container {
-    padding: 10px;
+    padding: 10px 0;
     position: relative;
   }
 
@@ -320,7 +319,7 @@
 
 @media (max-width: 480px) {
   .manage-scanners-container {
-    padding: 8px;
+    padding: 8px 0;
   }
 
   .manage-scanners-title {

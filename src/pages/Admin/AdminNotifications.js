@@ -7,6 +7,39 @@ import { formatTime12Hour } from "../../utils/timeFormatter";
 import { isNotificationUnread } from "../../hooks/useUnreadNotificationCount";
 import { getNotificationCardStyles, NotificationDot } from "../../components/NotificationBadge";
 
+const ANNOUNCEMENT_TEMPLATES = [
+  {
+    id: "weather-advisory",
+    title: "Weather Advisory",
+    message:
+      "Passengers are advised to monitor weather conditions and arrive early at the port. Please stay updated for further announcements regarding affected trips.",
+  },
+  {
+    id: "schedule-adjustment",
+    title: "Schedule Adjustment Notice",
+    message:
+      "Please be informed that selected trip schedules have been adjusted. Passengers are encouraged to review their booking details for updated departure times.",
+  },
+  {
+    id: "port-arrival",
+    title: "Port Arrival Reminder",
+    message:
+      "All passengers are advised to arrive at the port at least 30 minutes before departure to allow sufficient time for boarding and verification.",
+  },
+  {
+    id: "system-maintenance",
+    title: "Scheduled System Maintenance",
+    message:
+      "The PMS Port system will undergo maintenance on the scheduled date and time. Some services may be temporarily unavailable during this period.",
+  },
+  {
+    id: "port-operations",
+    title: "Port Operations Advisory",
+    message:
+      "Please review the latest travel requirements and port guidelines before your scheduled trip to avoid delays during boarding.",
+  },
+];
+
 function AdminNotifications() {
   const NOTIFICATIONS_PER_PAGE = 10;
   const normalizeBoatName = (boatName) => (boatName || "").trim().toLowerCase();
@@ -20,6 +53,7 @@ function AdminNotifications() {
     title: "",
     message: ""
   });
+  const [selectedTemplate, setSelectedTemplate] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [deleteActions, setDeleteActions] = useState({});
   const gesture = useRef(null);
@@ -271,6 +305,7 @@ function AdminNotifications() {
       }
 
       setAnnouncement({ title: "", message: "" });
+      setSelectedTemplate("");
       setShowAnnounceForm(false);
     } catch (error) {
       console.error("Error sending announcement:", error);
@@ -422,6 +457,42 @@ function AdminNotifications() {
             Send Announcement to Users
           </h3>
           <form onSubmit={handleSendAnnouncement}>
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{
+                display: "block",
+                marginBottom: "6px",
+                fontWeight: 600,
+                fontSize: isMobile ? "0.9rem" : "0.95rem",
+                color: "#333"
+              }}>
+                Choose a Built-in Notification
+              </label>
+              <select
+                value={selectedTemplate}
+                onChange={(e) => {
+                  const template = ANNOUNCEMENT_TEMPLATES.find((item) => item.id === e.target.value);
+                  setSelectedTemplate(e.target.value);
+                  if (template) {
+                    setAnnouncement({ title: template.title, message: template.message });
+                  }
+                }}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  border: "1px solid #ddd",
+                  borderRadius: "6px",
+                  fontSize: "0.95rem",
+                  boxSizing: "border-box",
+                  fontFamily: "inherit",
+                  background: "#fff"
+                }}
+              >
+                <option value="">Select a notification template</option>
+                {ANNOUNCEMENT_TEMPLATES.map((template) => (
+                  <option key={template.id} value={template.id}>{template.title}</option>
+                ))}
+              </select>
+            </div>
             <div style={{ marginBottom: "16px" }}>
               <label style={{
                 display: "block",

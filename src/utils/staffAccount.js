@@ -1,7 +1,7 @@
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 
-const STAFF_PROFILE_COLLECTIONS = ["admins", "port_staff", "qr_scanners"];
+const STAFF_PROFILE_COLLECTIONS = ["admins", "port_staff"];
 
 export async function getStaffAccount(userId) {
   for (const collectionName of STAFF_PROFILE_COLLECTIONS) {

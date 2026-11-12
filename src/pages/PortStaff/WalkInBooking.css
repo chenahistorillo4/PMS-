@@ -1,0 +1,273 @@
+.walk-in-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  color: #263c52;
+}
+
+.walk-in-card {
+  padding: clamp(18px, 2.5vw, 30px);
+  border: 1px solid #e1eaf3;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(26, 69, 108, 0.08);
+}
+
+.walk-in-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e8eef4;
+}
+
+.walk-in-header h1 {
+  margin: 0;
+  color: #244f86;
+  font-size: clamp(1.2rem, 2vw, 1.5rem);
+  font-weight: 800;
+}
+
+.walk-in-header p {
+  margin: 7px 0 0;
+  color: #718398;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.walk-in-boat-badge {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 150px;
+  padding: 10px 14px;
+  border: 1px solid #dce8f3;
+  border-radius: 10px;
+  background: #f5f9fd;
+}
+
+.walk-in-boat-badge span {
+  color: #718398;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.walk-in-boat-badge strong {
+  color: #244f86;
+  font-size: 0.9rem;
+}
+
+.walk-in-message {
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.walk-in-message.success {
+  border-color: #b7dfc3;
+  background: #e8f7ee;
+  color: #23743c;
+}
+
+.walk-in-message.error {
+  border-color: #f0c4c4;
+  background: #fdecec;
+  color: #a12626;
+}
+
+.walk-in-state {
+  margin: 0;
+  padding: 28px 16px;
+  border: 1px dashed #cad8e6;
+  border-radius: 10px;
+  color: #52677d;
+  text-align: center;
+}
+
+.walk-in-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.walk-in-empty strong {
+  color: #244f86;
+  font-size: 1rem;
+}
+
+.walk-in-empty span {
+  color: #718398;
+  font-size: 0.88rem;
+}
+
+.walk-in-form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.walk-in-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 20px;
+}
+
+.walk-in-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  color: #52677d;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.walk-in-field input,
+.walk-in-field select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d5e0eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #263c52;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.walk-in-field input[readonly] {
+  background: #f4f6f8;
+  font-weight: 700;
+}
+
+.walk-in-field input:focus,
+.walk-in-field select:focus {
+  outline: none;
+  border-color: #3b7ecc;
+  box-shadow: 0 0 0 3px rgba(59, 126, 204, 0.13);
+}
+
+.walk-in-summary {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.75fr) minmax(0, 1.6fr);
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid #dce8f3;
+  border-radius: 12px;
+  background: #f5f9fd;
+}
+
+.walk-in-total {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.walk-in-total span {
+  color: #60758a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.walk-in-total strong {
+  color: #1e6e45;
+  font-size: 1.45rem;
+  font-weight: 800;
+}
+
+.walk-in-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 18px;
+  border-left: 1px solid #d7e3ed;
+  color: #52677d;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.walk-in-breakdown strong {
+  color: #244f86;
+}
+
+.walk-in-submit {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 11px 20px;
+  border: 0;
+  border-radius: 8px;
+  background: #2876d2;
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.walk-in-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: #1e5fae;
+}
+
+.walk-in-submit:disabled {
+  background: #aab7c4;
+  cursor: not-allowed;
+}
+
+@media (max-width: 700px) {
+  .walk-in-card {
+    padding: 18px 14px;
+    border-radius: 12px;
+  }
+
+  .walk-in-header {
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 18px;
+    padding-bottom: 16px;
+  }
+
+  .walk-in-boat-badge {
+    width: 100%;
+  }
+
+  .walk-in-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .walk-in-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .walk-in-total strong {
+    font-size: 1.3rem;
+  }
+
+  .walk-in-breakdown {
+    padding: 12px 0 0;
+    border-top: 1px solid #d7e3ed;
+    border-left: 0;
+  }
+
+  .walk-in-submit {
+    width: 100%;
+  }
+}

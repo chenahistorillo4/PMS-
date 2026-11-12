@@ -4,6 +4,7 @@ import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { updatePassword, reauthenticateWithCredential, EmailAuthProvider, signOut, updateEmail } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 import AdminLayout from "./AdminLayout";
+import "./AdminProfile.css";
 
 function AdminProfile() {
   const navigate = useNavigate();
@@ -333,14 +334,9 @@ function AdminProfile() {
 
   return (
     <AdminLayout active="profile">
-      <div style={{
-        maxWidth: "1000px",
-        margin: "0 auto",
-        padding: isMobile ? "24px 16px" : "16px 30px",
-        minHeight: "100vh"
-      }}>
+      <div className={`admin-profile-page${isMobile ? " is-mobile" : ""}`}>
         {/* Header */}
-        <h2 style={{
+        <h2 className="admin-profile-title" style={{
           fontWeight: "800",
           fontSize: isMobile ? "1.05rem" : "1.3rem",
           color: "#1a1a1a",
@@ -350,7 +346,7 @@ function AdminProfile() {
         }}>
           My Profile
         </h2>
-        <p style={{
+        <p className="admin-profile-subtitle" style={{
           fontSize: isMobile ? "0.8rem" : "0.95rem",
           color: "#666",
           marginBottom: isMobile ? "18px" : "20px",
@@ -361,18 +357,13 @@ function AdminProfile() {
         </p>
 
         {/* Profile Card */}
-        <div style={{
-          backgroundColor: "white",
-          borderRadius: "16px",
-          padding: isMobile ? "14px 12px" : "40px 35px",
-          boxShadow: "0 4px 15px rgba(0, 0, 0, 0.08)"
-        }}>
+        <div className="admin-profile-content">
           {/* Profile Picture Section (Inside White Box) */}
-          <div style={{
-            display: "flex",
-            justifyContent: "center",
+          <div className={`admin-profile-hero${isEditing ? " is-editing" : ""}`} style={{
+            display: "grid",
+            justifyContent: "flex-start",
             alignItems: "center",
-            flexDirection: "column",
+            flexDirection: "row",
             marginBottom: isMobile ? "18px" : "32px",
             paddingBottom: isMobile ? "15px" : "25px",
             borderBottom: "2px solid #f0f0f0"
@@ -426,12 +417,12 @@ function AdminProfile() {
             />
             {/* Picture Action Buttons - Only show when editing */}
             {isEditing && (
-            <div style={{
+            <div className="admin-profile-picture-actions" style={{
               display: "flex",
               gap: "6px",
-              justifyContent: "center",
+              justifyContent: "flex-start",
               marginBottom: "10px",
-              flexWrap: "wrap"
+              flexWrap: "nowrap"
             }}>
               {!previewImage && (
               <button
@@ -535,6 +526,11 @@ function AdminProfile() {
                   Remove
                 </button>
               )}
+              {isMobile && (
+                <button className="admin-profile-logout-button" onClick={handleLogout}>
+                  Log Out
+                </button>
+              )}
             </div>
             )}
             <p style={{
@@ -542,66 +538,29 @@ function AdminProfile() {
               fontWeight: "700",
               color: "#1a1a1a",
               margin: "0",
-              textAlign: "center"
+              textAlign: "left"
             }}>
               {profile.name || "Admin"}
             </p>
+            <p className="admin-profile-role">{profile.role || "Admin"}</p>
+            <div className="admin-profile-hero-actions">
+              {!isEditing && (
+                <button className="admin-profile-edit-button" onClick={() => setIsEditing(true)}>
+                  Edit Profile
+                </button>
+              )}
+              {(!isEditing || !isMobile) && (
+                <button className="admin-profile-logout-button" onClick={handleLogout}>
+                  Log Out
+                </button>
+              )}
+            </div>
           </div>
-          {/* Profile Header */}
-          {/* Profile Header */}
-          <div style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: isMobile ? "14px" : "25px",
-            paddingBottom: isMobile ? "12px" : "20px",
-            borderBottom: "2px solid #f0f0f0",
-            flexDirection: "row",
-            gap: isMobile ? "4px" : "0"
-          }}>
-            <h2 style={{
-              fontSize: isMobile ? "1.25rem" : "1.15rem",
-              fontWeight: "700",
-              color: "#1a1a1a",
-              margin: "0",
-              flex: "1"
-            }}>
-              Admin Information
-            </h2>
-            {!isEditing && (
-              <button
-                onClick={() => setIsEditing(true)}
-                style={{
-                  padding: isMobile ? "5px 10px" : "11px 24px",
-                  backgroundColor: "#3b7ecc",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "6px",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                  transition: "all 0.3s ease",
-                  fontSize: isMobile ? "0.75rem" : "0.95rem",
-                  whiteSpace: "nowrap",
-                  flexShrink: "0"
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = "#2c6db8";
-                  e.target.style.transform = "translateY(-2px)";
-                  e.target.style.boxShadow = "0 4px 12px rgba(59, 126, 204, 0.2)";
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = "#3b7ecc";
-                  e.target.style.transform = "translateY(0)";
-                  e.target.style.boxShadow = "none";
-                }}
-              >
-                Edit Profile
-              </button>
-            )}
-          </div>
-
+          <div className="admin-profile-info-grid">
+          <section className="admin-profile-panel">
+            <h3 className="admin-profile-panel-title">Personal Information</h3>
           {/* Profile Fields */}
-          <div style={{
+          <div className="admin-profile-fields" style={{
             display: "grid",
             gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
             gap: isMobile ? "14px" : "32px",
@@ -783,7 +742,25 @@ function AdminProfile() {
                 </p>
               )}
             </div>
+            <div>
+              <label>Role</label>
+              <p className="admin-profile-extra-value admin-profile-role-value">{profile.role || "N/A"}</p>
+            </div>
+            <div>
+              <label>Member Since</label>
+              <p className="admin-profile-extra-value">{formatDate(profile.createdAt)}</p>
+            </div>
+          </div>
+          </section>
 
+          <section className="admin-profile-panel">
+            <h3 className="admin-profile-panel-title">Work Assignment</h3>
+            <div className="admin-profile-fields" style={{
+              display: "grid",
+              gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+              gap: isMobile ? "14px" : "32px",
+              marginBottom: isMobile ? "16px" : "28px"
+            }}>
             {/* Assigned Boat */}
             <div style={{
               padding: isMobile ? "11px 0" : "0",
@@ -860,75 +837,10 @@ function AdminProfile() {
               </p>
             </div>
 
-            {/* Role */}
-            <div style={{
-              padding: isMobile ? "11px 0" : "0",
-              borderBottom: isMobile ? "1px solid #e8e8e8" : "none",
-              backgroundColor: isMobile ? "#f9f9f9" : "transparent",
-              marginLeft: isMobile ? "-8px" : "0",
-              marginRight: isMobile ? "-8px" : "0",
-              paddingLeft: isMobile ? "8px" : "0",
-              paddingRight: isMobile ? "8px" : "0"
-            }}>
-              <label style={{
-                display: "block",
-                fontSize: isMobile ? "0.8rem" : "0.85rem",
-                fontWeight: "700",
-                color: "#999",
-                marginBottom: isMobile ? "5px" : "8px",
-                textTransform: "uppercase",
-                letterSpacing: "0.5px"
-              }}>
-                Role
-              </label>
-              <p style={{
-                fontSize: isMobile ? "0.95rem" : "1.1rem",
-                fontWeight: "600",
-                color: "#43a047",
-                margin: isMobile ? "0 0 3px 0" : "0",
-                textTransform: "capitalize"
-              }}>
-                {profile.role || "N/A"}
-              </p>
-              <p style={{
-                fontSize: "0.85rem",
-                color: "#999",
-                margin: "4px 0 0 0"
-              }}>
-                Cannot be changed
-              </p>
-            </div>
-
-            {/* Member Since */}
-            <div style={{
-              padding: isMobile ? "10px 0" : "0",
-              borderTop: isMobile ? "1px solid #e8e8e8" : "none",
-              marginTop: isMobile ? "12px" : "0"
-            }}>
-              <label style={{
-                display: "block",
-                fontSize: isMobile ? "0.8rem" : "0.85rem",
-                fontWeight: "700",
-                color: "#999",
-                marginBottom: isMobile ? "5px" : "8px",
-                textTransform: "uppercase",
-                letterSpacing: "0.5px"
-              }}>
-                Member Since
-              </label>
-              <p style={{
-                fontSize: isMobile ? "0.95rem" : "1.1rem",
-                fontWeight: "600",
-                color: "#1a1a1a",
-                margin: "0"
-              }}>
-                {formatDate(profile.createdAt)}
-              </p>
-            </div>
           </div>
 
           {/* Available Routes */}
-          <div style={{
+          <div className="admin-profile-routes" style={{
             marginBottom: isMobile ? "16px" : "28px",
             marginTop: isMobile ? "12px" : "0",
             paddingTop: isMobile ? "12px" : "0",
@@ -1005,10 +917,12 @@ function AdminProfile() {
               </div>
             )}
           </div>
+          </section>
+          </div>
 
           {/* Action Buttons */}
           {isEditing && (
-            <div style={{
+            <div className="admin-profile-form-actions" style={{
               display: "flex",
               gap: "12px",
               justifyContent: "flex-end",
@@ -1079,7 +993,7 @@ function AdminProfile() {
           )}
 
           {/* Password Change Section */}
-          <div style={{
+          <div className="admin-profile-security" style={{
             marginTop: isMobile ? "12px" : "25px",
             padding: isMobile ? "12px" : "20px",
             backgroundColor: "#f9f9f9",
@@ -1098,7 +1012,7 @@ function AdminProfile() {
                 color: "#1a1a1a",
                 margin: "0"
               }}>
-                Change Password
+                Account Security
               </h3>
               {!isChangingPassword && (
                 <button
@@ -1350,27 +1264,6 @@ function AdminProfile() {
           </div>
         </div>
 
-        {/* Logout Button */}
-        <button 
-          onClick={handleLogout}
-          style={{
-            width: "100%",
-            marginTop: isMobile ? "35px" : "40px",
-            padding: isMobile ? "10px 20px" : "13px 22px",
-            background: "#f44336",
-            color: "white",
-            border: "none",
-            borderRadius: "8px",
-            cursor: "pointer",
-            fontWeight: 600,
-            fontSize: isMobile ? "0.9rem" : "1rem",
-            transition: "background 0.3s ease"
-          }}
-          onMouseEnter={(e) => e.target.style.background = "#da190b"}
-          onMouseLeave={(e) => e.target.style.background = "#f44336"}
-        >
-          Log Out
-        </button>
       </div>
 
       {/* Logout Confirmation Modal */}

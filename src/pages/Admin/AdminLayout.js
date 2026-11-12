@@ -501,20 +501,13 @@ function AdminLayout({ children, active }) {
             padding: isMobile ? "16px 12px" : "30px",
             overflowY: "auto",
             overscrollBehavior: "contain",
-            background: "linear-gradient(135deg, rgba(15, 107, 127, 0.08) 0%, rgba(13, 79, 161, 0.08) 100%), url('/bg5.avif') center/cover fixed",
+            backgroundImage: "linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)), linear-gradient(135deg, rgba(15, 107, 127, 0.08) 0%, rgba(13, 79, 161, 0.08) 100%), url('/bg5.avif')",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundAttachment: "fixed",
             position: "relative"
           }}
         >
-          <div style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(255, 255, 255, 0.72)",
-            pointerEvents: "none",
-            zIndex: 0
-          }} />
           <div style={{
             position: "relative",
             zIndex: 1,
