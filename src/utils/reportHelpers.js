@@ -177,35 +177,60 @@ export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
 }
 
-export function attachPaymentStatuses(bookings, payments) {
+
+export function attachPaymentStatuses(bookings = [], payments = []) {
   const paymentPriority = (payment) => {
     const status = String(payment.status || '').toLowerCase();
     const paymongoStatus = String(payment.paymongoStatus || '').toLowerCase();
+
     if (['completed', 'confirmed'].includes(status)) return 3;
-    if (paymongoStatus === 'paid' || status === 'paid') return 2;
+    if (status === 'paid' || paymongoStatus === 'paid') return 2;
     if (status === 'pending') return 1;
     return 0;
   };
+
   const paymentsByBookingId = new Map();
 
   payments.forEach((payment) => {
-    if (!payment.bookingId) return;
-    const existingPayment = paymentsByBookingId.get(payment.bookingId);
-    if (!existingPayment || paymentPriority(payment) > paymentPriority(existingPayment)) {
+    if (!payment?.bookingId) return;
+
+    const existing = paymentsByBookingId.get(payment.bookingId);
+
+    if (!existing || paymentPriority(payment) > paymentPriority(existing)) {
       paymentsByBookingId.set(payment.bookingId, payment);
     }
   });
 
   return bookings.map((booking) => {
     const payment = paymentsByBookingId.get(booking.id);
-    return payment
-      ? {
-          ...booking,
-          paymentStatus: payment.status || booking.paymentStatus || '',
-          paymongoStatus: payment.paymongoStatus || booking.paymongoStatus || '',
-        }
-      : booking;
+
+    return {
+      ...booking,
+      paymentStatus: payment?.status || booking.paymentStatus || '',
+      paymongoStatus: payment?.paymongoStatus || booking.paymongoStatus || '',
+    };
   });
+}
+
+export function isReportableBooking(booking) {
+  const bookingStatus = String(booking?.status || '').toLowerCase();
+
+  if (['cancelled', 'canceled', 'failed'].includes(bookingStatus)) {
+    return false;
+  }
+
+  const paymentStatus = String(booking?.paymentStatus || '').toLowerCase();
+  const paymongoStatus = String(booking?.paymongoStatus || '').toLowerCase();
+
+  const paymentIsComplete =
+    ['paid', 'completed', 'confirmed'].includes(paymentStatus) ||
+    paymongoStatus === 'paid';
+
+  const passengerQrWasScanned =
+    ['scanned', 'boarded'].includes(bookingStatus) ||
+    Boolean(booking?.scannedAt);
+
+  return paymentIsComplete && passengerQrWasScanned;
 }
 
 export function isConfirmedBooking(booking) {
