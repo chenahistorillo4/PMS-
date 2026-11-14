@@ -54,52 +54,81 @@ const createAdminInAppNotification = async ({
   );
 };
 
-export const notifyNewBookingReceived = async (booking, bookingId, capacity) => {
+export const notifyNewBookingReceived = async (booking = {}, bookingId, capacity) => {
+  const boat = booking?.boat;
+  if (!boat) return null;
+
+  const customerName = booking.customerName || booking.bookedByName || 'Passenger';
+  const tripName = booking.tripName || 'Trip';
+  const tripDetails = {
+    bookingId,
+    tripId: booking.tripId,
+    referenceCode: booking.referenceCode || 'N/A',
+    customerName,
+    name: tripName,
+    tripName,
+    date: booking.date,
+    departure: booking.departure,
+    arrival: booking.arrival,
+    boat,
+  };
+
   await createAdminInAppNotification({
-    boat: booking.boat,
+    boat,
     type: 'new_booking_received',
     title: 'New Booking Received',
-    message: `${booking.customerName || 'A passenger'} booked ${booking.tripName || 'a trip'}.`,
+    message: `${customerName} booked ${tripName} (Ref: ${tripDetails.referenceCode}).`,
     eventId: bookingId,
     bookingId,
     tripId: booking.tripId,
-    tripDetails: {
-      name: booking.tripName,
-      date: booking.date,
-      departure: booking.departure,
-      arrival: booking.arrival,
-      boat: booking.boat,
-    },
+    tripDetails,
   });
 
   const tripCapacity = Number(capacity);
-  if (!booking.tripId || !Number.isFinite(tripCapacity) || tripCapacity <= 0) return;
+  const tripId = booking.tripId;
+  if (!tripId || !Number.isFinite(tripCapacity) || tripCapacity <= 0) {
+    return { ok: true };
+  }
 
   const bookingsSnapshot = await getDocs(
-    query(collection(db, 'bookings'), where('tripId', '==', booking.tripId))
+    query(collection(db, 'bookings'), where('tripId', '==', tripId))
   );
-  const occupiedSeats = bookingsSnapshot.docs.filter((bookingDoc) => {
+  const activeCount = bookingsSnapshot.docs.filter((bookingDoc) => {
     const status = String(bookingDoc.data().status || '').toLowerCase();
     return !['cancelled', 'failed'].includes(status);
   }).length;
+  const previousCount = Math.max(0, activeCount - 1);
+  const almostFullThreshold = Math.ceil(tripCapacity * 0.8);
+  let capacityAlert = null;
 
-  if (occupiedSeats >= tripCapacity) {
+  if (activeCount >= tripCapacity && previousCount < tripCapacity) {
+    capacityAlert = {
+      type: 'trip_full',
+      title: 'Trip Is Full',
+      message: `${tripName} has reached its capacity (${tripCapacity} passengers).`,
+    };
+  } else if (
+    activeCount >= almostFullThreshold &&
+    previousCount < almostFullThreshold
+  ) {
+    capacityAlert = {
+      type: 'trip_almost_full',
+      title: 'Trip Almost Full',
+      message: `${tripName} is almost full (${activeCount}/${tripCapacity} seats booked).`,
+    };
+  }
+
+  if (capacityAlert) {
     await createAdminInAppNotification({
-      boat: booking.boat,
-      type: 'fully_booked_trip',
-      title: 'Fully Booked Trip Alert',
-      message: `Trip "${booking.tripName || 'Schedule'}" is fully booked (${occupiedSeats}/${tripCapacity} seats).`,
-      eventId: booking.tripId,
-      tripId: booking.tripId,
-      tripDetails: {
-        name: booking.tripName,
-        date: booking.date,
-        departure: booking.departure,
-        arrival: booking.arrival,
-        boat: booking.boat,
-      },
+      boat,
+      ...capacityAlert,
+      eventId: tripId,
+      tripId,
+      tripDetails: { ...tripDetails, capacity: tripCapacity, activeCount },
     });
   }
+
+  return { ok: true };
 };
 
 export const notifyPaymentReceived = async ({ paymentId, bookingId, notifyAdmin = true }) => {

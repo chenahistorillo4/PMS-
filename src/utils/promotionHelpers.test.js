@@ -54,6 +54,18 @@ describe("promo helpers", () => {
     expect(isPromoExpired(promo, new Date(2026, 10, 15, 0, 0))).toBe(true);
   });
 
+  test("supports Firestore timestamp dates when checking promo availability", () => {
+    const promo = {
+      active: true,
+      percentage: 10,
+      startDate: { toDate: () => new Date(2026, 10, 8) },
+      endDate: { toDate: () => new Date(2026, 10, 10) },
+    };
+
+    expect(getActivePromo([promo], {}, new Date(2026, 10, 9))).toBe(promo);
+    expect(isPromoExpired(promo, new Date(2026, 10, 11))).toBe(true);
+  });
+
   test("counts non-cancelled reservations against promo limits", () => {
     expect(getPromoReservationCounts([
       { promoId: "spring", status: "pending" },

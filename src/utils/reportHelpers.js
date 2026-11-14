@@ -118,9 +118,12 @@ export function isPayLaterBooking(booking) {
 }
 
 export function isGcashBooking(booking) {
-  return !isPayLaterBooking(booking) &&
-    [booking?.paymentMethod, booking?.payment]
-      .some((value) => normalizeBookingPaymentValue(value).includes('gcash'));
+  const paymentProvider = String(booking?.paymentProvider || '').toLowerCase();
+  return !isPayLaterBooking(booking) && (
+    [booking?.paymentMethod, booking?.payment, booking?.method]
+      .some((value) => normalizeBookingPaymentValue(value).includes('gcash')) ||
+    paymentProvider === 'paymongo'
+  );
 }
 
 export function normalizeBookingForReport(booking) {
@@ -176,7 +179,6 @@ export function getUniqueTripNamesFromBookings(bookings) {
 export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
 }
-
 
 export function attachPaymentStatuses(bookings = [], payments = []) {
   const paymentPriority = (payment) => {
