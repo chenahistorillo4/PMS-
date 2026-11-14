@@ -238,21 +238,6 @@ export function isConfirmedBooking(booking) {
   return ['confirmed', 'completed', 'departed', 'scanned', 'boarded'].includes(status);
 }
 
-export function isReportableBooking(booking) {
-  const bookingStatus = String(booking?.status || '').toLowerCase();
-  if (['cancelled', 'canceled', 'failed'].includes(bookingStatus)) return false;
-
-  const paymentStatus = String(booking?.paymentStatus || '').toLowerCase();
-  const paymongoStatus = String(booking?.paymongoStatus || '').toLowerCase();
-  const paymentIsComplete =
-    ['paid', 'completed', 'confirmed'].includes(paymentStatus) ||
-    paymongoStatus === 'paid';
-  const passengerQrWasScanned =
-    ['scanned', 'boarded'].includes(bookingStatus) || Boolean(booking?.scannedAt);
-
-  return paymentIsComplete && passengerQrWasScanned;
-}
-
 function bookingCreatedInRange(booking, range) {
   const createdAt = getBookingCreatedAt(booking);
   return createdAt && createdAt >= range.start && createdAt <= range.end;
