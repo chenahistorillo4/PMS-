@@ -73,6 +73,24 @@ async function createPaymentInAppNotifications(db, paymentId, payment, booking, 
   await Promise.all(tasks);
 }
 
+async function createPaymentCancellationNotification(db, paymentId, payment, booking) {
+  const userId = booking?.userId || payment?.userId;
+  if (!userId) {
+    console.warn(`Cannot notify passenger about cancelled payment ${paymentId}: userId is missing.`);
+    return;
+  }
+
+  await createInAppNotification(db, `user_payment_expired_${paymentId}`, {
+    userId,
+    type: 'payment_expired',
+    title: 'Payment Expired - Booking Cancelled',
+    message: `Payment for ${booking.tripName || payment.trip || 'your trip'} was not completed. Your booking was cancelled.`,
+    recipientType: 'user',
+    bookingId: payment.bookingId || booking.id,
+    tripId: booking.tripId || null,
+  });
+}
+
 function initFirebaseAdmin() {
   if (initialized) {
     return admin;
@@ -155,10 +173,35 @@ async function markPaymentFailedByIntentId(paymongoPaymentIntentId) {
     throw new Error(`No payment found for intent ${paymongoPaymentIntentId}`);
   }
 
-  await paymentsQuery.docs[0].ref.update({
+  const paymentDoc = paymentsQuery.docs[0];
+  const paymentData = paymentDoc.data();
+  if (!paymentData.bookingId) {
+    throw new Error(`Payment ${paymentDoc.id} is not linked to a booking`);
+  }
+
+  const bookingRef = db.collection('bookings').doc(paymentData.bookingId);
+  const bookingSnap = await bookingRef.get();
+  if (!bookingSnap.exists) {
+    throw new Error(`Booking ${paymentData.bookingId} was not found`);
+  }
+
+  const booking = { id: bookingSnap.id, ...bookingSnap.data() };
+  if (paymentData.status === 'completed' || booking.status === 'confirmed') {
+    return;
+  }
+
+  const batch = db.batch();
+  batch.update(paymentDoc.ref, {
     status: 'failed',
     paymongoStatus: 'failed',
+    cancelReason: 'payment_expired',
   });
+  batch.update(bookingRef, {
+    status: 'cancelled',
+    cancelReason: 'payment_expired',
+  });
+  await batch.commit();
+  await createPaymentCancellationNotification(db, paymentDoc.id, paymentData, booking);
 }
 
 async function markPaymentCompletedBySourceId(paymongoSourceId) {
@@ -218,10 +261,35 @@ async function markPaymentFailedBySourceId(paymongoSourceId) {
     throw new Error(`No payment found for source ${paymongoSourceId}`);
   }
 
-  await paymentsQuery.docs[0].ref.update({
+  const paymentDoc = paymentsQuery.docs[0];
+  const paymentData = paymentDoc.data();
+  if (!paymentData.bookingId) {
+    throw new Error(`Payment ${paymentDoc.id} is not linked to a booking`);
+  }
+
+  const bookingRef = db.collection('bookings').doc(paymentData.bookingId);
+  const bookingSnap = await bookingRef.get();
+  if (!bookingSnap.exists) {
+    throw new Error(`Booking ${paymentData.bookingId} was not found`);
+  }
+
+  const booking = { id: bookingSnap.id, ...bookingSnap.data() };
+  if (paymentData.status === 'completed' || booking.status === 'confirmed') {
+    return;
+  }
+
+  const batch = db.batch();
+  batch.update(paymentDoc.ref, {
     status: 'failed',
     paymongoStatus: 'failed',
+    cancelReason: 'payment_expired',
   });
+  batch.update(bookingRef, {
+    status: 'cancelled',
+    cancelReason: 'payment_expired',
+  });
+  await batch.commit();
+  await createPaymentCancellationNotification(db, paymentDoc.id, paymentData, booking);
 }
 
 module.exports = {

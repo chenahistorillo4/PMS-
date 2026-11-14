@@ -1,7 +1,8 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "../../firebase";
+import { signOut } from "firebase/auth";
+import { auth, db } from "../../firebase";
 import { useAdminUnreadNotificationCount } from "../../hooks/useUnreadNotificationCount";
 import { NavNotificationBadge } from "../../components/NotificationBadge";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
@@ -15,6 +16,8 @@ function AdminLayout({ children, active }) {
   const [adminId, setAdminId] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const { user, authReady } = useAuthUser();
   const { role } = useAuth();
   const reloadKey = useAuthReloadKey();
@@ -22,6 +25,19 @@ function AdminLayout({ children, active }) {
     role === "portstaff" ? null : adminData?.assignedBoat,
     role === "portstaff" ? null : adminId
   );
+
+  const confirmLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await signOut(auth);
+      navigate("/login");
+    } catch (error) {
+      console.error("Error logging out:", error);
+      alert("Logout failed: " + error.message);
+      setIsLoggingOut(false);
+      setShowLogoutModal(false);
+    }
+  };
 
   // Handle window resize
   useEffect(() => {
@@ -138,6 +154,18 @@ function AdminLayout({ children, active }) {
         </svg>
       )
     },
+    {
+      to: "/cargo-management",
+      label: "Cargo Pricing",
+      key: "cargo",
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 7l9-4 9 4-9 4-9-4z"></path>
+          <path d="M3 7v10l9 4 9-4V7"></path>
+          <path d="M12 11v10"></path>
+        </svg>
+      )
+    },
     { 
       to: "/admin-notifications", 
       label: "Notifications", 
@@ -222,7 +250,9 @@ function AdminLayout({ children, active }) {
           flexDirection: "column",
           justifyContent: "space-between",
           padding: "25px 20px",
-          overflowY: "hidden",
+          overflowY: "auto",
+          overflowX: "hidden",
+          overscrollBehavior: "contain",
           position: "fixed",
           height: "100vh",
           zIndex: 999,
@@ -384,6 +414,41 @@ function AdminLayout({ children, active }) {
             </div>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowLogoutModal(true)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            width: "100%",
+            padding: "12px 15px",
+            marginTop: "16px",
+            border: "none",
+            borderTop: "1px solid rgba(255,255,255,0.22)",
+            borderRadius: 0,
+            background: "transparent",
+            color: "rgba(255,255,255,0.9)",
+            fontSize: "0.95rem",
+            fontWeight: 600,
+            textAlign: "left",
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+          onMouseEnter={(event) => {
+            event.currentTarget.style.background = "rgba(255,255,255,0.1)";
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.background = "transparent";
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 17l5-5-5-5" />
+            <path d="M15 12H3" />
+            <path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" />
+          </svg>
+          Logout
+        </button>
       </div>
 
       {/* Main Content */}
@@ -518,6 +583,82 @@ function AdminLayout({ children, active }) {
         </div>
       </div>
 
+      {showLogoutModal && (
+        <div
+          role="presentation"
+          onClick={() => {
+            if (!isLoggingOut) setShowLogoutModal(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 2000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            background: "rgba(0,0,0,0.5)",
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-logout-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: "400px",
+              padding: isMobile ? "22px 18px" : "30px",
+              borderRadius: "12px",
+              background: "#fff",
+              textAlign: "center",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h2 id="admin-logout-title" style={{ margin: "0 0 10px", color: "#263746", fontSize: "1.25rem" }}>
+              Confirm Logout
+            </h2>
+            <p style={{ margin: "0 0 22px", color: "#66717b" }}>
+              Are you sure you want to log out?
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "10px" }}>
+              <button
+                type="button"
+                onClick={() => setShowLogoutModal(false)}
+                disabled={isLoggingOut}
+                style={{
+                  padding: "9px 18px",
+                  border: "1px solid #d5dce2",
+                  borderRadius: "6px",
+                  background: "#fff",
+                  color: "#405364",
+                  fontWeight: 600,
+                  cursor: isLoggingOut ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmLogout}
+                disabled={isLoggingOut}
+                style={{
+                  padding: "9px 18px",
+                  border: "none",
+                  borderRadius: "6px",
+                  background: "#b94c4c",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: isLoggingOut ? "not-allowed" : "pointer",
+                  opacity: isLoggingOut ? 0.7 : 1,
+                }}
+              >
+                {isLoggingOut ? "Logging out..." : "Yes, Log Out"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes slideUp {

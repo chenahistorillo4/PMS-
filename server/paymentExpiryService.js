@@ -66,6 +66,23 @@ async function processPendingPaymentDoc(db, paymentDoc, now = new Date()) {
 
   if (now >= expiresAt) {
     const batch = db.batch();
+    const userId = payment.userId || booking.userId;
+    if (userId) {
+      const notificationRef = db
+        .collection('notifications')
+        .doc(`user_payment_expired_${paymentDoc.id}`);
+      batch.set(notificationRef, {
+        userId,
+        type: 'payment_expired',
+        title: 'Payment Expired - Booking Cancelled',
+        message: `The payment time limit for ${booking.tripName || 'your trip'} has expired. Your booking was automatically cancelled.`,
+        recipientType: 'user',
+        bookingId,
+        tripId: booking.tripId || null,
+        isRead: false,
+        createdAt: now,
+      });
+    }
     batch.update(paymentDoc.ref, {
       status: 'cancelled',
       autoCancelledAt: now,
@@ -77,16 +94,6 @@ async function processPendingPaymentDoc(db, paymentDoc, now = new Date()) {
       cancelReason: 'payment_expired',
     });
     await batch.commit();
-
-    await createInAppPaymentNotification(
-      db,
-      payment.userId || booking.userId,
-      'payment_expired',
-      'Payment Expired - Booking Cancelled',
-      `The payment time limit for ${booking.tripName || 'your trip'} has expired. Your booking was automatically cancelled.`,
-      paymentDoc.id,
-      { ...booking, id: bookingId }
-    );
 
     if (!payment.paymentExpiredNotified) {
       await dispatchNotification({

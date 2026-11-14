@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { db } from "../../firebase";
 import { doc, getDoc, collection, getDocs, query, where, updateDoc, onSnapshot } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
 import { getStaffAccount } from "../../utils/staffAccount";
+import { checkPaymentExpiry, isExpiredPayMongoQr } from "../../utils/paymentExpiryCheck";
 
 const normalizeRoute = (route) =>
   String(route || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -21,6 +23,8 @@ const getPaymentMethodLabel = (method) => {
 };
 
 function BookingManagement() {
+  const [searchParams] = useSearchParams();
+  const requestedBookingId = searchParams.get("bookingId");
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState("");
@@ -32,8 +36,20 @@ function BookingManagement() {
   const [hasSearched, setHasSearched] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [showDownloadPreview, setShowDownloadPreview] = useState(false);
+  const [statusNow, setStatusNow] = useState(Date.now());
+  const expiryChecksInProgress = useRef(new Set());
+  const expiryChecksCompleted = useRef(new Set());
   const { user, authReady } = useAuthUser();
   const reloadKey = useAuthReloadKey();
+
+  useEffect(() => {
+    if (!requestedBookingId || loading) return;
+    if (!bookings.some((booking) => booking.id === requestedBookingId)) return;
+
+    document
+      .getElementById(`booking-request-${requestedBookingId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [bookings, loading, requestedBookingId]);
 
   // Pagination logic
   const itemsPerPage = 10;
@@ -43,6 +59,48 @@ function BookingManagement() {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setStatusNow(Date.now()), 15000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    bookings.forEach((booking) => {
+      const payment = booking.paymentInfo || {};
+      if (
+        !payment.paymentId ||
+        !isExpiredPayMongoQr(payment, statusNow) ||
+        expiryChecksInProgress.current.has(payment.paymentId) ||
+        expiryChecksCompleted.current.has(payment.paymentId)
+      ) {
+        return;
+      }
+
+      expiryChecksInProgress.current.add(payment.paymentId);
+      checkPaymentExpiry(payment.paymentId)
+        .then((result) => {
+          expiryChecksCompleted.current.add(payment.paymentId);
+          if (!result?.cancelled?.some((item) => item.paymentId === payment.paymentId)) return;
+
+          setBookings((previous) =>
+            previous.map((current) =>
+              current.id === booking.id
+                ? {
+                    ...current,
+                    status: "cancelled",
+                    paymentInfo: { ...current.paymentInfo, status: "cancelled" },
+                  }
+                : current
+            )
+          );
+        })
+        .catch((error) => {
+          console.error(`Unable to cancel expired booking ${booking.id}:`, error);
+        })
+        .finally(() => expiryChecksInProgress.current.delete(payment.paymentId));
+    });
+  }, [bookings, statusNow]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -169,10 +227,15 @@ function BookingManagement() {
               const payment = doc.data();
               if (payment.bookingId) {
                 paymentMap[payment.bookingId] = {
+                  paymentId: doc.id,
                   method: payment.method || payment.accountType || (payment.paymentMode === "pay_later" ? "Pay Later" : ""),
                   accountNumber: payment.accountNumber || payment.paymentAccountNumber || "N/A",
                   accountHolder: payment.accountHolder || "N/A",
-                  status: payment.status || "pending"
+                  status: payment.status || "pending",
+                  paymentProvider: payment.paymentProvider || "",
+                  paymongoFlow: payment.paymongoFlow || "",
+                  paymongoStatus: payment.paymongoStatus || "",
+                  paymentExpiresAt: payment.paymentExpiresAt || null,
                 };
               }
             });
@@ -409,7 +472,9 @@ function BookingManagement() {
     return filtered;
   };
 
-  const selectedDateBookings = getSelectedDateBookings();
+  const selectedDateBookings = requestedBookingId
+    ? bookings.filter((booking) => booking.id === requestedBookingId)
+    : getSelectedDateBookings();
   const totalPages = Math.ceil(selectedDateBookings.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -424,6 +489,7 @@ function BookingManagement() {
     if (bookingStatus === "confirmed" || ["completed", "confirmed"].includes(paymentStatus)) {
       return "confirmed";
     }
+    if (isExpiredPayMongoQr(booking.paymentInfo, statusNow)) return "cancelled";
     return "pending";
   };
 
@@ -873,7 +939,10 @@ function BookingManagement() {
                 <tbody>
                   {paginatedBookings.map((booking) => {
                     const displayStatus = getDisplayBookingStatus(booking);
-                    const paymentStatus = booking.paymentInfo?.status === "completed"
+                    const paymentExpired = isExpiredPayMongoQr(booking.paymentInfo, statusNow);
+                    const paymentStatus = paymentExpired
+                      ? "Expired"
+                      : booking.paymentInfo?.status === "completed"
                       ? "Paid"
                       : booking.paymentInfo?.status === "pending"
                         ? "Payment Pending"
@@ -881,7 +950,14 @@ function BookingManagement() {
                           ? "Pending"
                           : "Unknown";
                     return (
-                      <tr key={booking.id} style={{ background: "#fff" }}>
+                      <tr
+                        key={booking.id}
+                        id={`booking-request-${booking.id}`}
+                        style={{
+                          background: booking.id === requestedBookingId ? "#fff3cd" : "#fff",
+                          boxShadow: booking.id === requestedBookingId ? "inset 4px 0 #ffca28" : "none",
+                        }}
+                      >
                         <td style={{ maxWidth: "125px", padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", borderLeft: "1px solid #dce5ef", color: "#263b55", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {booking.customerName || "N/A"}
                         </td>
@@ -896,7 +972,7 @@ function BookingManagement() {
                         </td>
                         <td style={{ padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", whiteSpace: "nowrap" }}>
                           <div style={{ color: "#d88700", fontWeight: 600 }}>{booking.paymentInfo?.method || "Unknown"}</div>
-                          <div style={{ color: booking.paymentInfo?.status === "completed" ? "#258443" : "#d88700" }}>{paymentStatus}</div>
+                          <div style={{ color: paymentExpired ? "#f44336" : booking.paymentInfo?.status === "completed" ? "#258443" : "#d88700" }}>{paymentStatus}</div>
                         </td>
                         <td style={{ padding: "11px 8px", borderTop: "1px solid #dce5ef", borderBottom: "1px solid #dce5ef", color: "#1687d9", fontWeight: 700, whiteSpace: "nowrap" }}>
                           ₱{Number(booking.finalPrice || 0).toFixed(2)}
@@ -952,10 +1028,25 @@ function BookingManagement() {
                   {paginatedBookings.map((booking) => (
                     (() => {
                       const displayStatus = getDisplayBookingStatus(booking);
+                      const paymentExpired = isExpiredPayMongoQr(booking.paymentInfo, statusNow);
                       return (
-                    <tr key={booking.id} style={{ borderBottom: "1px solid #e0e8f0", transition: "all 0.3s ease" }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = "#f9fbfd"}
-                      onMouseLeave={(e) => e.currentTarget.style.background = "white"}
+                    <tr
+                      key={booking.id}
+                      id={`booking-request-${booking.id}`}
+                      style={{
+                        borderBottom: "1px solid #e0e8f0",
+                        transition: "all 0.3s ease",
+                        background: booking.id === requestedBookingId ? "#fff3cd" : "white",
+                        boxShadow: booking.id === requestedBookingId ? "inset 4px 0 #ffca28" : "none",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background =
+                          booking.id === requestedBookingId ? "#fff3cd" : "#f9fbfd";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background =
+                          booking.id === requestedBookingId ? "#fff3cd" : "white";
+                      }}
                     >
                       <td style={{ padding: "12px", color: "#1976d2", fontWeight: 600, fontSize: "0.9rem" }}>
                         {booking.bookedByName || booking.userEmail || "Unknown"}
@@ -978,7 +1069,9 @@ function BookingManagement() {
                         </div>
                         <div style={{
                           fontSize: "0.75rem",
-                          color: booking.paymentInfo?.status === "completed"
+                          color: paymentExpired
+                            ? "#f44336"
+                            : booking.paymentInfo?.status === "completed"
                             ? "#4caf50"
                             : booking.paymentInfo?.status === "pending"
                               ? "#ff9800"
@@ -986,7 +1079,9 @@ function BookingManagement() {
                           fontWeight: 700,
                           marginTop: "3px"
                         }}>
-                          {booking.paymentInfo?.status === "completed"
+                          {paymentExpired
+                            ? "Expired"
+                            : booking.paymentInfo?.status === "completed"
                             ? "Paid"
                             : booking.paymentInfo?.status === "pending"
                               ? "Pending"

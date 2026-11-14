@@ -86,23 +86,18 @@ function Home({ user, role, authReady }) {
   const navigate = useNavigate();
   const [selectedDestination, setSelectedDestination] = useState(null);
   const [showFaqs, setShowFaqs] = useState(false);
-  const isAuthenticatedPassenger = authReady && Boolean(user?.uid) && role === "user";
 
-  const handleBookClick = () => {
-    if (!isAuthenticatedPassenger) {
-      navigate("/login");
+  const navigateToPassengerPage = (path) => {
+    if (user?.uid) {
+      navigate(role && role !== "user" ? "/unauthorized" : path);
       return;
     }
-    navigate("/booking");
+    if (authReady) {
+      navigate("/login", { state: { from: path } });
+    }
   };
 
-  const handleManageClick = () => {
-    if (!isAuthenticatedPassenger) {
-      navigate("/login");
-      return;
-    }
-    navigate("/manage");
-  };
+  const passengerPageButtonDisabled = !authReady && !user?.uid;
 
   return (
     <main className="home-page home-modern-page">
@@ -117,10 +112,20 @@ function Home({ user, role, authReady }) {
             <p>Safe&nbsp; • &nbsp;Fast&nbsp; • &nbsp;Reliable</p>
           </div>
           <div className="home-hero-actions">
-            <button type="button" className="home-hero-button home-hero-book-button" onClick={handleBookClick}>
+            <button
+              type="button"
+              className="home-hero-button home-hero-book-button"
+              onClick={() => navigateToPassengerPage("/booking")}
+              disabled={passengerPageButtonDisabled}
+            >
               <FiBookOpen /> Book Ticket <FiArrowRight />
             </button>
-            <button type="button" className="home-hero-button home-hero-manage-button" onClick={handleManageClick}>
+            <button
+              type="button"
+              className="home-hero-button home-hero-manage-button"
+              onClick={() => navigateToPassengerPage("/manage")}
+              disabled={passengerPageButtonDisabled}
+            >
               <FiCheckCircle /> Manage Booking
             </button>
           </div>

@@ -47,7 +47,9 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     let active = true;
+    let authChangeId = 0;
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      const currentChangeId = ++authChangeId;
       if (!currentUser) {
         if (active) {
           setUser(null);
@@ -57,17 +59,19 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
+      setUser(currentUser);
+      setRole(null);
+      setAuthReady(false);
+
       try {
         const currentRole = await getUserRole(currentUser);
-        if (active) {
-          setUser(currentUser);
+        if (active && currentChangeId === authChangeId) {
           setRole(currentRole);
           setAuthReady(true);
         }
       } catch (error) {
         console.error("Failed to verify account role:", error);
-        if (active) {
-          setUser(currentUser);
+        if (active && currentChangeId === authChangeId) {
           setRole(null);
           setAuthReady(true);
         }

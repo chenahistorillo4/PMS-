@@ -435,7 +435,7 @@ export const notifyRefundRequest = async (refund, boat) => {
         boat,
         type: 'refund_request_submitted',
         title: 'Refund Request Submitted',
-        message: `${refund.userEmail || 'A passenger'} submitted a refund request for ${refund.tripName || 'a trip'}.`,
+        message: `${refund.passengerName || refund.userEmail || 'A passenger'} submitted a refund request for ${refund.tripName || 'a trip'}.`,
         eventId: refundId,
         refundId,
         bookingId: refund.bookingId,
@@ -455,7 +455,17 @@ export const notifyRefundRequest = async (refund, boat) => {
     type: 'admin_refund_request',
     adminEmails,
     adminPhones,
-    payload: { refund },
+    payload: {
+      refund: {
+        id: refund.id,
+        passengerName: refund.passengerName,
+        userEmail: refund.userEmail,
+        bookingId: refund.bookingId,
+        tripName: refund.tripName,
+        amount: refund.amount,
+        reason: refund.reason,
+      },
+    },
   });
 };
 

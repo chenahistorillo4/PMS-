@@ -1,16 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { auth, db } from "../../firebase";
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { useAuthReloadKey } from "../../hooks/useAuthUser";
-import { checkPaymentExpiry } from "../../utils/paymentExpiryCheck";
+import { checkPaymentExpiry, isExpiredPayMongoQr } from "../../utils/paymentExpiryCheck";
 import { getQrPhImageUrl } from "../../utils/paymongo";
 
 function ManageBooking() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const bookingRefreshKey = location.state?.bookingRefreshKey || null;
+  const rescheduledBookingId = location.state?.rescheduledBookingId || "";
   const reloadKey = useAuthReloadKey();
   const [bookings, setBookings] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -20,6 +23,9 @@ function ManageBooking() {
   const [proofModal, setProofModal] = useState({ isOpen: false, bookingId: null, proofImage: null });
   const [qrModal, setQrModal] = useState({ isOpen: false, bookingId: null, referenceCode: null });
   const [qrCountdownNow, setQrCountdownNow] = useState(Date.now());
+  const [statusNow, setStatusNow] = useState(Date.now());
+  const expiryChecksInProgress = useRef(new Set());
+  const expiryChecksCompleted = useRef(new Set());
   const [isLoadingBookings, setIsLoadingBookings] = useState(true);
   const [expandedDetails, setExpandedDetails] = useState({});
   const bookingsPerPage = 5;
@@ -49,8 +55,9 @@ function ManageBooking() {
     ? "Countdown unavailable"
     : `${Math.floor(qrSecondsRemaining / 60)}m ${String(qrSecondsRemaining % 60).padStart(2, "0")}s`;
   const showPayMongoPaymentQr = isPendingPayMongoGcashQr && qrSecondsRemaining !== 0;
-  const showBookingQr = !isPayMongoGcashPayment ||
-    (qrPaymentInfo.status === "completed" && qrBooking?.status === "confirmed");
+  const showBookingQr =
+    qrPaymentInfo.status === "completed" &&
+    qrBooking?.status?.toLowerCase?.() === "confirmed";
 
   useEffect(() => {
     if (!qrModal.isOpen || !isPendingPayMongoGcashQr || qrExpiryTime === null) return undefined;
@@ -59,6 +66,45 @@ function ManageBooking() {
     const intervalId = setInterval(() => setQrCountdownNow(Date.now()), 1000);
     return () => clearInterval(intervalId);
   }, [qrModal.isOpen, isPendingPayMongoGcashQr, qrExpiryTime]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setStatusNow(Date.now()), 15000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    Object.entries(paymentStatuses).forEach(([bookingId, payment]) => {
+      if (
+        !payment.paymentId ||
+        !isExpiredPayMongoQr(payment, statusNow) ||
+        expiryChecksInProgress.current.has(payment.paymentId) ||
+        expiryChecksCompleted.current.has(payment.paymentId)
+      ) {
+        return;
+      }
+
+      expiryChecksInProgress.current.add(payment.paymentId);
+      checkPaymentExpiry(payment.paymentId)
+        .then((result) => {
+          expiryChecksCompleted.current.add(payment.paymentId);
+          if (!result?.cancelled?.some((item) => item.paymentId === payment.paymentId)) return;
+
+          setPaymentStatuses((previous) => ({
+            ...previous,
+            [bookingId]: { ...previous[bookingId], status: "cancelled" },
+          }));
+          setBookings((previous) =>
+            previous.map((booking) =>
+              booking.id === bookingId ? { ...booking, status: "cancelled" } : booking
+            )
+          );
+        })
+        .catch((error) => {
+          console.error(`Unable to cancel expired booking ${bookingId}:`, error);
+        })
+        .finally(() => expiryChecksInProgress.current.delete(payment.paymentId));
+    });
+  }, [paymentStatuses, statusNow]);
 
   useEffect(() => {
     const lastPage = Math.max(1, totalPages);
@@ -249,7 +295,24 @@ function ManageBooking() {
     });
 
     return () => unsubscribe();
-  }, [reloadKey]);
+  }, [reloadKey, bookingRefreshKey]);
+
+  useEffect(() => {
+    if (isLoadingBookings || !rescheduledBookingId) return;
+
+    const bookingIndex = bookings.findIndex((booking) => booking.id === rescheduledBookingId);
+    if (bookingIndex < 0) return;
+
+    const targetPage = Math.floor(bookingIndex / bookingsPerPage) + 1;
+    if (currentPage !== targetPage) {
+      setCurrentPage(targetPage);
+      return;
+    }
+
+    document
+      .getElementById(`manage-booking-${rescheduledBookingId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [bookings, currentPage, isLoadingBookings, rescheduledBookingId]);
 
   useEffect(() => {
     let unsubscribeRefundRequests = () => {};
@@ -421,15 +484,37 @@ function ManageBooking() {
       };
     }
 
+    if (isExpiredPayMongoQr(paymentInfo, statusNow)) {
+      return {
+        label: "Cancelled",
+        color: "#f44336",
+        paymentLabel: "Expired",
+        paymentColor: "#f44336",
+        canShowQr: false,
+        actionLabel: "Cancelled",
+        actionDisabled: true,
+      };
+    }
+
     if (paymentStatus === "pending" || paymentInfo.paymentId) {
+      const hasPendingPayMongoQr =
+        paymentStatus === "pending" &&
+        paymentInfo.paymentProvider === "paymongo" &&
+        paymentInfo.paymongoFlow === "qrph" &&
+        Boolean(paymentInfo.paymongoPaymentIntentId) &&
+        paymentInfo.paymongoStatus !== "paid";
       return {
         label: "Pending",
         color: "#ff9800",
         paymentLabel: paymentInfo.proofOfPaymentBase64 ? "Pending Approval" : "Pending",
         paymentColor: "#ff9800",
-        canShowQr: Boolean(paymentInfo.paymentId),
-        actionLabel: "View QR (Pending)",
-        actionDisabled: !paymentInfo.paymentId,
+        canShowQr: hasPendingPayMongoQr,
+        actionLabel: hasPendingPayMongoQr
+          ? "View Payment QR"
+          : paymentInfo.proofOfPaymentBase64
+            ? "Pending Approval"
+            : "Pending Payment",
+        actionDisabled: !hasPendingPayMongoQr,
       };
     }
 
@@ -547,6 +632,7 @@ function ManageBooking() {
                   <>
               {/* Main Booking Card */}
               <div
+                id={`manage-booking-${booking.id}`}
                 style={{
                   background: displayState.label === "Not Paid"
                     ? "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,248,248,0.98) 100%)"
@@ -590,6 +676,23 @@ function ManageBooking() {
                     }}>
                       {displayState.label}
                     </span>
+                    {booking.scheduleRescheduledAt && (
+                      <span
+                        style={{
+                          display: "inline-block",
+                          padding: isMobile ? "4px 9px" : "7px 12px",
+                          borderRadius: "999px",
+                          fontSize: isMobile ? "0.58rem" : "0.74rem",
+                          fontWeight: 700,
+                          backgroundColor: "#e8f1ff",
+                          color: "#145b9a",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px",
+                        }}
+                      >
+                        Rescheduled
+                      </span>
+                    )}
                     <span style={{ fontSize: isMobile ? "0.64rem" : "0.76rem", color: "#7b8da1", fontWeight: 700 }}>
                       {booking.date}
                     </span>
@@ -677,15 +780,27 @@ function ManageBooking() {
                       <div style={{ background: "#f8fbfe", padding: isMobile ? "6px 7px" : "9px 10px", borderRadius: "10px", border: "1px solid #e5edf5" }}>
                         <div style={{ fontSize: isMobile ? "0.56rem" : "0.65rem", fontWeight: 800, color: "#999", marginBottom: "2px", textTransform: "uppercase" }}>Cargo</div>
                         <div style={{ fontSize: isMobile ? "0.72rem" : "0.92rem", color: "#1e3a5f", fontWeight: 600, lineHeight: 1.2 }}>
-                          {booking.cargoType || "None"}
+                          {booking.cargoSnapshot
+                            ? booking.cargoSnapshot.name
+                            : booking.cargoType || "None"}
                         </div>
                       </div>
                       <div style={{ background: "#f8fbfe", padding: isMobile ? "6px 7px" : "9px 10px", borderRadius: "10px", border: "1px solid #e5edf5" }}>
-                        <div style={{ fontSize: isMobile ? "0.56rem" : "0.65rem", fontWeight: 800, color: "#999", marginBottom: "2px", textTransform: "uppercase" }}>Weight</div>
+                        <div style={{ fontSize: isMobile ? "0.56rem" : "0.65rem", fontWeight: 800, color: "#999", marginBottom: "2px", textTransform: "uppercase" }}>{booking.cargoSnapshot ? "Quantity" : "Weight"}</div>
                         <div style={{ fontSize: isMobile ? "0.72rem" : "0.92rem", color: "#1e3a5f", fontWeight: 600, lineHeight: 1.2 }}>
-                          {booking.cargoWeight ? `${booking.cargoWeight} kg` : "N/A"}
+                          {booking.cargoSnapshot
+                            ? `${booking.cargoSnapshot.quantity} ${String(booking.cargoSnapshot.pricingBasis || "").replace("Per ", "")}`
+                            : booking.cargoWeight ? `${booking.cargoWeight} kg` : "N/A"}
                         </div>
                       </div>
+                      {booking.cargoSnapshot && (
+                        <div style={{ background: "#f8fbfe", padding: isMobile ? "6px 7px" : "9px 10px", borderRadius: "10px", border: "1px solid #e5edf5" }}>
+                          <div style={{ fontSize: isMobile ? "0.56rem" : "0.65rem", fontWeight: 800, color: "#999", marginBottom: "2px", textTransform: "uppercase" }}>Cargo Price</div>
+                          <div style={{ fontSize: isMobile ? "0.72rem" : "0.92rem", color: "#1e3a5f", fontWeight: 600, lineHeight: 1.2 }}>
+                            ₱{Number(booking.cargoSnapshot.totalPrice).toFixed(2)}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1063,6 +1178,13 @@ function ManageBooking() {
               {(() => {
                 const booking = bookings.find((item) => item.id === qrModal.bookingId);
                 const paymentInfo = paymentStatuses[qrModal.bookingId] || {};
+                const paymentExpired = isExpiredPayMongoQr(
+                  {
+                    ...paymentInfo,
+                    paymentExpiresAt: paymentInfo.paymentExpiresAt || booking?.paymentExpiresAt,
+                  },
+                  statusNow
+                );
                 const displayState = booking
                   ? getBookingDisplayState(booking, paymentInfo)
                   : null;
@@ -1076,12 +1198,13 @@ function ManageBooking() {
                       ? "Paid / Valid for boarding"
                       : paymentInfo.paymongoStatus === "paid"
                         ? "Payment received / Awaiting confirmation"
-                        : isPendingPayMongoGcashQr && qrSecondsRemaining === 0
-                          ? "QR expired. Booking cancellation is being processed."
+                        : paymentExpired
+                          ? "QR expired. Booking cancelled."
                       : "Pending payment / Not valid for boarding";
                 const qrStatusIsInvalid =
                   ["scanned", "boarded"].includes(booking?.status?.toLowerCase?.()) ||
-                  booking?.status === "cancelled";
+                  booking?.status === "cancelled" ||
+                  paymentExpired;
 
                 return (
                   <div

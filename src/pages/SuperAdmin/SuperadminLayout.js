@@ -300,33 +300,40 @@ function SuperadminLayout({ children }) {
 
         {/* Logout */}
         <button
+          type="button"
           onClick={handleLogout}
           style={{
-            backgroundColor: "#e53935",
-            color: "white",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            backgroundColor: "transparent",
+            color: "rgba(255,255,255,0.9)",
             border: "none",
-            padding: "10px 14px",
-            borderRadius: "8px",
-            fontWeight: "700",
+            borderTop: "1px solid rgba(255,255,255,0.22)",
+            padding: "14px 10px 8px",
+            borderRadius: 0,
+            fontWeight: 600,
             cursor: "pointer",
             width: "100%",
-            fontSize: "0.85rem",
-            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-            marginTop: "20px",
+            fontSize: "0.95rem",
+            textAlign: "left",
+            transition: "background-color 0.2s ease",
+            marginTop: "16px",
             boxSizing: "border-box",
             flexShrink: 0
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "#c62828";
-            e.currentTarget.style.transform = "translateY(-2px)";
-            e.currentTarget.style.boxShadow = "0 8px 16px rgba(229, 57, 53, 0.3)";
+            e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.1)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = "#e53935";
-            e.currentTarget.style.transform = "translateY(0)";
-            e.currentTarget.style.boxShadow = "none";
+            e.currentTarget.style.backgroundColor = "transparent";
           }}
         >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 17l5-5-5-5" />
+            <path d="M15 12H3" />
+            <path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" />
+          </svg>
           Logout
         </button>
       </div>

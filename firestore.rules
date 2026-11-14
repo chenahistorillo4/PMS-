@@ -1,0 +1,487 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperadmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/superadmin/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isPortStaff() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/port_staff/$(request.auth.uid))
+        && get(/databases/$(database)/documents/port_staff/$(request.auth.uid)).data.status != 'inactive';
+    }
+
+    function adminBoat() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.assignedBoat;
+    }
+
+    function staffBoat() {
+      return get(/databases/$(database)/documents/port_staff/$(request.auth.uid)).data.assignedBoat;
+    }
+
+    function canManageBoat(boat) {
+      return isSuperadmin()
+        || (isAdmin() && adminBoat() == boat)
+        || (isPortStaff() && staffBoat() == boat);
+    }
+
+    function canAdministerBoat(boat) {
+      return isSuperadmin()
+        || (isAdmin() && adminBoat() == boat);
+    }
+
+    function ownsRecord(data) {
+      return signedIn()
+        && (
+          data.userId == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && data.userEmail == request.auth.token.email
+          )
+        );
+    }
+
+    function isAdminForNotification(boat) {
+      return isAdmin() && adminBoat() == boat;
+    }
+
+    function isPortStaffForNotification(boat) {
+      return isPortStaff() && staffBoat() == boat;
+    }
+
+    function validCargoSnapshot(data) {
+      return !('cargoSnapshot' in data)
+        || data.cargoSnapshot == null
+        || (
+          data.cargoSnapshot is map
+          && data.cargoSnapshot.cargoId is string
+          && data.cargoSnapshot.quantity is number
+          && data.cargoSnapshot.quantity > 0
+          && (
+            data.cargoSnapshot.pricingBasis == 'Per Kilo'
+            || data.cargoSnapshot.quantity % 1 == 0
+          )
+          && data.cargoSnapshot.unitPrice is number
+          && data.cargoSnapshot.totalPrice is number
+          && exists(/databases/$(database)/documents/cargoTypes/$(data.cargoSnapshot.cargoId))
+          && get(/databases/$(database)/documents/cargoTypes/$(data.cargoSnapshot.cargoId)).data.status == 'active'
+          && get(/databases/$(database)/documents/cargoTypes/$(data.cargoSnapshot.cargoId)).data.boat == data.boat
+          && get(/databases/$(database)/documents/cargoTypes/$(data.cargoSnapshot.cargoId)).data.name == data.cargoSnapshot.name
+          && get(/databases/$(database)/documents/cargoTypes/$(data.cargoSnapshot.cargoId)).data.pricingBasis == data.cargoSnapshot.pricingBasis
+          && get(/databases/$(database)/documents/cargoTypes/$(data.cargoSnapshot.cargoId)).data.price == data.cargoSnapshot.unitPrice
+          && data.cargoSnapshot.totalPrice == data.cargoSnapshot.unitPrice * data.cargoSnapshot.quantity
+          && data.cargoPrice == data.cargoSnapshot.totalPrice
+        );
+    }
+
+    function validCargoInspectionUpdate() {
+      return isPortStaff()
+        && resource.data.boat == staffBoat()
+        && resource.data.cargoSnapshot is map
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'cargoInspectionStatus',
+          'cargoInspectedAt',
+          'cargoInspectedBy'
+        ])
+        && request.resource.data.cargoInspectionStatus == 'verified'
+        && request.resource.data.cargoInspectedBy is string
+        && request.resource.data.cargoInspectedAt == request.time;
+    }
+
+    function validPassengerReschedule() {
+      let schedulePath = /databases/$(database)/documents/schedules/$(request.resource.data.tripId);
+      return ownsRecord(resource.data)
+        && resource.data.status in ['confirmed', 'pending']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'tripId',
+          'tripName',
+          'boat',
+          'route',
+          'routeDirection',
+          'date',
+          'departure',
+          'arrival',
+          'scheduleRescheduledAt'
+        ])
+        && request.resource.data.tripId is string
+        && exists(schedulePath)
+        && (
+          !('status' in get(schedulePath).data)
+          || get(schedulePath).data.status in [
+            'Upcoming', 'upcoming', 'Available', 'available', 'limited', 'Limited'
+          ]
+        )
+        && request.resource.data.tripName == get(schedulePath).data.name
+        && request.resource.data.boat == get(schedulePath).data.boat
+        && request.resource.data.date == get(schedulePath).data.date
+        && request.resource.data.departure == get(schedulePath).data.departure
+        && request.resource.data.arrival == get(schedulePath).data.arrival
+        && (
+          request.resource.data.routeDirection == get(schedulePath).data.routeDirection
+          || request.resource.data.routeDirection == get(schedulePath).data.route
+        )
+        && request.resource.data.route == request.resource.data.routeDirection
+        && (
+          resource.data.bookingType == 'cargo_only'
+          || float(get(schedulePath).data.price) == float(resource.data.passengerPrice)
+        )
+        && (
+          !('cargoSnapshot' in resource.data)
+          || resource.data.cargoSnapshot == null
+          || request.resource.data.boat == resource.data.boat
+        )
+        && request.resource.data.finalPrice == resource.data.finalPrice
+        && request.resource.data.cargoPrice == resource.data.cargoPrice;
+    }
+
+    match /cargoTypes/{cargoId} {
+      allow read: if signedIn();
+      allow create: if (isSuperadmin()
+        || (
+          isAdmin()
+          && request.resource.data.boat == adminBoat()
+        ))
+        && request.resource.data.boat is string
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.pricingBasis in ['Per Box', 'Per Sack', 'Per Kilo', 'Per Unit', 'Per Item']
+        && request.resource.data.price is number
+        && request.resource.data.price >= 0
+        && request.resource.data.status in ['active', 'inactive']
+        && (!('category' in request.resource.data))
+        && (!('size' in request.resource.data));
+      allow update: if (isSuperadmin()
+        || (
+          isAdmin()
+          && resource.data.boat == adminBoat()
+          && request.resource.data.boat == resource.data.boat
+        ))
+        && request.resource.data.boat is string
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 80
+          && request.resource.data.pricingBasis in ['Per Box', 'Per Sack', 'Per Kilo', 'Per Unit', 'Per Item']
+          && request.resource.data.price is number
+          && request.resource.data.price >= 0
+          && request.resource.data.status in ['active', 'inactive']
+          && (!('category' in request.resource.data))
+          && (!('size' in request.resource.data));
+      allow delete: if isSuperadmin()
+        || (isAdmin() && resource.data.boat == adminBoat());
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn()
+        && (request.auth.uid == userId || isSuperadmin() || isAdmin());
+      allow list: if isSuperadmin() || isAdmin();
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'fullName', 'displayName', 'email', 'phone',
+          'address', 'photoURL', 'createdAt', 'updatedAt', 'role'
+        ])
+        && (!('role' in request.resource.data) || request.resource.data.role == 'user');
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'fullName', 'displayName', 'email', 'phone',
+          'address', 'photoURL', 'updatedAt'
+        ]);
+      allow delete: if isSuperadmin();
+    }
+
+    match /admins/{adminId} {
+      allow get, list: if isSuperadmin() || (signedIn() && request.auth.uid == adminId);
+      allow create, delete: if isSuperadmin();
+      allow update: if isSuperadmin()
+        || (
+          signedIn()
+          && request.auth.uid == adminId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'phone', 'profilePicture', 'photoURL', 'lastLogin'
+          ])
+        );
+    }
+
+    match /port_staff/{staffId} {
+      allow get, list: if isSuperadmin()
+        || (signedIn() && request.auth.uid == staffId)
+        || isAdmin();
+      allow create, delete: if isSuperadmin() || isAdmin();
+      allow update: if isSuperadmin()
+        || (isAdmin() && resource.data.assignedBoat == adminBoat())
+        || (
+          signedIn()
+          && request.auth.uid == staffId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'email', 'photoURL', 'profilePicture', 'lastLogin'
+          ])
+        );
+    }
+
+    match /superadmin/{superadminId} {
+      allow get, list: if isSuperadmin() || (signedIn() && request.auth.uid == superadminId);
+      allow create, update, delete: if isSuperadmin();
+    }
+
+    match /schedules/{scheduleId} {
+      allow read: if true;
+      allow create: if signedIn()
+        && canManageBoat(request.resource.data.boat);
+      allow update: if signedIn()
+        && canManageBoat(resource.data.boat)
+        && request.resource.data.boat == resource.data.boat;
+      allow delete: if signedIn() && canManageBoat(resource.data.boat);
+    }
+
+    match /discounts/{discountId} {
+      allow read: if signedIn();
+      allow create, update: if isSuperadmin()
+        || (isAdmin() && request.resource.data.boatName == adminBoat());
+      allow delete: if isSuperadmin()
+        || (isAdmin() && resource.data.boatName == adminBoat());
+    }
+
+    match /boats/{boatId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isSuperadmin();
+    }
+
+    match /paymentAccounts/{paymentAccountId} {
+      allow read: if isSuperadmin()
+        || (signedIn() && resource.data.isActive == true)
+        || (isAdmin() && resource.data.adminId == request.auth.uid);
+      allow create, update, delete: if isSuperadmin()
+        || (isAdmin() && request.resource.data.adminId == request.auth.uid);
+    }
+
+    match /bookings/{bookingId} {
+      allow get, list: if isSuperadmin()
+        || ownsRecord(resource.data)
+        || canManageBoat(resource.data.boat);
+
+      allow create: if isSuperadmin()
+        || (
+          signedIn()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.status == 'pending'
+          && validCargoSnapshot(request.resource.data)
+        )
+        || (
+          isPortStaff()
+          && request.resource.data.boat == staffBoat()
+          && request.resource.data.bookingSource == 'walk_in'
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.status == 'confirmed'
+          && validCargoSnapshot(request.resource.data)
+        );
+
+      allow update: if isSuperadmin()
+        || (
+          canAdministerBoat(resource.data.boat)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status in [
+            'pending', 'confirmed', 'cancelled', 'departed', 'boarded', 'scanned'
+          ]
+        )
+        || (
+          isPortStaff()
+          && resource.data.boat == staffBoat()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'scannedAt', 'scannedBy'
+          ])
+          && request.resource.data.status == 'boarded'
+          && request.resource.data.scannedAt == request.time
+        )
+        || validPassengerReschedule()
+        || validCargoInspectionUpdate();
+
+      allow delete: if isSuperadmin();
+    }
+
+    match /payments/{paymentId} {
+      allow get, list: if isSuperadmin()
+        || ownsRecord(resource.data)
+        || canManageBoat(resource.data.boat);
+
+      allow create: if isSuperadmin()
+        || (
+          signedIn()
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.status == 'pending'
+          && request.resource.data.bookingId is string
+          && exists(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId))
+          && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.userId == request.auth.uid
+          && request.resource.data.amount == get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.finalPrice
+        )
+        || (
+          isPortStaff()
+          && request.resource.data.status == 'completed'
+          && request.resource.data.paymentProvider == 'manual'
+          && request.resource.data.bookingId is string
+          && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.bookingSource == 'walk_in'
+          && getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.boat == staffBoat()
+          && request.resource.data.amount == getAfter(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.finalPrice
+        );
+
+      allow update: if isSuperadmin()
+        || (
+          canManageBoat(resource.data.boat)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'paymongoStatus', 'paidAt', 'confirmedAt'
+          ])
+          && request.resource.data.status in ['completed', 'cancelled', 'failed']
+        )
+        || (
+          ownsRecord(resource.data)
+          && resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'paymongoPaymentIntentId', 'paymongoFlow', 'paymongoStatus'
+          ])
+        );
+
+      allow delete: if isSuperadmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isSuperadmin()
+        || (
+          signedIn()
+          && resource.data.recipientType == 'user'
+          && resource.data.userId == request.auth.uid
+        )
+        || (
+          resource.data.recipientType == 'admin'
+          && (
+            isAdminForNotification(resource.data.boat)
+            || isPortStaffForNotification(resource.data.boat)
+          )
+        );
+
+      allow create: if isSuperadmin()
+        || (
+          signedIn()
+          && request.resource.data.recipientType == 'admin'
+          && canManageBoat(request.resource.data.boat)
+        )
+        || (
+          signedIn()
+          && request.resource.data.recipientType == 'user'
+          && request.resource.data.userId == request.auth.uid
+        )
+        || (
+          signedIn()
+          && request.resource.data.recipientType == 'user'
+          && canManageBoat(request.resource.data.boat)
+        )
+        || (
+          signedIn()
+          && request.resource.data.recipientType == 'admin'
+          && request.resource.data.bookingId is string
+          && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.userId == request.auth.uid
+        );
+
+      allow update: if isSuperadmin()
+        || (
+          signedIn()
+          && resource.data.recipientType == 'user'
+          && resource.data.userId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'isRead', 'userAction', 'actionTimestamp'
+          ])
+        )
+        || (
+          resource.data.recipientType == 'admin'
+          && isAdminForNotification(resource.data.boat)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'isRead', 'audienceCount'
+          ])
+        );
+
+      allow delete: if isSuperadmin()
+        || (
+          signedIn()
+          && resource.data.recipientType == 'user'
+          && resource.data.userId == request.auth.uid
+        )
+        || (
+          resource.data.recipientType == 'admin'
+          && isAdminForNotification(resource.data.boat)
+        );
+    }
+
+    match /refund_requests/{refundId} {
+      allow get, list: if isSuperadmin()
+        || ownsRecord(resource.data)
+        || canManageBoat(resource.data.boat);
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.bookingId is string
+        && exists(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId))
+        && get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.userId == request.auth.uid
+        && request.resource.data.boat == get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.boat
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && (
+          (
+            get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.finalPrice is number
+            && request.resource.data.amount == get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.finalPrice
+          )
+          || (
+            !(get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.finalPrice is number)
+            && 'fare' in get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data
+            && request.resource.data.amount == get(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId)).data.fare
+          )
+        )
+        && request.resource.data.passengerName is string
+        && request.resource.data.gcashAccountName is string
+        && request.resource.data.gcashAccountName.size() > 0
+        && request.resource.data.gcashNumber is string
+        && request.resource.data.gcashNumber.size() > 0
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0;
+      allow update: if isSuperadmin()
+        || (
+          isAdminForNotification(resource.data.boat)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'adminNote', 'refundNote', 'processedAt', 'refundedAt', 'processedBy'
+          ])
+          && (
+            (
+              resource.data.status == 'pending'
+              && request.resource.data.status in ['approved', 'declined']
+            )
+            || (
+              resource.data.status == 'approved'
+              && request.resource.data.status == 'refunded'
+            )
+          )
+        );
+      allow delete: if isSuperadmin();
+    }
+
+    match /scanner_history/{scanId} {
+      allow read: if isSuperadmin()
+        || (signedIn() && resource.data.scannerId == request.auth.uid);
+      allow create: if isPortStaff()
+        && request.resource.data.scannerId == request.auth.uid;
+      allow update, delete: if isSuperadmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

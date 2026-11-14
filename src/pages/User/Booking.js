@@ -1,17 +1,25 @@
 import { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { db } from "../../firebase";
 import { collection, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { FiAnchor, FiCalendar, FiClock, FiMapPin, FiTag, FiUser } from "react-icons/fi";
 import { formatTime12Hour } from "../../utils/timeFormatter";
+import { isTripDepartureInPast } from "../../utils/tripSchedule";
 import BookingDetails from "./BookingDetails";
+import RescheduleBookingConfirmation from "./RescheduleBookingConfirmation";
 
 function Booking({ userId, userType }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const rescheduleBookingId = location.state?.rescheduleBookingId || "";
+  const rescheduleNotificationId = location.state?.rescheduleNotificationId || "";
   const [trips, setTrips] = useState([]);
   const [discounts, setDiscounts] = useState({});
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [bookingCounts, setBookingCounts] = useState({});
   const [bookingCountsLoaded, setBookingCountsLoaded] = useState(false);
+  const [currentTime, setCurrentTime] = useState(Date.now());
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [showModal, setShowModal] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState(null);
@@ -29,6 +37,11 @@ function Booking({ userId, userType }) {
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setCurrentTime(Date.now()), 15000);
+    return () => clearInterval(intervalId);
   }, []);
 
   useEffect(() => {
@@ -97,23 +110,6 @@ function Booking({ userId, userType }) {
     };
   }, [trips]);
 
-  const isTripDateInPast = (tripDate) => {
-    if (!tripDate) return false;
-
-    const parsedDate = tripDate?.toDate ? tripDate.toDate() : new Date(String(tripDate));
-    if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
-      return false;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const tripDay = new Date(parsedDate);
-    tripDay.setHours(0, 0, 0, 0);
-
-    return tripDay < today;
-  };
-
   const filteredTrips = trips.filter((trip) => {
     const matchesSearch =
       trip.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -125,7 +121,7 @@ function Booking({ userId, userType }) {
       trip.status?.toLowerCase() !== "cancelled" &&
       trip.status?.toLowerCase() !== "boarding";
 
-    return matchesSearch && isBookable && !isTripDateInPast(trip.date);
+    return matchesSearch && isBookable && !isTripDepartureInPast(trip, new Date(currentTime));
   });
   const tripsPerPage = 6;
   const totalPages = Math.ceil(filteredTrips.length / tripsPerPage);
@@ -137,8 +133,8 @@ function Booking({ userId, userType }) {
   }, [totalPages]);
 
   const handleBookClick = (trip) => {
-    if (isTripDateInPast(trip?.date)) {
-      alert("This trip date has already passed. Please select an available schedule.");
+    if (isTripDepartureInPast(trip)) {
+      alert("This trip has already departed. Please select an available schedule.");
       return;
     }
 
@@ -186,6 +182,25 @@ function Booking({ userId, userType }) {
         >
           Ferry Booking
         </h1>
+        {rescheduleBookingId && (
+          <div
+            role="status"
+            style={{
+              maxWidth: "760px",
+              margin: "0 auto 18px",
+              padding: isMobile ? "12px" : "16px 20px",
+              borderRadius: "10px",
+              background: "#eef7ff",
+              border: "1px solid #b9d9f3",
+              color: "#214e78",
+              textAlign: "center",
+              fontSize: isMobile ? "0.78rem" : "0.92rem",
+            }}
+          >
+            Choose a new available schedule for Booking ID <strong>{rescheduleBookingId}</strong>.
+            Rescheduling is available only when the passenger fare is unchanged.
+          </div>
+        )}
         <p
           style={{
             textAlign: "center",
@@ -441,7 +456,13 @@ function Booking({ userId, userType }) {
                           }}
                         >
                           {isMobile && <FiTag style={{ width: 15, height: 15, marginRight: 6, verticalAlign: "middle" }} />}
-                          {!bookingCountsLoaded
+                          {rescheduleBookingId
+                            ? !bookingCountsLoaded
+                              ? "Loading Availability..."
+                              : availableSpots <= 0 || isUnavailable
+                                ? "Not Available"
+                                : "Select New Schedule"
+                            : !bookingCountsLoaded
                             ? "Loading Availability..."
                             : availableSpots <= 0
                               ? "Fully Booked"
@@ -566,14 +587,28 @@ function Booking({ userId, userType }) {
             </button>
             
             <div style={{ clear: "both", padding: isMobile ? "10px" : "16px" }}>
-              <BookingDetails
-                trip={selectedTrip}
-                userId={userId}
-                userType={userType}
-                discounts={discounts}
-                isModal={true}
-                onClose={handleCloseModal}
-              />
+              {rescheduleBookingId ? (
+                <RescheduleBookingConfirmation
+                  trip={selectedTrip}
+                  bookingId={rescheduleBookingId}
+                  notificationId={rescheduleNotificationId}
+                  userId={userId}
+                  isMobile={isMobile}
+                  onCancel={() => {
+                    handleCloseModal();
+                    navigate("/booking", { replace: true, state: null });
+                  }}
+                />
+              ) : (
+                <BookingDetails
+                  trip={selectedTrip}
+                  userId={userId}
+                  userType={userType}
+                  discounts={discounts}
+                  isModal={true}
+                  onClose={handleCloseModal}
+                />
+              )}
             </div>
           </div>
         </div>

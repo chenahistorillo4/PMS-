@@ -1,5 +1,4 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
 import jsQR from "jsqr";
 import jsPDF from "jspdf";
 import {
@@ -9,7 +8,6 @@ import {
   FiEdit2,
   FiKey,
   FiLock,
-  FiLogOut,
   FiMail,
   FiShield,
   FiUser,
@@ -24,6 +22,7 @@ import {
 } from "firebase/auth";
 import "./QRScanner.css";
 import { getStaffAccount } from "../../utils/staffAccount";
+import { canAcceptBookingForBoarding } from "../../utils/cargoPricing";
 
 async function createProfilePhotoDataUrl(file) {
   const imageBitmap = await createImageBitmap(file);
@@ -198,7 +197,6 @@ function getScanPaymentAmount(scan) {
 }
 
 function QRScanner({ user, embedded = false, profileOnly = false }) {
-  const navigate = useNavigate();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const scanIntervalRef = useRef(null);
@@ -210,6 +208,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
   const scanQRCodeRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [bookingDetails, setBookingDetails] = useState(null);
+  const [isSavingCargoInspection, setIsSavingCargoInspection] = useState(false);
   const [isPendingAcceptance, setIsPendingAcceptance] = useState(false);
   const [currentBookingDocId, setCurrentBookingDocId] = useState(null);
   const [scanMessage, setScanMessage] = useState("Scan a QR code to view booking details");
@@ -228,7 +227,6 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
   const [historyPage, setHistoryPage] = useState(1);
   const showProfile = profileOnly;
   const [, setSuccessfulScan] = useState(null);
-  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showDrawer, setShowDrawer] = useState(false);
   const [profile, setProfile] = useState({
     name: "",
@@ -455,8 +453,12 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
         if (!previous) return previous;
 
         const bookingStatus = String(previous.status || "").toLowerCase();
-        const canAccept = isPaid &&
-          !["cancelled", "departed", "scanned", "boarded"].includes(bookingStatus);
+        const canAccept = canAcceptBookingForBoarding(
+          isPaid,
+          bookingStatus,
+          previous.cargoSnapshot,
+          previous.cargoInspectionStatus
+        );
 
         return {
           ...previous,
@@ -468,7 +470,7 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
 
       setNotificationMessage(
         isPaid
-          ? "✓ Payment confirmed. Booking can be accepted for boarding."
+          ? "✓ Payment confirmed. Check the cargo declaration before boarding."
           : "Payment is pending. Confirm payment before boarding."
       );
       setNotificationType(isPaid ? "success" : "error");
@@ -483,11 +485,18 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
           if (!previous) return previous;
           const bookingStatus = String(bookingData.status || "pending").toLowerCase();
           const isPaid = previous.isPaid;
+          const cargoInspectionStatus = bookingData.cargoInspectionStatus || "pending";
           return {
             ...previous,
             status: bookingData.status || "Pending",
-            canAccept: Boolean(isPaid) &&
-              !["cancelled", "departed", "scanned", "boarded"].includes(bookingStatus)
+            cargoInspectionStatus,
+            cargoInspectedBy: bookingData.cargoInspectedBy || "",
+            canAccept: canAcceptBookingForBoarding(
+              isPaid,
+              bookingStatus,
+              previous.cargoSnapshot,
+              cargoInspectionStatus
+            )
           };
         });
       },
@@ -509,6 +518,64 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
       unsubscribePayment();
     };
   }, [currentBookingDocId, isPendingAcceptance]);
+
+  const handleConfirmCargoInspection = async () => {
+    if (!currentBookingDocId || !bookingDetails?.cargoSnapshot) return;
+    setIsSavingCargoInspection(true);
+    try {
+      const bookingRef = doc(db, "bookings", currentBookingDocId);
+      const bookingSnapshot = await getDoc(bookingRef);
+      if (!bookingSnapshot.exists()) {
+        throw new Error("Booking could not be found. Scan the boarding pass again.");
+      }
+      const latestBooking = bookingSnapshot.data();
+      if (!latestBooking.cargoSnapshot) {
+        throw new Error("This booking has no saved cargo declaration.");
+      }
+      if (!isPaymentPaid(await getBookingPaymentStatus(currentBookingDocId, latestBooking))) {
+        throw new Error("Payment must be confirmed before completing cargo inspection.");
+      }
+      if (["cancelled", "departed", "scanned", "boarded"].includes(
+        String(latestBooking.status || "").toLowerCase()
+      )) {
+        throw new Error("This booking can no longer be inspected for boarding.");
+      }
+      let belongsToAssignedBoat = latestBooking.boat === profile.assignedBoat;
+      if (!latestBooking.boat && latestBooking.tripId) {
+        const assignedTrip = await getDoc(doc(db, "schedules", latestBooking.tripId));
+        belongsToAssignedBoat = assignedTrip.exists() &&
+          assignedTrip.data().boat === profile.assignedBoat;
+      }
+      if (!belongsToAssignedBoat) {
+        throw new Error("This booking is not assigned to your boat.");
+      }
+
+      await updateDoc(bookingRef, {
+        cargoInspectionStatus: "verified",
+        cargoInspectedAt: serverTimestamp(),
+        cargoInspectedBy: profile.name || auth.currentUser?.email || "Port Staff"
+      });
+      setBookingDetails((previous) => previous ? ({
+        ...previous,
+        cargoInspectionStatus: "verified",
+        cargoInspectedBy: profile.name || auth.currentUser?.email || "Port Staff",
+        canAccept: canAcceptBookingForBoarding(
+          previous.isPaid,
+          previous.status,
+          previous.cargoSnapshot,
+          "verified"
+        )
+      }) : previous);
+      setNotificationMessage("Cargo inspection recorded. Boarding is available if all other booking checks pass.");
+      setNotificationType("success");
+    } catch (error) {
+      console.error("Error recording cargo inspection:", error);
+      setNotificationMessage(`✗ ${error.message || "Unable to record cargo inspection."}`);
+      setNotificationType("error");
+    } finally {
+      setIsSavingCargoInspection(false);
+    }
+  };
 
   const handleAcceptScan = async () => {
     if (bookingDetails && currentBookingDocId) {
@@ -538,6 +605,9 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
           String(latestBooking.status || "").toLowerCase()
         ) || latestBooking.scannedAt) {
           throw new Error("This booking can no longer be accepted. This QR code cannot be reused.");
+        }
+        if (latestBooking.cargoSnapshot && latestBooking.cargoInspectionStatus !== "verified") {
+          throw new Error("Inspect the cargo and ask the passenger to reduce any excess to the declared quantity and size before boarding.");
         }
         let belongsToAssignedBoat = latestBooking.boat === profile.assignedBoat;
         if (!latestBooking.boat && latestBooking.tripId) {
@@ -578,6 +648,9 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
             String(transactionBooking.status || "").toLowerCase()
           )) {
             throw new Error("This booking can no longer be accepted for boarding.");
+          }
+          if (transactionBooking.cargoSnapshot && transactionBooking.cargoInspectionStatus !== "verified") {
+            throw new Error("Cargo inspection must be completed before boarding.");
           }
           transaction.update(bookingRef, {
             status: "boarded",
@@ -635,36 +708,6 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
     setScanMessage("Scan a QR code to view booking details");
     setNotificationMessage("");
     setNotificationType("");
-  };
-
-  const handleLogout = () => {
-    setShowDrawer(false);
-    setShowLogoutConfirm(true);
-  };
-
-  const confirmLogout = async () => {
-    setShowLogoutConfirm(false);
-    stopCamera();
-    
-    // Clear all storage
-    localStorage.removeItem("user");
-    localStorage.removeItem("userRole");
-    localStorage.removeItem("authToken");
-    sessionStorage.clear();
-    
-    // Sign out from Firebase
-    try {
-      await auth.signOut();
-    } catch (err) {
-      console.error("Logout error:", err);
-    }
-    
-    // Navigate to login page (shows public navbar)
-    navigate("/login");
-  };
-
-  const cancelLogout = () => {
-    setShowLogoutConfirm(false);
   };
 
   const handleEditProfile = () => {
@@ -922,8 +965,14 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
         const paymentStatus = await getBookingPaymentStatus(bookingDoc.id, bookingData);
         const isPaid = isPaymentPaid(paymentStatus);
         const bookingStatus = String(bookingData.status || "").toLowerCase();
-        const canAccept = isPaid &&
-          !["cancelled", "departed", "scanned", "boarded"].includes(bookingStatus);
+        const cargoSnapshot = bookingData.cargoSnapshot || null;
+        const cargoInspectionStatus = bookingData.cargoInspectionStatus || "pending";
+        const canAccept = canAcceptBookingForBoarding(
+          isPaid,
+          bookingStatus,
+          cargoSnapshot,
+          cargoInspectionStatus
+        );
         const routeDetails = getBookingRouteDetails(bookingData);
 
         // Extract relevant booking information
@@ -939,8 +988,11 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
           vessel: bookingData.vessel_name || bookingData.vessel || bookingData.boat || bookingData.tripName || "N/A",
           status: isPaid ? bookingData.status || "Pending" : "Pending",
           userType: bookingData.userType || "Regular",
-          cargoType: bookingData.cargoType || "N/A",
+          cargoType: cargoSnapshot?.name || bookingData.cargoType || "N/A",
           cargoWeight: bookingData.cargoWeight || "N/A",
+          cargoSnapshot,
+          cargoInspectionStatus,
+          cargoInspectedBy: bookingData.cargoInspectedBy || "",
           cargoPrice: bookingData.cargoPrice || 0,
           basePrice: bookingData.basePrice || bookingData.price || 0,
           discountRate: bookingData.discountRate || 0,
@@ -968,6 +1020,8 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
         setNotificationMessage(
           canAccept
             ? "✓ Payment confirmed. Booking can be accepted for boarding."
+            : isPaid && cargoSnapshot && cargoInspectionStatus !== "verified"
+              ? "Inspect the actual cargo. Boarding is available after it matches the declaration."
             : isPaid
               ? "This booking cannot be accepted for boarding."
               : "Payment is pending. Confirm payment before boarding."
@@ -1118,8 +1172,14 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
               const paymentStatus = await getBookingPaymentStatus(bookingDoc.id, bookingData);
               const isPaid = isPaymentPaid(paymentStatus);
               const bookingStatus = String(bookingData.status || "").toLowerCase();
-              const canAccept = isPaid &&
-                !["cancelled", "departed", "scanned", "boarded"].includes(bookingStatus);
+              const cargoSnapshot = bookingData.cargoSnapshot || null;
+              const cargoInspectionStatus = bookingData.cargoInspectionStatus || "pending";
+              const canAccept = canAcceptBookingForBoarding(
+                isPaid,
+                bookingStatus,
+                cargoSnapshot,
+                cargoInspectionStatus
+              );
               const routeDetails = getBookingRouteDetails(bookingData);
 
               // Check if ticket is already scanned/used
@@ -1150,8 +1210,11 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                 vessel: bookingData.vessel_name || bookingData.vessel || bookingData.boat || bookingData.tripName || "N/A",
                 status: isPaid ? bookingData.status || "Pending" : "Pending",
                 userType: bookingData.userType || "Regular",
-                cargoType: bookingData.cargoType || "N/A",
+                cargoType: cargoSnapshot?.name || bookingData.cargoType || "N/A",
                 cargoWeight: bookingData.cargoWeight || "N/A",
+                cargoSnapshot,
+                cargoInspectionStatus,
+                cargoInspectedBy: bookingData.cargoInspectedBy || "",
                 cargoPrice: bookingData.cargoPrice || 0,
                 basePrice: bookingData.basePrice || bookingData.price || 0,
                 discountRate: bookingData.discountRate || 0,
@@ -1179,6 +1242,8 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
               setNotificationMessage(
                 canAccept
                   ? "✓ Payment confirmed. Booking can be accepted for boarding."
+                  : isPaid && cargoSnapshot && cargoInspectionStatus !== "verified"
+                    ? "Inspect the actual cargo. Boarding is available after it matches the declaration."
                   : isPaid
                     ? "This booking cannot be accepted for boarding."
                     : "Payment is pending. Confirm payment before boarding."
@@ -1608,15 +1673,72 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                       <span className="detail-label">Cargo Type:</span>
                       <span className="detail-value">{bookingDetails.cargoType}</span>
                     </div>
-                    <div className="detail-item">
-                      <span className="detail-label">Cargo Weight:</span>
-                      <span className="detail-value">{bookingDetails.cargoWeight} kg</span>
-                    </div>
+                    {bookingDetails.cargoSnapshot ? (
+                      <>
+                        <div className="detail-item">
+                          <span className="detail-label">Declared Quantity:</span>
+                          <span className="detail-value">
+                            {bookingDetails.cargoSnapshot.quantity} {String(bookingDetails.cargoSnapshot.pricingBasis || "").replace("Per ", "")}
+                          </span>
+                        </div>
+                        <div className="detail-item">
+                          <span className="detail-label">Price per Unit:</span>
+                          <span className="detail-value">₱{Number(bookingDetails.cargoSnapshot.unitPrice).toFixed(2)}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="detail-item">
+                        <span className="detail-label">Cargo Weight:</span>
+                        <span className="detail-value">{bookingDetails.cargoWeight} kg</span>
+                      </div>
+                    )}
                     <div className="detail-item">
                       <span className="detail-label">Cargo Price:</span>
-                      <span className="detail-value">₱{parseFloat(bookingDetails.cargoPrice).toFixed(2)}</span>
+                      <span className="detail-value">₱{Number(bookingDetails.cargoSnapshot?.totalPrice ?? bookingDetails.cargoPrice).toFixed(2)}</span>
                     </div>
                   </>
+                )}
+                {bookingDetails.cargoSnapshot && (
+                  <div
+                    role="group"
+                    aria-label="Cargo inspection"
+                    style={{
+                      margin: "12px 0",
+                      padding: "12px",
+                      borderRadius: "8px",
+                      background: bookingDetails.cargoInspectionStatus === "verified" ? "#e9f8ef" : "#fff7e6",
+                      border: `1px solid ${bookingDetails.cargoInspectionStatus === "verified" ? "#a8dbb8" : "#f0d18a"}`
+                    }}
+                  >
+                    {bookingDetails.cargoInspectionStatus === "verified" ? (
+                      <p role="status" style={{ margin: 0, color: "#176b38", fontWeight: 700 }}>
+                        Cargo matches the declaration and was inspected by {bookingDetails.cargoInspectedBy || "Port Staff"}.
+                      </p>
+                    ) : (
+                      <>
+                        <p style={{ margin: "0 0 10px", color: "#76520a" }}>
+                          Inspect the actual cargo type and quantity. If it exceeds the declaration, ask the passenger to reduce it to the declared and paid amount. Do not collect extra payment at the port.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleConfirmCargoInspection}
+                          disabled={isSavingCargoInspection || !bookingDetails.isPaid}
+                          style={{
+                            width: "100%",
+                            padding: "10px",
+                            border: 0,
+                            borderRadius: "7px",
+                            background: isSavingCargoInspection || !bookingDetails.isPaid ? "#aab5bf" : "#176b38",
+                            color: "#fff",
+                            fontWeight: 700,
+                            cursor: isSavingCargoInspection || !bookingDetails.isPaid ? "not-allowed" : "pointer"
+                          }}
+                        >
+                          {isSavingCargoInspection ? "Saving inspection..." : "Confirm Cargo Matches Declaration"}
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
                 <div className="detail-item">
                   <span className="detail-label">Base Price:</span>
@@ -1724,7 +1846,9 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                         }}
                       >
                         {isPaymentPaid(bookingDetails.paymentStatus)
-                          ? "This booking cannot be accepted for boarding."
+                          ? bookingDetails.cargoSnapshot && bookingDetails.cargoInspectionStatus !== "verified"
+                            ? "Cargo inspection is required before boarding."
+                            : "This booking cannot be accepted for boarding."
                           : "Pending payment confirmation"}
                       </div>
                     )}
@@ -2107,15 +2231,6 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
                     )}
                   </div>
 
-                  <div className="profile-action-buttons">
-                    <button 
-                      className="profile-logout-btn" 
-                      onClick={handleLogout}
-                    >
-                      <FiLogOut aria-hidden="true" />
-                      Logout
-                    </button>
-                  </div>
                 </div>
               </div>
             ) : (
@@ -2243,23 +2358,6 @@ function QRScanner({ user, embedded = false, profileOnly = false }) {
         )}
       </div>
 
-      {/* Logout Confirmation Modal */}
-      {showLogoutConfirm && (
-        <div className="logout-modal-overlay">
-          <div className="logout-modal">
-            <h2>Confirm Logout</h2>
-            <p>Are you sure you want to log out?</p>
-            <div className="modal-buttons">
-              <button className="btn-cancel" onClick={cancelLogout}>
-                Cancel
-              </button>
-              <button className="btn-confirm-logout" onClick={confirmLogout}>
-                Yes, Log Out
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

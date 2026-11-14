@@ -12,6 +12,18 @@ export function getPromoReservationCounts(bookings = []) {
   }, {});
 }
 
+export function isPromoExpired(promo, currentDate = new Date()) {
+  if (!promo?.endDate) return false;
+
+  const today = [
+    currentDate.getFullYear(),
+    String(currentDate.getMonth() + 1).padStart(2, "0"),
+    String(currentDate.getDate()).padStart(2, "0"),
+  ].join("-");
+
+  return today > promo.endDate;
+}
+
 export function getActivePromo(promos = [], reservationCounts = {}, currentDate = new Date()) {
   const today = [
     currentDate.getFullYear(),
@@ -26,7 +38,7 @@ export function getActivePromo(promos = [], reservationCounts = {}, currentDate 
         return false;
       }
 
-      if ((promo.startDate && today < promo.startDate) || (promo.endDate && today > promo.endDate)) {
+      if ((promo.startDate && today < promo.startDate) || isPromoExpired(promo, currentDate)) {
         return false;
       }
 

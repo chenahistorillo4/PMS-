@@ -2,6 +2,7 @@ import {
   calculatePromoDiscount,
   getActivePromo,
   getPromoReservationCounts,
+  isPromoExpired,
 } from "./promotionHelpers";
 
 describe("promo helpers", () => {
@@ -44,6 +45,13 @@ describe("promo helpers", () => {
 
     expect(getActivePromo(promos, { "sold-out": 2, available: 2 }, currentDate).id).toBe("available");
     expect(getActivePromo(promos, { "sold-out": 2, available: 3 }, currentDate)).toBeNull();
+  });
+
+  test("expires a promo after its end date, but not during its end date", () => {
+    const promo = { endDate: "2026-11-14" };
+
+    expect(isPromoExpired(promo, new Date(2026, 10, 14, 23, 59))).toBe(false);
+    expect(isPromoExpired(promo, new Date(2026, 10, 15, 0, 0))).toBe(true);
   });
 
   test("counts non-cancelled reservations against promo limits", () => {

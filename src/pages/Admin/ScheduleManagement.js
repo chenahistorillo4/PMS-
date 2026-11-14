@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, addDoc, onSnapshot, query, where, updateDoc, deleteDoc } from "firebase/firestore";
+import { doc, collection, addDoc, onSnapshot, query, where, updateDoc, deleteDoc, deleteField } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { createTripNotifications } from "../../utils/notificationHelper";
@@ -28,7 +28,6 @@ function ScheduleManagement() {
     capacity: 50,
     routeDirection: "",
     price: "",
-    cargoPerKilo: "",
     paymentMethod: "gcash",
     status: "Upcoming",
     boatImage: ""
@@ -142,7 +141,7 @@ function ScheduleManagement() {
         routeDirection: newTrip.routeDirection,
         price: newTrip.price,
         allowPayLater: newTrip.paymentMethod === "pay_later",
-        cargoPerKilo: parseFloat(newTrip.cargoPerKilo) || 20
+        cargoPerKilo: deleteField()
       });
 
       const oldStatus = String(oldTrip?.status || "").trim().toLowerCase();
@@ -207,7 +206,6 @@ function ScheduleManagement() {
         routeDirection: newTrip.routeDirection,
         price: newTrip.price,
         allowPayLater: newTrip.paymentMethod === "pay_later",
-        cargoPerKilo: parseFloat(newTrip.cargoPerKilo) || 20,
         date: newTrip.date,
         createdAt: new Date()
       });
@@ -223,7 +221,7 @@ function ScheduleManagement() {
     setImagePreview(null);
     const input = document.getElementById("boatImageInput");
     if (input) input.value = "";
-    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", paymentMethod: "gcash" });
+    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", paymentMethod: "gcash" });
   } catch (error) {
     alert("Error saving trip: " + error.message);
   }
@@ -239,7 +237,6 @@ const handleEditTrip = (trip) => {
     status: trip.status,
     routeDirection: trip.routeDirection || trip.route || adminData?.assignedRoute || "",
     price: trip.price,
-    cargoPerKilo: trip.cargoPerKilo || "",
     paymentMethod: trip.paymentMethod || (trip.allowPayLater ? "pay_later" : "gcash"),
     boatImage: trip.boatImage || ""
   });
@@ -250,10 +247,11 @@ const handleEditTrip = (trip) => {
 
 const handleDeleteTrip = async (id) => {
   if (isPortStaff) return;
-  try {
-    const tripToDelete = trips.find(t => t.id === id);
-    if (!tripToDelete) return;
+  const tripToDelete = trips.find((trip) => trip.id === id);
+  if (!tripToDelete) return;
+  if (!window.confirm(`Are you sure you want to delete "${tripToDelete.name}"?`)) return;
 
+  try {
     // Create notifications before deleting
     await createTripNotifications(
       tripToDelete.boat,
@@ -599,31 +597,6 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     fontWeight: 700,
                     color: "#333",
                     marginBottom: isMobile ? "3px" : "8px"
-                  }}>Cargo Price Per Kilo (₱) *</label>
-                  <input
-                    type="number"
-                    placeholder="20"
-                    value={newTrip.cargoPerKilo}
-                    onChange={(e)=>setNewTrip({...newTrip, cargoPerKilo:e.target.value})}
-                    required
-                    style={{
-                      width: "100%",
-                      padding: isMobile ? "4px 6px" : "10px 12px",
-                      border: "1px solid #ddd",
-                      borderRadius: "8px",
-                      fontSize: isMobile ? "11px" : "0.9rem",
-                      fontFamily: "inherit",
-                      boxSizing: "border-box"
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{
-                    display: "block",
-                    fontSize: isMobile ? "0.6rem" : "0.85rem",
-                    fontWeight: 700,
-                    color: "#333",
-                    marginBottom: isMobile ? "3px" : "8px"
                   }}>Status *</label>
                   <select 
                     value={newTrip.status} 
@@ -734,7 +707,7 @@ const displayedTrips = tripList.slice(startIndex, endIndex);
                     setImagePreview(null);
                     const input = document.getElementById("boatImageInput");
                     if (input) input.value = "";
-                    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", cargoPerKilo: "", paymentMethod: "gcash" });
+                    setNewTrip({ name: "", date: "", departure: "", arrival: "", capacity: 50, status: "Upcoming", boatImage: "", paymentMethod: "gcash" });
                   }}
                   style={{
                     background: "#f5f5f5",

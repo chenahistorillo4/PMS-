@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { collection, doc, getDocs, query, serverTimestamp, where, writeBatch } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, serverTimestamp, where, writeBatch } from "firebase/firestore";
 import { db, auth } from "../../firebase";
 import AdminLayout from "../Admin/AdminLayout";
 import { getStaffAccount } from "../../utils/staffAccount";
@@ -10,6 +10,11 @@ import {
   getPromoReservationCounts,
 } from "../../utils/promotionHelpers";
 import { notifyNewBookingReceived } from "../../utils/notificationHelper";
+import {
+  calculateCargoTotal,
+  createCargoBookingSnapshot,
+  isValidCargoQuantity,
+} from "../../utils/cargoPricing";
 import "./WalkInBooking.css";
 
 const generateReferenceCode = () => {
@@ -39,6 +44,7 @@ function WalkInBookingPage() {
   const [trips, setTrips] = useState([]);
   const [bookingCounts, setBookingCounts] = useState({});
   const [discounts, setDiscounts] = useState({});
+  const [cargoTypes, setCargoTypes] = useState([]);
   const [promos, setPromos] = useState([]);
   const [promoReservationCounts, setPromoReservationCounts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -49,8 +55,8 @@ function WalkInBookingPage() {
     bookingType: "passenger_cargo",
     customerName: "",
     userType: "regular",
-    cargoType: "",
-    cargoWeight: "",
+    cargoId: "",
+    cargoQuantity: "",
     payment: "Cash"
   });
 
@@ -66,10 +72,14 @@ function WalkInBookingPage() {
         }
 
         const assignedBoat = account.data.assignedBoat;
-        const [schedulesSnapshot, discountsSnapshot, bookingsSnapshot] = await Promise.all([
+        const [schedulesSnapshot, discountsSnapshot, bookingsSnapshot, cargoSnapshot] = await Promise.all([
           getDocs(query(collection(db, "schedules"), where("boat", "==", assignedBoat))),
           getDocs(query(collection(db, "discounts"), where("boatName", "==", assignedBoat))),
-          getDocs(query(collection(db, "bookings"), where("boat", "==", assignedBoat)))
+          getDocs(query(collection(db, "bookings"), where("boat", "==", assignedBoat))),
+          getDocs(query(
+            collection(db, "cargoTypes"),
+            where("boat", "==", assignedBoat)
+          ))
         ]);
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -102,6 +112,11 @@ function WalkInBookingPage() {
         setProfile(account.data);
         setTrips(availableTrips);
         setDiscounts(discountData);
+        setCargoTypes(cargoSnapshot.docs
+          .map((cargoDoc) => ({ id: cargoDoc.id, ...cargoDoc.data() }))
+          .filter((cargo) => cargo.status === "active")
+          .filter((cargo) => Number.isFinite(Number(cargo.price)) && Number(cargo.price) > 0)
+          .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""))));
         setPromos(Array.isArray(boatPromos) ? boatPromos : []);
         setPromoReservationCounts(promoCounts);
         setBookingCounts(counts);
@@ -123,15 +138,14 @@ function WalkInBookingPage() {
   }, [authReady, user]);
 
   const selectedTrip = trips.find((trip) => trip.id === form.tripId);
+  const selectedCargo = cargoTypes.find((cargo) => cargo.id === form.cargoId) || null;
   const isCargoOnly = form.bookingType === "cargo_only";
   const isPassengerOnly = form.bookingType === "passenger_only";
   const includesCargo = !isPassengerOnly;
   const cargoPrice = useMemo(() => {
-    if (!includesCargo) return 0;
-    const weight = Number(form.cargoWeight);
-    const rate = Number(selectedTrip?.cargoPerKilo || 20);
-    return Number.isFinite(weight) && weight > 0 ? weight * rate : 0;
-  }, [form.cargoWeight, includesCargo, selectedTrip]);
+    if (!includesCargo || !selectedCargo) return 0;
+    return calculateCargoTotal(selectedCargo.price, Number(form.cargoQuantity) || 0, selectedCargo.pricingBasis);
+  }, [form.cargoQuantity, includesCargo, selectedCargo]);
   const basePrice = isCargoOnly ? cargoPrice : Number(selectedTrip?.price || 0) + cargoPrice;
   const discountRate = isCargoOnly ? 0 : Number(discounts[form.userType] || 0);
   const activePromo = isCargoOnly ? null : getActivePromo(promos, promoReservationCounts);
@@ -149,7 +163,7 @@ function WalkInBookingPage() {
       ...previous,
       [name]: value,
       ...(name === "bookingType" && value === "passenger_only"
-        ? { cargoType: "", cargoWeight: "" }
+        ? { cargoId: "", cargoQuantity: "" }
         : {})
     }));
     setMessage({ type: "", text: "" });
@@ -161,8 +175,8 @@ function WalkInBookingPage() {
       bookingType: "passenger_cargo",
       customerName: "",
       userType: "regular",
-      cargoType: "",
-      cargoWeight: "",
+      cargoId: "",
+      cargoQuantity: "",
       payment: "Cash"
     });
   };
@@ -177,8 +191,21 @@ function WalkInBookingPage() {
       setMessage({ type: "error", text: "The selected passenger type is not available for this boat." });
       return;
     }
-    if (form.cargoWeight && (!Number.isFinite(Number(form.cargoWeight)) || Number(form.cargoWeight) < 0)) {
-      setMessage({ type: "error", text: "Cargo weight must be a valid non-negative number." });
+    if (includesCargo && isCargoOnly && !selectedCargo) {
+      setMessage({ type: "error", text: "Please select an available cargo type." });
+      return;
+    }
+    if (includesCargo && form.cargoId && !selectedCargo) {
+      setMessage({ type: "error", text: "The selected cargo type is no longer available. Please choose another type or remove it." });
+      return;
+    }
+    if (includesCargo && form.cargoId && !isValidCargoQuantity(form.cargoQuantity, selectedCargo?.pricingBasis)) {
+      setMessage({
+        type: "error",
+        text: selectedCargo?.pricingBasis === "Per Kilo"
+          ? "Cargo weight must be greater than zero and use up to two decimal places."
+          : "Cargo quantity must be a whole number greater than zero."
+      });
       return;
     }
 
@@ -210,6 +237,25 @@ function WalkInBookingPage() {
         throw new Error("Promo availability has changed. Please review the updated price before booking.");
       }
 
+      let cargoSnapshot = null;
+      if (includesCargo && selectedCargo) {
+        const latestCargoDoc = await getDoc(doc(db, "cargoTypes", selectedCargo.id));
+        if (!latestCargoDoc.exists() || latestCargoDoc.data().status !== "active") {
+          throw new Error("This cargo type is no longer available. Please choose another cargo type.");
+        }
+        const latestCargo = { id: latestCargoDoc.id, ...latestCargoDoc.data() };
+        if (
+          latestCargo.boat !== selectedTrip.boat ||
+          latestCargo.name !== selectedCargo.name ||
+          latestCargo.pricingBasis !== selectedCargo.pricingBasis ||
+          Number(latestCargo.price) !== Number(selectedCargo.price)
+        ) {
+          throw new Error("Cargo pricing has changed. Please review the updated cargo price before booking.");
+        }
+        cargoSnapshot = createCargoBookingSnapshot(latestCargo, form.cargoQuantity);
+        if (!cargoSnapshot) throw new Error("Please enter a valid cargo quantity.");
+      }
+
       const referenceCode = generateReferenceCode();
       const staffName = profile?.name || auth.currentUser?.email || "Port Staff";
       const bookingData = {
@@ -224,8 +270,10 @@ function WalkInBookingPage() {
         bookingType: form.bookingType,
         customerName: form.customerName.trim(),
         userType: isCargoOnly ? null : form.userType,
-        cargoType: form.cargoType.trim(),
-        cargoWeight: form.cargoWeight,
+        cargoType: cargoSnapshot?.name || "",
+        cargoQuantity: cargoSnapshot?.quantity || 0,
+        cargoPricingBasis: cargoSnapshot?.pricingBasis || "",
+        cargoSnapshot,
         cargoPrice,
         basePrice: isCargoOnly ? 0 : Number(selectedTrip.price || 0),
         passengerPrice: isCargoOnly ? 0 : Number(selectedTrip.price || 0),
@@ -364,13 +412,35 @@ function WalkInBookingPage() {
                 {includesCargo && (
                   <>
                     <label className="walk-in-field">
-                      Cargo Type
-                      <input name="cargoType" value={form.cargoType} onChange={handleChange} placeholder="Optional" />
+                      Cargo Type and Price
+                      <select name="cargoId" value={form.cargoId} onChange={handleChange} required={isCargoOnly}>
+                        <option value="">{isCargoOnly ? "Select cargo type" : "No cargo"}</option>
+                        {cargoTypes.map((cargo) => (
+                          <option key={cargo.id} value={cargo.id}>
+                            {cargo.name} — ₱{Number(cargo.price).toFixed(2)} {cargo.pricingBasis}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                     <label className="walk-in-field">
-                      Cargo Weight (kg)
-                      <input name="cargoWeight" type="number" min="0" step="0.01" value={form.cargoWeight} onChange={handleChange} placeholder="Optional" />
+                      Quantity {selectedCargo ? `(${selectedCargo.pricingBasis.replace("Per ", "")})` : ""}
+                      <input
+                        name="cargoQuantity"
+                        type="number"
+                        min={selectedCargo?.pricingBasis === "Per Kilo" ? "0.01" : "1"}
+                        step={selectedCargo?.pricingBasis === "Per Kilo" ? "0.01" : "1"}
+                        value={form.cargoQuantity}
+                        onChange={handleChange}
+                        disabled={!selectedCargo}
+                        required={Boolean(selectedCargo)}
+                      />
                     </label>
+                    {selectedCargo && (
+                      <p className="walk-in-cargo-price">
+                        ₱{Number(selectedCargo.price).toFixed(2)} {selectedCargo.pricingBasis}
+                        {" · Cargo total: "}₱{cargoPrice.toFixed(2)}
+                      </p>
+                    )}
                   </>
                 )}
                 <label className="walk-in-field">
@@ -385,6 +455,7 @@ function WalkInBookingPage() {
                   <strong>₱{finalPrice.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                 </div>
                 <div className="walk-in-breakdown">
+                  {cargoPrice > 0 && <span>Cargo: ₱{cargoPrice.toFixed(2)}</span>}
                   {passengerDiscountAmount > 0 && (
                     <span>{form.userType} discount ({(discountRate * 100).toFixed(0)}%): -₱{passengerDiscountAmount.toFixed(2)}</span>
                   )}

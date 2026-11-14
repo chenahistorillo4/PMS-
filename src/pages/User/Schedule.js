@@ -57,13 +57,17 @@ function Schedule() {
 
   const today = getDateKey(new Date());
 
-  const filteredTrips = trips.filter((trip) => {
-    const tripDate = getDateKey(trip.date);
-    const isCurrentOrFutureTrip = tripDate && tripDate >= today;
-    const routeMatch = selectedRoute === "All Routes" || trip.routeDirection === selectedRoute;
-    const dateMatch = !selectedDate || tripDate === selectedDate;
-    return isCurrentOrFutureTrip && routeMatch && dateMatch;
-  });
+  const filteredTrips = trips
+    .filter((trip) => {
+      const tripDate = getDateKey(trip.date);
+      const isCurrentOrFutureTrip = tripDate && tripDate >= today;
+      const routeMatch = selectedRoute === "All Routes" || trip.routeDirection === selectedRoute;
+      const dateMatch = !selectedDate || tripDate === selectedDate;
+      return isCurrentOrFutureTrip && routeMatch && dateMatch;
+    })
+    .sort((first, second) =>
+      getDateKey(first.date).localeCompare(getDateKey(second.date))
+    );
 
   const handleReset = () => {
     setSelectedRoute("All Routes");
