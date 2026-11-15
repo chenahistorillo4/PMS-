@@ -1,76 +1,107 @@
 function parsePromoDate(value) {
   if (!value) return null;
-  if (typeof value?.toDate === 'function') return value.toDate();
-  if (value instanceof Date) return value;
 
-  const dateText = String(value).slice(0, 10);
-  const parsed = new Date(`${dateText}T12:00:00`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  let date;
+  if (typeof value?.toDate === "function") {
+    date = value.toDate();
+  } else if (value instanceof Date) {
+    date = new Date(value.getTime());
+  } else {
+    const dateText = String(value).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+
+    const [year, month, day] = dateText.split("-").map(Number);
+    date = new Date(year, month - 1, day, 12);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      return null;
+    }
+  }
+
+  return date instanceof Date && !Number.isNaN(date.getTime()) ? date : null;
 }
 
 function isPromoWithinDateRange(promo, referenceDate = new Date()) {
   const start = parsePromoDate(promo?.startDate);
   const end = parsePromoDate(promo?.endDate);
-  if (!start || !end) return false;
+  if ((promo?.startDate && !start) || (promo?.endDate && !end)) return false;
 
   const current = new Date(referenceDate);
+  if (Number.isNaN(current.getTime())) return false;
   current.setHours(12, 0, 0, 0);
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
 
-  return current >= start && current <= end;
-}
+  if (start) start.setHours(0, 0, 0, 0);
+  if (end) end.setHours(23, 59, 59, 999);
 
-function isPromoAvailable(promo, promoReservationCounts = {}) {
-  if (!promo?.active) return false;
-  if (!isPromoWithinDateRange(promo)) return false;
-
-  if (promo.availability === 'limited') {
-    const maxReservations = Number(promo.maxReservations);
-    const usedReservations = Number(promoReservationCounts[promo.id] || 0);
-    if (!Number.isInteger(maxReservations) || maxReservations <= 0) return false;
-    if (usedReservations >= maxReservations) return false;
-  }
-
-  return true;
+  return (!start || current >= start) && (!end || current <= end);
 }
 
 export function getPromoReservationCounts(bookings = []) {
-  const counts = {};
+  return bookings.reduce((counts, booking) => {
+    if (["cancelled", "failed"].includes(String(booking?.status || "").toLowerCase())) {
+      return counts;
+    }
 
-  bookings.forEach((booking) => {
-    const promoId = booking?.promoId;
-    if (!promoId) return;
-
-    const status = String(booking.status || '').toLowerCase();
-    if (['cancelled', 'failed'].includes(status)) return;
-
-    counts[promoId] = (counts[promoId] || 0) + 1;
-  });
-
-  return counts;
+    const keys = [
+      booking?.promoId,
+      booking?.promoName ? `name:${booking.promoName}` : null,
+    ].filter(Boolean);
+    keys.forEach((key) => {
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, {});
 }
 
-export function getActivePromo(promos = [], promoReservationCounts = {}) {
+export function isPromoExpired(promo, currentDate = new Date()) {
+  if (!promo?.endDate) return false;
+
+  const end = parsePromoDate(promo.endDate);
+  const current = new Date(currentDate);
+  if (!end || Number.isNaN(current.getTime())) return false;
+
+  end.setHours(23, 59, 59, 999);
+  current.setHours(12, 0, 0, 0);
+  return current > end;
+}
+
+export function getActivePromo(promos = [], reservationCounts = {}, currentDate = new Date()) {
   if (!Array.isArray(promos) || promos.length === 0) return null;
 
-  const availablePromos = promos
-    .filter((promo) => isPromoAvailable(promo, promoReservationCounts))
-    .sort((first, second) => {
-      const percentageDiff = Number(second.percentage) - Number(first.percentage);
-      if (percentageDiff !== 0) return percentageDiff;
-      return String(first.startDate || '').localeCompare(String(second.startDate || ''));
-    });
+  return promos
+    .filter((promo) => {
+      const percentage = Number(promo?.percentage);
+      if (!promo?.active || !Number.isFinite(percentage) || percentage <= 0 || percentage > 100) {
+        return false;
+      }
 
-  return availablePromos[0] || null;
+      if (!isPromoWithinDateRange(promo, currentDate)) return false;
+
+      if (promo.availability === "limited") {
+        const maximum = Number(promo.maxReservations);
+        const reserved = Number(
+          reservationCounts[promo.id] || reservationCounts[`name:${promo.name}`] || 0
+        );
+        if (!Number.isInteger(maximum) || maximum <= 0 || reserved >= maximum) return false;
+      }
+
+      return true;
+    })
+    .sort((first, second) => {
+      const percentageDifference = Number(second.percentage) - Number(first.percentage);
+      if (percentageDifference !== 0) return percentageDifference;
+      return String(first.startDate || "").localeCompare(String(second.startDate || ""));
+    })[0] || null;
 }
 
-export function calculatePromoDiscount(amountAfterPassengerDiscount, activePromo) {
-  const subtotal = Number(amountAfterPassengerDiscount);
-  if (!activePromo || !Number.isFinite(subtotal) || subtotal <= 0) return 0;
-
-  const percentage = Number(activePromo.percentage);
-  if (!Number.isFinite(percentage) || percentage <= 0) return 0;
+export function calculatePromoDiscount(amount, promo) {
+  const subtotal = Number(amount);
+  const percentage = Number(promo?.percentage);
+  if (!Number.isFinite(subtotal) || subtotal <= 0) return 0;
+  if (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100) return 0;
 
   return Math.max(0, subtotal * (percentage / 100));
 }

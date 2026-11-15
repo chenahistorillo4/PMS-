@@ -24,7 +24,7 @@
     },
     {
       "path": "/api/cron/payment-expiry",
-      "schedule": "30 6 * * *"
+      "schedule": "* * * * *"
     }
   ],
   "redirects": [
@@ -38,6 +38,6 @@
     { "source": "/health", "destination": "/api/health" },
     { "source": "/webhooks/paymongo", "destination": "/api/webhooks/paymongo" },
     { "source": "/api/notifications/email", "destination": "/api/notifications/send" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|Marinduque/|Pinamalayan/|Sibale/).*)", "destination": "/index.html" }
   ]
 }

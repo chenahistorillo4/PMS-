@@ -26,7 +26,7 @@
 }
 
 .admin-profile-hero {
-  grid-template-columns: 104px minmax(0, 1fr) auto;
+  grid-template-columns: 104px minmax(0, 1fr);
   grid-template-rows: auto auto;
   column-gap: 22px;
   row-gap: 8px;
@@ -72,14 +72,6 @@
   text-transform: capitalize;
 }
 
-.admin-profile-hero-actions {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .admin-profile-edit-button,
 .admin-profile-logout-button {
   border: 0;
@@ -94,12 +86,20 @@
 }
 
 .admin-profile-edit-button {
-  background: #2874c8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: #e7f0ff;
+  color: #1762c4;
+  font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .admin-profile-edit-button:hover {
-  background: #1d5fa8;
-  transform: translateY(-1px);
+  background: #d7e7ff;
 }
 
 .admin-profile-logout-button {
@@ -128,10 +128,23 @@
   box-shadow: 0 3px 12px rgba(31, 51, 73, 0.05);
 }
 
-.admin-profile-panel-title {
-  margin: 0 0 22px;
+.admin-profile-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 22px;
   padding-bottom: 14px;
   border-bottom: 1px solid #edf0f5;
+}
+
+.admin-profile-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
   color: #223b5b;
   font-size: 1.05rem;
   font-weight: 750;
@@ -232,9 +245,13 @@
 
   .admin-profile-hero {
     grid-template-columns: 72px minmax(0, 1fr);
-    grid-template-rows: auto auto auto auto;
+    grid-template-rows: auto auto;
     column-gap: 14px;
     padding: 16px !important;
+  }
+
+  .admin-profile-hero.is-editing {
+    grid-template-rows: auto auto auto;
   }
 
   .admin-profile-hero > div:first-child {
@@ -246,27 +263,20 @@
     font-size: 1.05rem !important;
   }
 
-  .admin-profile-hero-actions {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    justify-content: center;
-    flex-wrap: nowrap;
-    align-self: start;
-  }
-
-  .admin-profile-hero.is-editing .admin-profile-hero-actions {
-    display: none;
-  }
-
   .admin-profile-edit-button,
   .admin-profile-logout-button {
     padding: 8px 11px;
     font-size: 0.8rem;
   }
 
+  .admin-profile-edit-button {
+    padding: 6px 9px;
+    font-size: 0.72rem;
+  }
+
   .admin-profile-picture-actions {
     grid-column: 1 / -1;
-    grid-row: 4;
+    grid-row: 3;
     gap: 6px !important;
     justify-content: flex-start !important;
     margin-bottom: 0 !important;
@@ -287,7 +297,12 @@
   }
 
   .admin-profile-panel-title {
+    font-size: 0.95rem;
+  }
+
+  .admin-profile-panel-heading {
     margin-bottom: 18px;
+    padding-bottom: 12px;
   }
 
   .admin-profile-fields {

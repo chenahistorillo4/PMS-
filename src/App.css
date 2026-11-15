@@ -1000,6 +1000,7 @@
   border: 0;
   background: transparent;
   position: relative;
+  height: 135px;
   min-height: 135px;
   overflow: hidden;
   border-radius: 16px;
@@ -1017,6 +1018,7 @@
   min-height: 135px;
   display: block;
   object-fit: cover;
+  pointer-events: none;
 }
 
 .home-destination-card div {
@@ -1467,6 +1469,7 @@
 
   .home-destination-card,
   .home-destination-card img {
+    height: 250px;
     min-height: 250px;
   }
 
@@ -2371,6 +2374,7 @@
 
   .home-destination-card,
   .home-destination-card img {
+    height: 105px;
     min-height: 105px;
   }
 

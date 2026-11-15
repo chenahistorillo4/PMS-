@@ -1,15 +1,24 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { signOut } from "firebase/auth";
+import { auth } from "../firebase";
 import { useUserUnreadNotificationCount } from "../hooks/useUnreadNotificationCount";
 import { NavNotificationBadge } from "./NotificationBadge";
 
-function Navbar({ user }) {
+function Navbar({ user, role, authReady }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const isAuthPage = ["/login", "/register"].includes(location.pathname);
-  const showAuthenticatedLinks = Boolean(user && !isAuthPage);
-  const unreadNotificationCount = useUserUnreadNotificationCount(user?.uid);
+  const isAuthenticated = authReady && Boolean(user?.uid);
+  const showAuthenticatedLinks = isAuthenticated && role === "user" && !isAuthPage;
+  const showGuestLinks = authReady && !showAuthenticatedLinks;
+  const unreadNotificationCount = useUserUnreadNotificationCount(
+    showAuthenticatedLinks ? user.uid : null
+  );
 
   useEffect(() => {
     const handleResize = () => {
@@ -26,6 +35,21 @@ function Navbar({ user }) {
 
   const handleNavClick = () => {
     setSidebarOpen(false);
+  };
+
+  const confirmLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await signOut(auth);
+      setShowLogoutConfirm(false);
+      setSidebarOpen(false);
+      navigate("/login");
+    } catch (error) {
+      console.error("Error logging out:", error);
+      alert("Logout failed: " + error.message);
+      setIsLoggingOut(false);
+      setShowLogoutConfirm(false);
+    }
   };
 
   // Desktop Navbar
@@ -111,7 +135,7 @@ function Navbar({ user }) {
                 </>
               )}
 
-              {!showAuthenticatedLinks && (
+              {showGuestLinks && (
                 <>
                   <li className="nav-item">
                     <Link className="nav-link nav-link-custom" to="/login" onClick={handleNavClick}>Login</Link>
@@ -238,7 +262,7 @@ function Navbar({ user }) {
             <line x1="3" y1="12" x2="21" y2="12"></line>
             <line x1="3" y1="18" x2="21" y2="18"></line>
           </svg>
-          <NavNotificationBadge count={unreadNotificationCount} />
+          <NavNotificationBadge count={showAuthenticatedLinks ? unreadNotificationCount : 0} />
         </button>
       </div>
 
@@ -496,7 +520,7 @@ function Navbar({ user }) {
             </>
           )}
 
-          {!showAuthenticatedLinks && (
+          {showGuestLinks && (
             <>
               <Link
                 to="/login"
@@ -566,7 +590,119 @@ function Navbar({ user }) {
             </>
           )}
         </nav>
+        {showAuthenticatedLinks && (
+          <button
+            type="button"
+            onClick={() => setShowLogoutConfirm(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+              width: "100%",
+              marginTop: "16px",
+              padding: "13px 15px",
+              border: "none",
+              borderTop: "1px solid rgba(255,255,255,0.22)",
+              background: "transparent",
+              color: "rgba(255,255,255,0.9)",
+              fontSize: "0.95rem",
+              fontWeight: 600,
+              textAlign: "left",
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.background = "rgba(255,255,255,0.1)";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.background = "transparent";
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 17l5-5-5-5" />
+              <path d="M15 12H3" />
+              <path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" />
+            </svg>
+            Log Out
+          </button>
+        )}
       </div>
+      {showLogoutConfirm && (
+        <div
+          role="presentation"
+          onClick={() => {
+            if (!isLoggingOut) setShowLogoutConfirm(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            background: "rgba(0,0,0,0.5)",
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="user-logout-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: "380px",
+              padding: "24px 20px",
+              borderRadius: "12px",
+              background: "#fff",
+              textAlign: "center",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h2 id="user-logout-title" style={{ margin: "0 0 10px", color: "#263746", fontSize: "1.2rem" }}>
+              Confirm Logout
+            </h2>
+            <p style={{ margin: "0 0 20px", color: "#66717b" }}>
+              Are you sure you want to log out?
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "10px" }}>
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(false)}
+                disabled={isLoggingOut}
+                style={{
+                  padding: "9px 16px",
+                  border: "1px solid #d5dce2",
+                  borderRadius: "6px",
+                  background: "#fff",
+                  color: "#405364",
+                  fontWeight: 600,
+                  cursor: isLoggingOut ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmLogout}
+                disabled={isLoggingOut}
+                style={{
+                  padding: "9px 16px",
+                  border: "none",
+                  borderRadius: "6px",
+                  background: "#b94c4c",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: isLoggingOut ? "not-allowed" : "pointer",
+                  opacity: isLoggingOut ? 0.7 : 1,
+                }}
+              >
+                {isLoggingOut ? "Logging out..." : "Yes, Log Out"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

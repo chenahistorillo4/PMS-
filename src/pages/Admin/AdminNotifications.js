@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import { useNavigate } from "react-router-dom";
 import { auth, db } from "../../firebase";
 import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc, getDocs, deleteDoc } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
@@ -42,6 +43,7 @@ const ANNOUNCEMENT_TEMPLATES = [
 
 function AdminNotifications() {
   const NOTIFICATIONS_PER_PAGE = 10;
+  const navigate = useNavigate();
   const normalizeBoatName = (boatName) => (boatName || "").trim().toLowerCase();
   const [adminData, setAdminData] = useState(null);
   const [notifications, setNotifications] = useState([]);
@@ -161,6 +163,20 @@ function AdminNotifications() {
   const handleNotificationClick = (notif) => {
     if (isNotificationUnread(notif)) {
       markAsRead(notif.id);
+    }
+
+    if (notif.type === "new_booking_received") {
+      const params = new URLSearchParams();
+      if (notif.bookingId) params.set("bookingId", notif.bookingId);
+      navigate(
+        notif.bookingId
+          ? `/booking-management?${params.toString()}`
+          : "/booking-management"
+      );
+    } else if (notif.type === "refund_request_submitted" || notif.type === "admin_refund_request") {
+      const params = new URLSearchParams({ tab: "refunds" });
+      if (notif.refundId) params.set("refundId", notif.refundId);
+      navigate(`/payment-management?${params.toString()}`);
     }
   };
 
@@ -661,7 +677,12 @@ function AdminNotifications() {
                   position: "relative",
                   zIndex: 1,
                   transform: isDeleteRevealed ? `translateX(-${actionWidth}px)` : "translateX(0)",
-                  transition: gesture.current ? "none" : "transform 0.2s ease"
+                  transition: gesture.current ? "none" : "transform 0.2s ease",
+                  cursor: notif.type === "new_booking_received" ||
+                    notif.type === "refund_request_submitted" ||
+                    notif.type === "admin_refund_request"
+                    ? "pointer"
+                    : "default"
                 }}
                 onClick={() => handleNotificationClick(notif)}
                 onDoubleClick={() => revealDeleteActions(notif.id)}

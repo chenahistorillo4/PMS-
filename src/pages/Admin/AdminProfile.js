@@ -1,13 +1,11 @@
 import { useState, useEffect } from "react";
 import { auth, db } from "../../firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { updatePassword, reauthenticateWithCredential, EmailAuthProvider, signOut, updateEmail } from "firebase/auth";
-import { useNavigate } from "react-router-dom";
+import { updatePassword, reauthenticateWithCredential, EmailAuthProvider, updateEmail } from "firebase/auth";
 import AdminLayout from "./AdminLayout";
 import "./AdminProfile.css";
 
 function AdminProfile() {
-  const navigate = useNavigate();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [profile, setProfile] = useState({
     name: "",
@@ -32,7 +30,6 @@ function AdminProfile() {
   const [emailError, setEmailError] = useState("");
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
-  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   // Fetch profile data
   useEffect(() => {
@@ -314,24 +311,6 @@ function AdminProfile() {
     setPasswordError("");
   };
 
-  const handleLogout = async () => {
-    setShowLogoutModal(true);
-  };
-
-  const confirmLogoutAction = async () => {
-    setShowLogoutModal(false);
-    try {
-      await signOut(auth);
-      navigate("/login");
-    } catch (error) {
-      alert("Logout failed: " + error.message);
-    }
-  };
-
-  const cancelLogout = () => {
-    setShowLogoutModal(false);
-  };
-
   return (
     <AdminLayout active="profile">
       <div className={`admin-profile-page${isMobile ? " is-mobile" : ""}`}>
@@ -526,11 +505,6 @@ function AdminProfile() {
                   Remove
                 </button>
               )}
-              {isMobile && (
-                <button className="admin-profile-logout-button" onClick={handleLogout}>
-                  Log Out
-                </button>
-              )}
             </div>
             )}
             <p style={{
@@ -543,22 +517,27 @@ function AdminProfile() {
               {profile.name || "Admin"}
             </p>
             <p className="admin-profile-role">{profile.role || "Admin"}</p>
-            <div className="admin-profile-hero-actions">
-              {!isEditing && (
-                <button className="admin-profile-edit-button" onClick={() => setIsEditing(true)}>
-                  Edit Profile
-                </button>
-              )}
-              {(!isEditing || !isMobile) && (
-                <button className="admin-profile-logout-button" onClick={handleLogout}>
-                  Log Out
-                </button>
-              )}
-            </div>
           </div>
           <div className="admin-profile-info-grid">
           <section className="admin-profile-panel">
-            <h3 className="admin-profile-panel-title">Personal Information</h3>
+            <div className="admin-profile-panel-heading">
+              <h3 className="admin-profile-panel-title">
+                <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="M7 9h10M7 13h6" />
+                </svg>
+                User Information
+              </h3>
+              {!isEditing && (
+                <button className="admin-profile-edit-button" onClick={() => setIsEditing(true)}>
+                  <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                  </svg>
+                  Edit Profile
+                </button>
+              )}
+            </div>
           {/* Profile Fields */}
           <div className="admin-profile-fields" style={{
             display: "grid",
@@ -1266,120 +1245,6 @@ function AdminProfile() {
 
       </div>
 
-      {/* Logout Confirmation Modal */}
-      {showLogoutModal && (
-        <>
-          {/* Backdrop */}
-          <div 
-            style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: "rgba(0, 0, 0, 0.5)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 1000
-            }}
-            onClick={cancelLogout}
-          >
-            {/* Modal */}
-            <div 
-              style={{
-                background: "white",
-                padding: isMobile ? "20px 16px" : "40px 30px",
-                borderRadius: "12px",
-                boxShadow: "0 10px 40px rgba(0, 0, 0, 0.3)",
-                maxWidth: "400px",
-                width: "90%",
-                textAlign: "center"
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h2 style={{
-                fontSize: isMobile ? "1.15rem" : "1.5rem",
-                fontWeight: 800,
-                color: "#1a1a1a",
-                marginBottom: isMobile ? "8px" : "15px",
-                margin: isMobile ? "0 0 8px 0" : "0 0 15px 0"
-              }}>
-                Confirm Logout
-              </h2>
-              
-              <p style={{
-                fontSize: isMobile ? "0.85rem" : "1rem",
-                color: "#666",
-                marginBottom: isMobile ? "16px" : "30px",
-                margin: isMobile ? "0 0 16px 0" : "0 0 30px 0",
-                lineHeight: "1.5"
-              }}>
-                Are you sure you want to log out?
-              </p>
-
-              {/* Buttons */}
-              <div style={{
-                display: "flex",
-                gap: isMobile ? "8px" : "12px",
-                justifyContent: "center"
-              }}>
-                <button
-                  onClick={cancelLogout}
-                  style={{
-                    padding: isMobile ? "6px 20px" : "10px 30px",
-                    background: "#e0e0e0",
-                    color: "#333",
-                    border: "none",
-                    borderRadius: "6px",
-                    fontWeight: 600,
-                    fontSize: isMobile ? "0.8rem" : "1rem",
-                    cursor: "pointer",
-                    transition: "all 0.3s ease",
-                    minWidth: isMobile ? "80px" : "120px"
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.background = "#d0d0d0";
-                    e.target.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.1)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.background = "#e0e0e0";
-                    e.target.style.boxShadow = "none";
-                  }}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  onClick={confirmLogoutAction}
-                  style={{
-                    padding: isMobile ? "6px 20px" : "10px 30px",
-                    background: "#f44336",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "6px",
-                    fontWeight: 600,
-                    fontSize: isMobile ? "0.8rem" : "1rem",
-                    cursor: "pointer",
-                    transition: "all 0.3s ease",
-                    minWidth: isMobile ? "80px" : "120px"
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.background = "#da190b";
-                    e.target.style.boxShadow = "0 4px 12px rgba(244, 67, 54, 0.3)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.background = "#f44336";
-                    e.target.style.boxShadow = "none";
-                  }}
-                >
-                  Yes, Log Out
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
     </AdminLayout>
   );
 }

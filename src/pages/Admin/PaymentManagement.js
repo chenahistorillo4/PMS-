@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { db } from '../../firebase';
 import {
   doc,
   getDoc,
   collection,
-  addDoc,
   getDocs,
-  updateDoc,
   query,
   where,
   writeBatch,
@@ -17,7 +16,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { notifyPaymentSuccess, notifyPassengerRefundStatus } from '../../utils/notificationHelper';
 import { useAuthReloadKey, useAuthUser } from '../../hooks/useAuthUser';
 import { getStaffAccount } from '../../utils/staffAccount';
-import { checkPaymentExpiry } from '../../utils/paymentExpiryCheck';
+import { checkPaymentExpiry, isExpiredPayMongoQr } from '../../utils/paymentExpiryCheck';
 
 const getPaymentMethodLabel = (method, paymentMode) => {
   if (String(paymentMode || '').toLowerCase().replace(/[\s_-]/g, '') === 'paylater') {
@@ -32,9 +31,15 @@ const getPaymentMethodLabel = (method, paymentMode) => {
 };
 
 function PaymentManagement() {
+  const [searchParams] = useSearchParams();
+  const requestedRefundId = searchParams.get('refundId');
   const [adminData, setAdminData] = useState(null);
   const [payments, setPayments] = useState([]);
   const [refundRequests, setRefundRequests] = useState([]);
+  const [canManageRefunds, setCanManageRefunds] = useState(false);
+  const [activePaymentTab, setActivePaymentTab] = useState(
+    () => (searchParams.get('tab') === 'refunds' || requestedRefundId ? 'refunds' : 'payments')
+  );
   const [proofModal, setProofModal] = useState({
     isOpen: false,
     paymentId: null,
@@ -51,8 +56,24 @@ function PaymentManagement() {
   const [transactionNameSearch, setTransactionNameSearch] = useState('');
   const [routeOptions, setRouteOptions] = useState([]);
   const [isMobile, setIsMobile] = useState(false);
+  const [statusNow, setStatusNow] = useState(Date.now());
   const { user, authReady } = useAuthUser();
   const reloadKey = useAuthReloadKey();
+
+  useEffect(() => {
+    if (searchParams.get('tab') === 'refunds' || requestedRefundId) {
+      setActivePaymentTab('refunds');
+    }
+  }, [searchParams, requestedRefundId]);
+
+  useEffect(() => {
+    if (activePaymentTab !== 'refunds' || !requestedRefundId) return;
+    if (!refundRequests.some((refund) => refund.id === requestedRefundId)) return;
+
+    document
+      .getElementById(`refund-request-${requestedRefundId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activePaymentTab, refundRequests, requestedRefundId]);
 
   // Pagination logic
   const itemsPerPage = 10;
@@ -74,7 +95,11 @@ function PaymentManagement() {
         return false;
       }
       if (searchedTransactionStatus !== 'all') {
-        const status = payment.status === 'completed' ? 'confirmed' : payment.status || 'pending';
+        const status = isExpiredPayMongoQr(payment, statusNow)
+          ? 'cancelled'
+          : payment.status === 'completed'
+            ? 'confirmed'
+            : payment.status || 'pending';
         if (status !== searchedTransactionStatus) return false;
       }
       if (!searchedTransactionDate) return true;
@@ -96,6 +121,7 @@ function PaymentManagement() {
   const endIndex = startIndex + itemsPerPage;
   const paginatedPayments = transactionPayments.slice(startIndex, endIndex);
   const getPaymentStatusLabel = (payment) => {
+    if (isExpiredPayMongoQr(payment, statusNow)) return 'Cancelled';
     if (payment.paymongoStatus === 'paid' && payment.status === 'pending') {
       return 'Paid - Awaiting Port Confirmation';
     }
@@ -117,10 +143,16 @@ function PaymentManagement() {
   }, []);
 
   useEffect(() => {
+    const intervalId = setInterval(() => setStatusNow(Date.now()), 15000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
     if (!authReady) return;
 
     let isCurrent = true;
     let unsubscribePayments;
+    let unsubscribeRefundRequests;
     let paymentExpiryInterval;
     let latestPaymentDocs = [];
     const expiryChecksInProgress = new Set();
@@ -158,6 +190,7 @@ function PaymentManagement() {
         setAdminData(null);
         setPayments([]);
         setRefundRequests([]);
+        setCanManageRefunds(false);
         setRouteOptions([]);
         return;
       }
@@ -170,6 +203,9 @@ function PaymentManagement() {
           if (account) {
             console.log('Staff account data found:', account.data);
             setAdminData(account.data);
+            const isAdminAccount = account.collectionName === 'admins';
+            setCanManageRefunds(isAdminAccount);
+            if (!isAdminAccount) setActivePaymentTab('payments');
 
             // Fetch payments for this boat
             const boatName = account.data.assignedBoat;
@@ -218,6 +254,10 @@ function PaymentManagement() {
                         booking?.customerName ||
                         booking?.bookedByName ||
                         '',
+                      userId: payment.userId || booking?.userId || null,
+                      tripId: payment.tripId || booking?.tripId || null,
+                      tripName: payment.tripName || booking?.tripName || payment.trip || '',
+                      referenceCode: payment.referenceCode || booking?.referenceCode || '',
                       routeDirection:
                         payment.routeDirection ||
                         booking?.routeDirection ||
@@ -237,19 +277,29 @@ function PaymentManagement() {
             );
             paymentExpiryInterval = setInterval(checkExpiredPayments, 15000);
 
-            const refundsQuery = query(
-              collection(db, 'refund_requests'),
-              where('boat', '==', boatName)
-            );
-            const refundsSnap = await getDocs(refundsQuery);
-            const refundsList = refundsSnap.docs
-              .map((refundDoc) => ({ id: refundDoc.id, ...refundDoc.data() }))
-              .sort((a, b) => {
-                const aTime = a.createdAt?.toDate?.() || a.createdAt || 0;
-                const bTime = b.createdAt?.toDate?.() || b.createdAt || 0;
-                return bTime - aTime;
-              });
-            setRefundRequests(refundsList);
+            if (isAdminAccount) {
+              const refundsQuery = query(
+                collection(db, 'refund_requests'),
+                where('boat', '==', boatName)
+              );
+              unsubscribeRefundRequests = onSnapshot(
+                refundsQuery,
+                (refundsSnap) => {
+                  if (!isCurrent) return;
+                  const refundsList = refundsSnap.docs
+                    .map((refundDoc) => ({ id: refundDoc.id, ...refundDoc.data() }))
+                    .sort((a, b) => {
+                      const aTime = a.createdAt?.toDate?.() || a.createdAt || 0;
+                      const bTime = b.createdAt?.toDate?.() || b.createdAt || 0;
+                      return bTime - aTime;
+                    });
+                  setRefundRequests(refundsList);
+                },
+                (error) => console.error('Error listening for refund requests:', error)
+              );
+            } else {
+              setRefundRequests([]);
+            }
           } else {
             console.warn('⚠️ No admin data found for user:', user.uid);
           }
@@ -265,6 +315,7 @@ function PaymentManagement() {
       isCurrent = false;
       clearInterval(paymentExpiryInterval);
       unsubscribePayments?.();
+      unsubscribeRefundRequests?.();
     };
   }, [authReady, user, reloadKey]);
 
@@ -318,6 +369,21 @@ function PaymentManagement() {
         const batch = writeBatch(db);
         batch.update(paymentRef, { status: 'cancelled' });
         batch.update(doc(db, 'bookings', payment.bookingId), { status: 'cancelled' });
+        if (payment.userId) {
+          batch.set(doc(db, 'notifications', `user_booking_cancelled_${paymentId}`), {
+            userId: payment.userId,
+            type: 'booking_cancelled',
+            title: 'Booking Cancelled',
+            message: `Your booking${payment.referenceCode ? ` (${payment.referenceCode})` : ''} for ${
+              payment.tripName || 'your trip'
+            } was cancelled because payment was not received.`,
+            recipientType: 'user',
+            bookingId: payment.bookingId,
+            tripId: payment.tripId || null,
+            isRead: false,
+            createdAt: new Date(),
+          });
+        }
         await batch.commit();
 
         setPayments(payments.map((p) => (p.id === paymentId ? { ...p, status: 'cancelled' } : p)));
@@ -339,31 +405,38 @@ function PaymentManagement() {
         : window.prompt('Optional reason for declining the refund:', '') || '';
 
     try {
-      await updateDoc(doc(db, 'refund_requests', refundId), {
+      const notificationId = `refund_status_${refundId}_${decision}`;
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'refund_requests', refundId), {
         status: decision,
         adminNote: note,
         processedAt: new Date(),
         processedBy: adminData?.email || user?.email || 'admin',
       });
-
-      await addDoc(collection(db, 'notifications'), {
+      batch.set(doc(db, 'notifications', notificationId), {
         userId: refund.userId,
+        boat: refund.boat || adminData?.assignedBoat,
         type: 'refund_status',
         title: decision === 'approved' ? 'Refund Approved' : 'Refund Declined',
         message:
           decision === 'approved'
             ? `Your refund request for ${refund.tripName || 'your trip'} was approved.`
             : `Your refund request for ${refund.tripName || 'your trip'} was declined.`,
+        refundId,
+        bookingId: refund.bookingId,
+        status: decision,
         recipientType: 'user',
         isRead: false,
         createdAt: new Date(),
       });
+      await batch.commit();
 
       notifyPassengerRefundStatus({
         refund: { ...refund, adminNote: note },
         status: decision,
         userEmail: refund.userEmail,
-        customerName: refund.userEmail,
+        userPhone: refund.userPhone,
+        customerName: refund.passengerName || refund.userEmail,
       }).catch((error) => console.warn('Refund status notification failed:', error));
 
       setRefundRequests((current) =>
@@ -392,12 +465,28 @@ function PaymentManagement() {
 
     try {
       const processedAt = new Date();
-      await updateDoc(doc(db, 'refund_requests', refundId), {
+      const notificationId = `refund_status_${refundId}_refunded`;
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'refund_requests', refundId), {
         status: 'refunded',
         refundNote: note,
         refundedAt: processedAt,
         processedBy: adminData?.email || user?.email || 'admin',
       });
+      batch.set(doc(db, 'notifications', notificationId), {
+        userId: refund.userId,
+        boat: refund.boat || adminData?.assignedBoat,
+        type: 'refund_status',
+        title: 'Refund Sent',
+        message: `Your refund for ${refund.tripName || 'your trip'} has been marked as sent.`,
+        refundId,
+        bookingId: refund.bookingId,
+        status: 'refunded',
+        recipientType: 'user',
+        isRead: false,
+        createdAt: processedAt,
+      });
+      await batch.commit();
 
       setRefundRequests((current) =>
         current.map((item) =>
@@ -409,26 +498,12 @@ function PaymentManagement() {
 
       let passengerNotified = true;
       try {
-        await addDoc(collection(db, 'notifications'), {
-          userId: refund.userId,
-          type: 'refund_status',
-          title: 'Refund Sent',
-          message: `Your refund for ${refund.tripName || 'your trip'} has been marked as sent.`,
-          recipientType: 'user',
-          isRead: false,
-          createdAt: processedAt,
-        });
-      } catch (notificationError) {
-        passengerNotified = false;
-        console.error('Refund completion app notification failed:', notificationError);
-      }
-
-      try {
         const emailResult = await notifyPassengerRefundStatus({
           refund: { ...refund, refundNote: note },
           status: 'refunded',
           userEmail: refund.userEmail,
-          customerName: refund.userEmail,
+          userPhone: refund.userPhone,
+          customerName: refund.passengerName || refund.userEmail,
         });
         if (
           emailResult?.ok === false ||
@@ -456,45 +531,102 @@ function PaymentManagement() {
 
   return (
     <AdminLayout active="payment">
-      {refundRequests.some((refund) => ['pending', 'approved'].includes(refund.status)) && (
+      <h2
+        style={{
+          fontWeight: '800',
+          fontSize: isMobile ? '1.1rem' : '1.3rem',
+          color: '#1a1a1a',
+          margin: '0 0 12px',
+          letterSpacing: '0.3px',
+        }}
+      >
+        Payment Management
+      </h2>
+      {adminData && (
+        <p style={{ fontSize: isMobile ? '0.8rem' : '0.95rem', color: '#666', marginBottom: '18px' }}>
+          Payment and refund management for <strong>{adminData.assignedBoat}</strong>
+        </p>
+      )}
+      <div
+        role="tablist"
+        aria-label="Payment management sections"
+        style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid #dce5ed' }}
+      >
+        {[
+          { id: 'payments', label: 'Payment Transactions' },
+          ...(canManageRefunds
+            ? [{ id: 'refunds', label: `Refund Requests${refundRequests.length ? ` (${refundRequests.length})` : ''}` }]
+            : []),
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activePaymentTab === tab.id}
+            onClick={() => setActivePaymentTab(tab.id)}
+            style={{
+              padding: isMobile ? '9px 11px' : '11px 18px',
+              border: 'none',
+              borderBottom: activePaymentTab === tab.id ? '3px solid #1976d2' : '3px solid transparent',
+              background: 'transparent',
+              color: activePaymentTab === tab.id ? '#145b9a' : '#66798b',
+              fontSize: isMobile ? '0.78rem' : '0.92rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {activePaymentTab === 'refunds' ? (
         <div
           style={{
-            background: '#fff8e1',
-            border: '1px solid #ffe082',
-            borderRadius: '10px',
-            padding: '16px',
-            marginBottom: '20px',
+            background: '#fff',
+            border: '1px solid #e0e8f0',
+            borderRadius: '12px',
+            padding: isMobile ? '14px' : '22px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
           }}
         >
-          <h3 style={{ margin: '0 0 12px', color: '#5d4037', fontSize: '1.05rem' }}>
+          <h3 style={{ margin: '0 0 16px', color: '#1e3a5f', fontSize: '1.05rem' }}>
             Refund Requests
           </h3>
-          {refundRequests
-            .filter((refund) => ['pending', 'approved'].includes(refund.status))
-            .map((refund) => (
+          {refundRequests.length ? (
+            refundRequests.map((refund) => (
               <div
                 key={refund.id}
+                id={`refund-request-${refund.id}`}
                 style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '12px',
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) auto',
+                  gap: '14px',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 0',
-                  borderTop: '1px solid #ffe082',
+                  padding: '16px 0',
+                  borderTop: '1px solid #e5ebf0',
+                  background: refund.id === requestedRefundId ? '#fff8e1' : 'transparent',
+                  outline: refund.id === requestedRefundId ? '2px solid #ffca28' : 'none',
+                  outlineOffset: refund.id === requestedRefundId ? '4px' : undefined,
                 }}
               >
-                <div style={{ minWidth: '220px' }}>
-                  <div style={{ fontWeight: 700 }}>{refund.tripName || 'Trip refund'}</div>
-                  <div style={{ color: '#666', fontSize: '0.9rem' }}>
-                    {refund.userEmail} · ₱{Number(refund.amount || 0).toFixed(2)}
+                <div style={{ minWidth: 0, display: 'grid', gap: '5px' }}>
+                  <div style={{ fontWeight: 700, color: '#23384d' }}>
+                    {refund.passengerName || refund.userEmail || 'Passenger'} · {refund.tripName || 'Trip refund'}
                   </div>
-                  <div style={{ color: '#666', fontSize: '0.85rem' }}>{refund.reason}</div>
-                  <div style={{ color: '#5d4037', fontSize: '0.85rem', fontWeight: 700 }}>
-                    Status: {refund.status === 'approved' ? 'Approved — send refund manually' : 'Pending'}
+                  <div style={{ color: '#596b7b', fontSize: '0.88rem' }}>
+                    Booking ID: <strong>{refund.bookingId}</strong> · Refund: <strong>₱{Number(refund.amount || 0).toFixed(2)}</strong>
                   </div>
+                  <div style={{ color: '#596b7b', fontSize: '0.88rem' }}>
+                    GCash: {refund.gcashAccountName || 'Not provided'} · {refund.gcashNumber || 'Not provided'}
+                  </div>
+                  <div style={{ color: '#596b7b', fontSize: '0.88rem' }}>Reason: {refund.reason}</div>
+                  <div style={{ color: '#5d4037', fontSize: '0.85rem', fontWeight: 700, textTransform: 'capitalize' }}>
+                    Status: {refund.status === 'approved' ? 'Approved — send refund manually' : refund.status}
+                  </div>
+                  {refund.adminNote && <div style={{ color: '#66798b', fontSize: '0.85rem' }}>Admin note: {refund.adminNote}</div>}
+                  {refund.refundNote && <div style={{ color: '#66798b', fontSize: '0.85rem' }}>Refund reference: {refund.refundNote}</div>}
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   {refund.status === 'pending' ? (
                     <>
                       <button
@@ -505,51 +637,28 @@ function PaymentManagement() {
                       </button>
                       <button
                         className="btn btn-outline-danger btn-sm"
-                        onClick={() => handleRefundDecision(refund.id, 'rejected')}
+                        onClick={() => handleRefundDecision(refund.id, 'declined')}
                       >
                         Decline
                       </button>
                     </>
-                  ) : (
+                  ) : refund.status === 'approved' ? (
                     <button
                       className="btn btn-primary btn-sm"
                       onClick={() => handleMarkRefunded(refund.id)}
                     >
                       Mark as Refunded
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
-            ))}
+            ))
+          ) : (
+            <p style={{ margin: 0, color: '#718096' }}>No refund requests yet.</p>
+          )}
         </div>
-      )}
-      <h2
-        style={{
-          fontWeight: '800',
-          fontSize: isMobile ? '1.1rem' : '1.3rem',
-          color: '#1a1a1a',
-          marginBottom: isMobile ? '12px' : '25px',
-          marginTop: '0',
-          letterSpacing: '0.3px',
-        }}
-      >
-        Payment Management
-      </h2>
-
-      {adminData && (
-        <p
-          style={{
-            fontSize: isMobile ? '0.8rem' : '0.95rem',
-            color: '#666',
-            marginBottom: isMobile ? '18px' : '30px',
-            fontWeight: '500',
-            lineHeight: isMobile ? '1.4' : '1.5',
-          }}
-        >
-          Payment transactions overview for <strong>{adminData.assignedBoat}</strong>
-        </p>
-      )}
-
+      ) : (
+      <>
       {/* Payment transaction search */}
       <div
         style={{
@@ -839,8 +948,9 @@ function PaymentManagement() {
             <thead>
               <tr
                 style={{
-                  background: 'linear-gradient(135deg, #2196f3 0%, #1976d2 100%)',
-                  color: 'white',
+                  background: '#e9eef2',
+                  color: '#3e5261',
+                  borderBottom: '1px solid #d6dfe6',
                 }}
               >
                 <th
@@ -920,10 +1030,25 @@ function PaymentManagement() {
                 paginatedPayments.map((payment, index) => {
                   const createdDate = new Date(payment.createdAt?.toDate?.() || payment.createdAt);
                   const dateStr = createdDate.toLocaleDateString();
+                  const paymentExpired = isExpiredPayMongoQr(payment, statusNow);
                   const timeStr = createdDate.toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
                   });
+                  const methodColors = payment.method === 'GCash'
+                    ? { color: '#1769aa' }
+                    : payment.method === 'Pay Later'
+                    ? { color: '#a35b12' }
+                    : payment.method === 'PayMaya'
+                    ? { color: '#65537a' }
+                    : { color: '#475569' };
+                  const statusColors = paymentExpired || payment.status === 'cancelled'
+                    ? { background: '#f8eeee', color: '#9a4d49', border: '#ead4d2' }
+                    : payment.status === 'completed'
+                    ? { background: '#eaf4ef', color: '#3d7058', border: '#d6e8dd' }
+                    : payment.paymongoStatus === 'paid'
+                    ? { background: '#eaf2f8', color: '#315b7d', border: '#d5e1eb' }
+                    : { background: '#fff5e8', color: '#8b6840', border: '#eadfc9' };
 
                   return (
                     <tr
@@ -989,15 +1114,7 @@ function PaymentManagement() {
                       >
                         <span
                           style={{
-                            background:
-                              payment.method === 'GCash'
-                                ? '#00D4FF'
-                                : payment.method === 'PayMaya'
-                                ? '#1F3A93'
-                                : '#FF6B35',
-                            color: 'white',
-                            padding: isMobile ? '3px 5px' : '4px 8px',
-                            borderRadius: '4px',
+                            color: methodColors.color,
                             fontSize: isMobile ? '0.65rem' : '0.75rem',
                             fontWeight: 700,
                             textTransform: 'uppercase',
@@ -1014,17 +1131,11 @@ function PaymentManagement() {
                       >
                         <span
                           style={{
-                            background:
-                              payment.status === 'pending'
-                                ? payment.paymongoStatus === 'paid'
-                                  ? '#ef6c00'
-                                  : '#ff9800'
-                                : payment.status === 'completed'
-                                ? '#4caf50'
-                                : '#f44336',
-                            color: 'white',
+                            background: statusColors.background,
+                            color: statusColors.color,
+                            border: `1px solid ${statusColors.border}`,
                             padding: isMobile ? '3px 6px' : '4px 10px',
-                            borderRadius: '4px',
+                            borderRadius: '6px',
                             fontSize: isMobile ? '0.65rem' : '0.75rem',
                             fontWeight: 700,
                             textTransform: 'uppercase',
@@ -1039,7 +1150,7 @@ function PaymentManagement() {
                           textAlign: 'center',
                         }}
                       >
-                        {payment.status === 'pending' ? (
+                        {payment.status === 'pending' && !paymentExpired ? (
                           <div
                             style={{
                               display: 'flex',
@@ -1310,6 +1421,8 @@ function PaymentManagement() {
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* QR Code Modal */}
       {qrModal.isOpen && (

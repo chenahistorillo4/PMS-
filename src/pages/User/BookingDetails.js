@@ -10,8 +10,10 @@ import {
   doc,
   getDoc,
   updateDoc,
+  onSnapshot,
 } from 'firebase/firestore';
 import { formatTime12Hour } from '../../utils/timeFormatter';
+import { isTripDepartureInPast } from '../../utils/tripSchedule';
 import {
   createQrPhCheckout,
   isPayMongoEnabled,
@@ -26,6 +28,20 @@ import {
   getPromoReservationCounts,
 } from '../../utils/promotionHelpers';
 import { notifyNewBookingReceived } from '../../utils/notificationHelper';
+import {
+  comparePassengerNames,
+  extractDiscountIdDetails,
+  getDiscountIdAdditionalFields,
+  getMissingDiscountIdDetails,
+  hasReadableDiscountIdDetails,
+  isDiscountIdEligible,
+  identifyDiscountCategoryFromOcr,
+} from '../../utils/discountIdOcr';
+import {
+  calculateCargoTotal,
+  createCargoBookingSnapshot,
+  isValidCargoQuantity,
+} from '../../utils/cargoPricing';
 
 // Generate a unique reference code
 const generateReferenceCode = () => {
@@ -39,6 +55,45 @@ const getPassengerDiscountRate = (discounts, type) => {
     (discountType) => discountType.toLowerCase() === String(type).toLowerCase()
   );
   return matchingType ? Number(discounts[matchingType]) || 0 : 0;
+};
+
+const getDiscountCategoryFromType = (discountType) => {
+  const normalizedType = String(discountType || '').toLowerCase();
+  if (normalizedType.includes('student')) return 'student';
+  if (normalizedType.includes('senior') || normalizedType.includes('osca')) return 'senior';
+  if (normalizedType.includes('pwd') || normalizedType.includes('disability')) return 'pwd';
+  return null;
+};
+
+const normalizeIdValue = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const stopIdOcrWorker = (workerRef) => {
+  const worker = workerRef.current;
+  workerRef.current = null;
+  if (worker) {
+    worker.terminate().catch((error) =>
+      console.warn('Could not stop the ID OCR worker:', error)
+    );
+  }
+};
+
+const createEnhancedIdImage = async (file) => {
+  const imageBitmap = await createImageBitmap(file);
+  const scale = Math.min(2, 3000 / imageBitmap.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(imageBitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(imageBitmap.height * scale));
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    imageBitmap.close();
+    throw new Error('Could not prepare the ID image for OCR.');
+  }
+
+  context.filter = 'grayscale(1) contrast(1.35)';
+  context.drawImage(imageBitmap, 0, 0, canvas.width, canvas.height);
+  imageBitmap.close();
+  return canvas;
 };
 
 function BookingDetails(props) {
@@ -59,34 +114,23 @@ function BookingDetails(props) {
     userId = auth.currentUser.uid;
   }
 
-  const isTripDateInPast = (tripDate) => {
-    if (!tripDate) return false;
-
-    const parsedDate = tripDate?.toDate ? tripDate.toDate() : new Date(String(tripDate));
-    if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
-      return false;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const tripDay = new Date(parsedDate);
-    tripDay.setHours(0, 0, 0, 0);
-
-    return tripDay < today;
-  };
-
   const [form, setForm] = useState({
     bookingType: 'passenger_cargo',
     customerName: '',
-    cargoType: '',
-    cargoWeight: '',
+    cargoId: '',
+    cargoQuantity: '',
     userType: userType || 'regular',
     payment: tripUsesPayLater ? 'Pay Later' : '',
     idProof: null,
     idProofBase64: null,
     idPreview: null,
+    idVerificationStatus: 'not_required',
+    idVerificationAttempts: 0,
+    idDetails: null,
+    idAdditionalInfo: { fullName: '', idNumber: '', issuer: '' },
   });
+  const [registeredPassengerName, setRegisteredPassengerName] = useState('');
+  const [isRegisteredNameLoaded, setIsRegisteredNameLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [bookingId, setBookingId] = useState(null);
   const [availablePaymentMethods, setAvailablePaymentMethods] = useState([]);
@@ -96,6 +140,8 @@ function BookingDetails(props) {
   const [paymentProofBase64, setPaymentProofBase64] = useState(null);
   const [paymentProofPreview, setPaymentProofPreview] = useState(null);
   const [boatDiscounts, setBoatDiscounts] = useState({});
+  const [cargoTypes, setCargoTypes] = useState([]);
+  const [cargoCatalogError, setCargoCatalogError] = useState('');
   const [boatPromos, setBoatPromos] = useState([]);
   const [promoReservationCounts, setPromoReservationCounts] = useState({});
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -103,6 +149,8 @@ function BookingDetails(props) {
   const paymentAutoSelectedRef = useRef(false);
   const idProofInputRef = useRef(null);
   const idProofReaderRef = useRef(null);
+  const idOcrWorkerRef = useRef(null);
+  const idOcrRequestRef = useRef(0);
   const usesPayMongoGcash = isPayMongoGcash(form.payment);
   const isPayLater = form.payment === 'Pay Later';
 
@@ -115,15 +163,55 @@ function BookingDetails(props) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const computeCargoPrice = (weight) => {
-    const w = parseFloat(weight);
-    const cargoRate = parseFloat(trip?.cargoPerKilo || 20);
-    return isNaN(w) ? 0 : w * cargoRate;
-  };
-  const computeDiscountAmount = (basePrice, type) => {
-    const rate = getPassengerDiscountRate(boatDiscounts, type);
-    return basePrice * rate;
-  };
+  useEffect(() => {
+    let isCurrent = true;
+    setIsRegisteredNameLoaded(false);
+
+    const fetchRegisteredName = async () => {
+      try {
+        if (!userId) {
+          setRegisteredPassengerName(auth.currentUser?.displayName || '');
+          return;
+        }
+
+        const userSnapshot = await getDoc(doc(db, 'users', userId));
+        if (!isCurrent) return;
+
+        const userData = userSnapshot.exists() ? userSnapshot.data() : {};
+        setRegisteredPassengerName(
+          userData.fullName ||
+            userData.name ||
+            userData.displayName ||
+            auth.currentUser?.displayName ||
+            ''
+        );
+      } catch (error) {
+        console.error('Error fetching registered passenger name:', error);
+        if (isCurrent) {
+          setRegisteredPassengerName(auth.currentUser?.displayName || '');
+        }
+      } finally {
+        if (isCurrent) setIsRegisteredNameLoaded(true);
+      }
+    };
+
+    fetchRegisteredName();
+    return () => {
+      isCurrent = false;
+    };
+  }, [userId]);
+
+  useEffect(
+    () => () => {
+      idOcrRequestRef.current += 1;
+      idProofReaderRef.current?.abort();
+      idProofReaderRef.current = null;
+      stopIdOcrWorker(idOcrWorkerRef);
+    },
+    []
+  );
+
+  const selectedCargo = cargoTypes.find((cargo) => cargo.id === form.cargoId) || null;
   const passengerDiscountTypes = Object.entries(boatDiscounts).filter(
     ([type, rate]) =>
       type.toLowerCase() !== 'regular' &&
@@ -131,12 +219,19 @@ function BookingDetails(props) {
       Number(rate) > 0 &&
       Number(rate) <= 1
   );
+  const idAdditionalFields = getDiscountIdAdditionalFields(form.userType);
+  const isIdAdditionalInfoComplete = idAdditionalFields.every((field) =>
+    String(form.idAdditionalInfo[field.key] || '').trim()
+  );
   // Price calculations
-  const cargoPrice =
-    form.bookingType === 'passenger_only' ? 0 : computeCargoPrice(form.cargoWeight);
+  const cargoPrice = form.bookingType === 'passenger_only' || !selectedCargo
+    ? 0
+    : calculateCargoTotal(selectedCargo.price, Number(form.cargoQuantity) || 0, selectedCargo.pricingBasis);
 
   const activePromo = getActivePromo(boatPromos, promoReservationCounts);
   let basePrice, discountRate, passengerDiscountAmount, promoDiscountAmount, discountAmount, finalPrice;
+  const discountVerified =
+    form.userType !== 'regular' && form.idVerificationStatus === 'verified';
 
   if (form.bookingType === 'cargo_only') {
     // Cargo-only: only charge cargo fee, no passenger base price
@@ -151,11 +246,10 @@ function BookingDetails(props) {
     basePrice =
       parseFloat(trip?.price || 0) +
       (form.bookingType === 'passenger_cargo' ? cargoPrice : 0);
-    discountRate = getPassengerDiscountRate(boatDiscounts, form.userType);
-    passengerDiscountAmount = computeDiscountAmount(
-      parseFloat(trip?.price || 0),
-      form.userType
-    );
+    discountRate = discountVerified
+      ? getPassengerDiscountRate(boatDiscounts, form.userType)
+      : 0;
+    passengerDiscountAmount = parseFloat(trip?.price || 0) * discountRate;
     promoDiscountAmount = calculatePromoDiscount(basePrice - passengerDiscountAmount, activePromo);
     discountAmount = passengerDiscountAmount + promoDiscountAmount;
     finalPrice = Math.max(0, basePrice - discountAmount);
@@ -175,6 +269,31 @@ function BookingDetails(props) {
   // Payment confirmation will come from admin via PaymentManagement
 
   // Fetch boat discounts from database
+  useEffect(() => {
+    setCargoCatalogError('');
+    setCargoTypes([]);
+    if (!trip?.boat) return undefined;
+
+    return onSnapshot(
+      query(
+        collection(db, 'cargoTypes'),
+        where('boat', '==', trip.boat)
+      ),
+      (snapshot) => {
+        setCargoTypes(snapshot.docs
+          .map((cargoDoc) => ({ id: cargoDoc.id, ...cargoDoc.data() }))
+          .filter((cargo) => cargo.status === 'active')
+          .filter((cargo) => Number.isFinite(Number(cargo.price)) && Number(cargo.price) > 0)
+          .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))));
+      },
+      (error) => {
+        console.error('Error loading available cargo types:', error);
+        setCargoCatalogError('Cargo pricing is temporarily unavailable. Please try again later.');
+        setCargoTypes([]);
+      }
+    );
+  }, [trip?.boat]);
+
   useEffect(() => {
     const fetchBoatDiscounts = async () => {
       try {
@@ -328,15 +447,54 @@ function BookingDetails(props) {
         console.log(
           `User type "${form.userType}" not available for boat "${trip.boat}". Resetting to "regular".`
         );
-        setForm((prev) => ({ ...prev, userType: 'regular' }));
+        idOcrRequestRef.current += 1;
+        stopIdOcrWorker(idOcrWorkerRef);
+        idProofReaderRef.current?.abort();
+        idProofReaderRef.current = null;
+        if (form.idPreview) URL.revokeObjectURL(form.idPreview);
+        if (idProofInputRef.current) idProofInputRef.current.value = '';
+        setForm((prev) => ({
+          ...prev,
+          userType: 'regular',
+          idProof: null,
+          idProofBase64: null,
+          idPreview: null,
+          idVerificationStatus: 'not_required',
+          idVerificationAttempts: 0,
+          idDetails: null,
+        }));
       }
     }
-  }, [boatDiscounts, form.userType, trip?.boat]);
+  }, [boatDiscounts, form.userType, form.idPreview, trip?.boat]);
 
   const handleChange = (e) => {
     if (e.target.name === 'idProof') {
       const file = e.target.files[0];
       if (file) {
+        if (!isIdAdditionalInfoComplete) {
+          alert('Please complete the ID details before uploading your ID.');
+          e.target.value = '';
+          return;
+        }
+
+        if (!file.type.startsWith('image/')) {
+          alert('Please upload an image of your ID.');
+          e.target.value = '';
+          return;
+        }
+
+        if (form.idVerificationAttempts >= 2) {
+          alert('The ID could not be verified after two attempts. Regular fare will apply.');
+          e.target.value = '';
+          return;
+        }
+
+        idOcrRequestRef.current += 1;
+        const requestId = idOcrRequestRef.current;
+        const attemptNumber = form.idVerificationAttempts + 1;
+        const discountType = form.userType;
+        const providedInfo = { ...form.idAdditionalInfo };
+        stopIdOcrWorker(idOcrWorkerRef);
         idProofReaderRef.current?.abort();
         if (form.idPreview) URL.revokeObjectURL(form.idPreview);
         const preview = URL.createObjectURL(file);
@@ -348,12 +506,171 @@ function BookingDetails(props) {
           setForm((current) => ({
             ...current,
             idProof: file,
-            idProofBase64: reader.result, // Base64 string
+            idProofBase64: reader.result,
             idPreview: preview,
           }));
         };
         reader.readAsDataURL(file);
+
+        e.target.value = '';
+        setForm((current) => ({
+          ...current,
+          idVerificationStatus: 'processing',
+          idVerificationAttempts: attemptNumber,
+        }));
+
+        const verifyId = async () => {
+          let worker;
+          try {
+            const { createWorker } = await import('tesseract.js');
+            worker = await createWorker('eng');
+            if (requestId !== idOcrRequestRef.current) return;
+            idOcrWorkerRef.current = worker;
+            let result = await worker.recognize(file);
+            if (requestId !== idOcrRequestRef.current) return;
+
+            let ocrText = result.data.text;
+            let idDetails = extractDiscountIdDetails(ocrText);
+            if (!hasReadableDiscountIdDetails(idDetails, discountType)) {
+              try {
+                const enhancedImage = await createEnhancedIdImage(file);
+                result = await worker.recognize(enhancedImage);
+                if (requestId !== idOcrRequestRef.current) return;
+                ocrText = `${ocrText}\n${result.data.text}`;
+                idDetails = extractDiscountIdDetails(ocrText);
+              } catch (error) {
+                console.warn('Could not retry OCR with an enhanced ID image:', error);
+              }
+            }
+
+            const missingDetails = getMissingDiscountIdDetails(idDetails, discountType);
+            if (!hasReadableDiscountIdDetails(idDetails, discountType)) {
+              const missingMessage = `Could not read the ${missingDetails.join(', ')} from the ID.`;
+              const failedMessage =
+                attemptNumber === 1
+                  ? `${missingMessage} Please upload a clearer image.`
+                  : `${missingMessage} Verification failed after two attempts. Regular fare will apply.`;
+              setForm((current) => ({
+                ...current,
+                userType: attemptNumber === 2 ? 'regular' : current.userType,
+                idProof: null,
+                idProofBase64: null,
+                idPreview: null,
+                idVerificationStatus: 'failed',
+                idDetails: {
+                  ...idDetails,
+                  nameMatch: null,
+                  registeredName: registeredPassengerName || '',
+                },
+              }));
+              alert(failedMessage);
+              idProofReaderRef.current?.abort();
+              idProofReaderRef.current = null;
+              URL.revokeObjectURL(preview);
+              return;
+            }
+
+            let profileName = registeredPassengerName;
+            if (!isRegisteredNameLoaded && userId) {
+              try {
+                const userSnapshot = await getDoc(doc(db, 'users', userId));
+                const userData = userSnapshot.exists() ? userSnapshot.data() : {};
+                profileName =
+                  userData.fullName ||
+                  userData.name ||
+                  userData.displayName ||
+                  auth.currentUser?.displayName ||
+                  '';
+                setRegisteredPassengerName(profileName);
+              } catch (error) {
+                console.error('Error fetching registered passenger name for ID check:', error);
+              }
+            }
+
+            const nameMatch = comparePassengerNames(idDetails.name, profileName);
+            idDetails = {
+              ...idDetails,
+              nameMatch,
+              registeredName: profileName,
+            };
+            const detectedCategory = identifyDiscountCategoryFromOcr(ocrText);
+            idDetails.detectedCategory = detectedCategory;
+            idDetails.providedNameMatch = comparePassengerNames(
+              idDetails.name,
+              providedInfo.fullName
+            );
+            if (isDiscountIdEligible(idDetails, providedInfo, discountType)) {
+              setForm((current) => ({
+                ...current,
+                idVerificationStatus: 'verified',
+                idDetails,
+              }));
+              alert(`${discountType} ID verified. The applicable discount has been applied.`);
+              return;
+            }
+
+            const reviewReason =
+              detectedCategory && detectedCategory !== getDiscountCategoryFromType(discountType)
+                ? `The ID appears to be ${detectedCategory}, not ${discountType}.`
+                : nameMatch === false
+                ? 'The name on the ID does not match the registered passenger name.'
+                : idDetails.providedNameMatch === false
+                ? 'The name entered does not match the name on the ID.'
+                : normalizeIdValue(idDetails.idNumber) !== normalizeIdValue(providedInfo.idNumber)
+                ? 'The ID number entered does not match the ID.'
+                : 'The entered ID details could not be matched to the ID.';
+            setForm((current) => ({
+              ...current,
+              userType: attemptNumber === 2 ? 'regular' : current.userType,
+              idProof: null,
+              idProofBase64: null,
+              idPreview: null,
+              idVerificationStatus: 'failed',
+              idDetails,
+            }));
+            alert(
+              attemptNumber === 1
+                ? `${reviewReason} Please upload another ID.`
+                : `${reviewReason} Verification failed after two attempts. Regular fare will apply.`
+            );
+            idProofReaderRef.current?.abort();
+            idProofReaderRef.current = null;
+            URL.revokeObjectURL(preview);
+          } catch (error) {
+            if (requestId !== idOcrRequestRef.current) return;
+            console.error('Error reading uploaded ID with OCR:', error);
+            const failedMessage =
+              attemptNumber === 1
+                ? 'OCR could not process the ID image. Please upload a clearer image once more.'
+                : 'OCR could not process the ID image after two attempts, so regular fare will apply.';
+            setForm((current) => ({
+              ...current,
+              userType: attemptNumber === 2 ? 'regular' : current.userType,
+              idProof: null,
+              idProofBase64: null,
+              idPreview: null,
+              idVerificationStatus: 'failed',
+              idDetails: null,
+            }));
+            alert(failedMessage);
+            idProofReaderRef.current?.abort();
+            idProofReaderRef.current = null;
+            URL.revokeObjectURL(preview);
+          } finally {
+            if (idOcrWorkerRef.current === worker) idOcrWorkerRef.current = null;
+            if (worker) {
+              try {
+                await worker.terminate();
+              } catch (error) {
+                console.warn('Could not stop the ID OCR worker:', error);
+              }
+            }
+          }
+        };
+        verifyId();
       } else {
+        idOcrRequestRef.current += 1;
+        stopIdOcrWorker(idOcrWorkerRef);
         idProofReaderRef.current?.abort();
         idProofReaderRef.current = null;
         if (form.idPreview) URL.revokeObjectURL(form.idPreview);
@@ -362,8 +679,49 @@ function BookingDetails(props) {
           idProof: null,
           idProofBase64: null,
           idPreview: null,
+          idVerificationStatus: 'not_started',
+          idVerificationAttempts: 0,
+          idDetails: null,
         }));
       }
+    } else if (e.target.name === 'userType') {
+      idOcrRequestRef.current += 1;
+      stopIdOcrWorker(idOcrWorkerRef);
+      idProofReaderRef.current?.abort();
+      idProofReaderRef.current = null;
+      if (form.idPreview) URL.revokeObjectURL(form.idPreview);
+      if (idProofInputRef.current) idProofInputRef.current.value = '';
+      setForm((current) => ({
+        ...current,
+        userType: e.target.value,
+        idProof: null,
+        idProofBase64: null,
+        idPreview: null,
+        idVerificationStatus: 'not_required',
+        idVerificationAttempts: 0,
+        idDetails: null,
+        idAdditionalInfo: { fullName: '', idNumber: '', issuer: '' },
+      }));
+    } else if (e.target.name.startsWith('idAdditionalInfo.')) {
+      idOcrRequestRef.current += 1;
+      stopIdOcrWorker(idOcrWorkerRef);
+      idProofReaderRef.current?.abort();
+      idProofReaderRef.current = null;
+      if (form.idPreview) URL.revokeObjectURL(form.idPreview);
+      if (idProofInputRef.current) idProofInputRef.current.value = '';
+      const fieldKey = e.target.name.slice('idAdditionalInfo.'.length);
+      setForm((current) => ({
+        ...current,
+        idAdditionalInfo: {
+          ...current.idAdditionalInfo,
+          [fieldKey]: e.target.value,
+        },
+        idProof: null,
+        idProofBase64: null,
+        idPreview: null,
+        idVerificationStatus: current.idVerificationAttempts ? 'failed' : 'not_started',
+        idDetails: null,
+      }));
     } else if (e.target.name === 'paymentProof') {
       const file = e.target.files[0];
       if (file) {
@@ -395,6 +753,8 @@ function BookingDetails(props) {
   };
 
   const handleCancelIdProof = () => {
+    idOcrRequestRef.current += 1;
+    stopIdOcrWorker(idOcrWorkerRef);
     idProofReaderRef.current?.abort();
     idProofReaderRef.current = null;
     if (form.idPreview) URL.revokeObjectURL(form.idPreview);
@@ -404,6 +764,9 @@ function BookingDetails(props) {
       idProof: null,
       idProofBase64: null,
       idPreview: null,
+      idVerificationStatus: 'not_started',
+      idVerificationAttempts: 0,
+      idDetails: null,
     }));
   };
 
@@ -411,6 +774,22 @@ function BookingDetails(props) {
     if (!form.customerName || !form.payment) {
       alert('Please complete all required fields.');
       return;
+    }
+    if (form.bookingType !== 'passenger_only') {
+      if (form.bookingType === 'cargo_only' && !selectedCargo) {
+        alert('Please select an available cargo type.');
+        return;
+      }
+      if (form.cargoId && !selectedCargo) {
+        alert('The selected cargo type is no longer available. Please choose another type or remove it.');
+        return;
+      }
+      if (form.cargoId && !isValidCargoQuantity(form.cargoQuantity, selectedCargo?.pricingBasis)) {
+        alert(selectedCargo?.pricingBasis === 'Per Kilo'
+          ? 'Cargo weight must be greater than zero and use up to two decimal places.'
+          : 'Cargo quantity must be a whole number greater than zero.');
+        return;
+      }
     }
 
     // Only validate passenger-specific fields if booking includes passenger
@@ -423,8 +802,24 @@ function BookingDetails(props) {
         return;
       }
 
-      if (form.userType !== 'regular' && !form.idProof) {
-        alert('Please upload your valid ID for verification.');
+      if (
+        form.userType !== 'regular' &&
+        (form.idVerificationStatus !== 'verified' || !form.idProofBase64)
+      ) {
+        alert(
+          form.idVerificationStatus === 'processing'
+            ? 'Please wait while your ID is being read.'
+            : form.idVerificationStatus === 'verified'
+            ? 'Please wait until the ID image has finished loading.'
+            : form.idVerificationAttempts === 0
+            ? 'Please upload your valid ID for verification.'
+            : 'Your ID could not be verified. Please upload a clearer or correct ID, or select Regular.'
+        );
+        return;
+      }
+
+      if (form.userType !== 'regular' && !isIdAdditionalInfoComplete) {
+        alert('Please complete the required details for this ID category.');
         return;
       }
     }
@@ -446,8 +841,8 @@ function BookingDetails(props) {
       return;
     }
 
-    if (isTripDateInPast(trip.date)) {
-      alert('This trip date has already passed. Please select an available schedule.');
+    if (isTripDepartureInPast(trip)) {
+      alert('This trip has already departed. Please select an available schedule.');
       if (onCloseModal) {
         onCloseModal();
       } else {
@@ -499,6 +894,27 @@ function BookingDetails(props) {
         return;
       }
 
+      let cargoSnapshot = null;
+      if (form.bookingType !== 'passenger_only' && selectedCargo) {
+        const latestCargoDoc = await getDoc(doc(db, 'cargoTypes', selectedCargo.id));
+        if (!latestCargoDoc.exists() || latestCargoDoc.data().status !== 'active') {
+          throw new Error('This cargo type is no longer available. Please choose another cargo type.');
+        }
+        const latestCargo = { id: latestCargoDoc.id, ...latestCargoDoc.data() };
+        if (
+          latestCargo.boat !== trip.boat ||
+          latestCargo.name !== selectedCargo.name ||
+          latestCargo.pricingBasis !== selectedCargo.pricingBasis ||
+          Number(latestCargo.price) !== Number(selectedCargo.price)
+        ) {
+          throw new Error('Cargo pricing has changed. Please review the updated cargo price before booking.');
+        }
+        cargoSnapshot = createCargoBookingSnapshot(latestCargo, form.cargoQuantity);
+        if (!cargoSnapshot) {
+          throw new Error('Please enter a valid cargo quantity and select a cargo type.');
+        }
+      }
+
       const bookingData = {
         tripId: trip.id,
         tripName: trip.name,
@@ -509,9 +925,16 @@ function BookingDetails(props) {
         arrival: trip.arrival,
         bookingType: form.bookingType,
         customerName: form.customerName,
-        userType: form.bookingType === 'cargo_only' ? null : form.userType,
-        cargoType: form.bookingType === 'passenger_only' ? '' : form.cargoType,
-        cargoWeight: form.bookingType === 'passenger_only' ? '' : form.cargoWeight,
+        userType:
+          form.bookingType === 'cargo_only'
+            ? null
+            : discountVerified
+            ? form.userType
+            : 'regular',
+        cargoType: cargoSnapshot?.name || '',
+        cargoQuantity: cargoSnapshot?.quantity || 0,
+        cargoPricingBasis: cargoSnapshot?.pricingBasis || '',
+        cargoSnapshot,
         cargoPrice,
         basePrice: form.bookingType === 'cargo_only' ? 0 : parseFloat(trip?.price || 0),
         passengerPrice: form.bookingType === 'cargo_only' ? 0 : parseFloat(trip?.price || 0),
@@ -529,8 +952,26 @@ function BookingDetails(props) {
         userEmail: auth.currentUser?.email || null,
         userPhone: userPhone || null,
         bookedByName: bookedByName,
-        idProofBase64: form.bookingType === 'cargo_only' ? null : form.idProofBase64 || null,
-        idProofFileName: form.bookingType === 'cargo_only' ? null : form.idProof?.name || null,
+        idProofBase64:
+          form.bookingType === 'cargo_only' || !discountVerified
+            ? null
+            : form.idProofBase64 || null,
+        idProofFileName:
+          form.bookingType === 'cargo_only' || !discountVerified
+            ? null
+            : form.idProof?.name || null,
+        idVerificationStatus:
+          form.bookingType === 'cargo_only'
+            ? null
+            : discountVerified
+            ? 'verified'
+            : form.idVerificationStatus,
+        idVerificationAttempts:
+          form.bookingType === 'cargo_only' ? null : form.idVerificationAttempts,
+        idAdditionalInfo:
+          form.bookingType !== 'cargo_only' && discountVerified
+            ? form.idAdditionalInfo
+            : null,
         status: 'pending',
         referenceCode: referenceCode,
         qrCodeValue: referenceCode,
@@ -1071,7 +1512,8 @@ function BookingDetails(props) {
           )}
 
           {/* ID Upload Section - Only show for passenger bookings with non-regular type */}
-          {form.bookingType !== 'cargo_only' && form.userType !== 'regular' && (
+          {form.bookingType !== 'cargo_only' &&
+            (form.userType !== 'regular' || form.idDetails) && (
             <div style={{ marginBottom: isMobile ? '24px' : '35px' }}>
               <h3
                 style={{
@@ -1085,35 +1527,74 @@ function BookingDetails(props) {
               >
                 ID Verification
               </h3>
-              <label
-                style={{
-                  display: 'block',
-                  fontWeight: 600,
-                  color: '#333',
-                  marginBottom: '12px',
-                  fontSize: isMobile ? '0.78rem' : '0.95rem',
-                }}
-              >
-                Upload Your Valid ID / Photo
-              </label>
-              <input
-                ref={idProofInputRef}
-                type="file"
-                name="idProof"
-                accept="image/*"
-                onChange={handleChange}
-                style={{
-                  width: '100%',
-                  padding: '12px 15px',
-                  border: '2px dashed #2196f3',
-                  borderRadius: '8px',
-                  fontSize: isMobile ? '0.8rem' : '0.95rem',
-                  fontFamily: 'inherit',
-                  boxSizing: 'border-box',
-                  cursor: 'pointer',
-                  transition: 'border-color 0.2s ease',
-                }}
-              />
+              {form.userType !== 'regular' && (
+                <>
+                  {idAdditionalFields.map((field) => (
+                    <label
+                      key={field.key}
+                      style={{
+                        display: 'block',
+                        marginBottom: '12px',
+                        fontWeight: 600,
+                        color: '#333',
+                        fontSize: isMobile ? '0.78rem' : '0.9rem',
+                      }}
+                    >
+                      {field.label}
+                      <input
+                        type="text"
+                        name={`idAdditionalInfo.${field.key}`}
+                        value={form.idAdditionalInfo[field.key] || ''}
+                        placeholder={field.placeholder}
+                        onChange={handleChange}
+                        required
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          marginTop: '6px',
+                          padding: '11px 12px',
+                          border: '1px solid #ddd',
+                          borderRadius: '8px',
+                          fontSize: isMobile ? '0.8rem' : '0.95rem',
+                          fontFamily: 'inherit',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    </label>
+                  ))}
+                  <label
+                    style={{
+                      display: 'block',
+                      fontWeight: 600,
+                      color: '#333',
+                      marginBottom: '12px',
+                      fontSize: isMobile ? '0.78rem' : '0.95rem',
+                    }}
+                  >
+                    Upload a clear photo of your valid ID
+                  </label>
+                  <input
+                    ref={idProofInputRef}
+                    type="file"
+                    name="idProof"
+                    accept="image/*"
+                    onChange={handleChange}
+                    disabled={!isIdAdditionalInfoComplete}
+                    style={{
+                      width: '100%',
+                      padding: '12px 15px',
+                      border: `2px dashed ${isIdAdditionalInfoComplete ? '#2196f3' : '#bbb'}`,
+                      borderRadius: '8px',
+                      fontSize: isMobile ? '0.8rem' : '0.95rem',
+                      fontFamily: 'inherit',
+                      boxSizing: 'border-box',
+                      cursor: isIdAdditionalInfoComplete ? 'pointer' : 'not-allowed',
+                      background: isIdAdditionalInfoComplete ? 'white' : '#f5f5f5',
+                      transition: 'border-color 0.2s ease',
+                    }}
+                  />
+                </>
+              )}
               {form.idPreview && (
                 <div
                   style={{
@@ -1187,14 +1668,13 @@ function BookingDetails(props) {
                   fontSize: isMobile ? '0.78rem' : '0.95rem',
                 }}
               >
-                Cargo Type
+                Cargo Type and Price
               </label>
-              <input
-                list="cargoOptions"
-                name="cargoType"
-                placeholder="Select or type cargo"
-                value={form.cargoType}
+              <select
+                name="cargoId"
+                value={form.cargoId}
                 onChange={handleChange}
+                required={form.bookingType === 'cargo_only'}
                 style={{
                   width: '100%',
                   padding: '12px 15px',
@@ -1207,14 +1687,19 @@ function BookingDetails(props) {
                 }}
                 onFocus={(e) => (e.target.style.borderColor = '#2196f3')}
                 onBlur={(e) => (e.target.style.borderColor = '#ddd')}
-              />
-              <datalist id="cargoOptions">
-                <option value="None" />
-                <option value="Rice sacks" />
-                <option value="Furniture" />
-                <option value="Vehicle" />
-                <option value="Appliances" />
-              </datalist>
+              >
+                <option value="">{form.bookingType === 'cargo_only' ? 'Select cargo type' : 'No cargo'}</option>
+                {cargoTypes.map((cargo) => (
+                  <option key={cargo.id} value={cargo.id}>
+                    {cargo.name} — ₱{Number(cargo.price).toFixed(2)} {cargo.pricingBasis}
+                  </option>
+                ))}
+              </select>
+              {cargoCatalogError ? (
+                <p role="alert" style={{ color: '#b42318', margin: '8px 0 0' }}>{cargoCatalogError}</p>
+              ) : cargoTypes.length === 0 ? (
+                <p style={{ color: '#777', margin: '8px 0 0' }}>No cargo types are currently available.</p>
+              ) : null}
             </div>
             <div>
               <label
@@ -1226,15 +1711,17 @@ function BookingDetails(props) {
                   fontSize: isMobile ? '0.78rem' : '0.95rem',
                 }}
               >
-                Cargo Weight (kg)
+                Quantity {selectedCargo ? `(${selectedCargo.pricingBasis.replace('Per ', '')})` : ''}
               </label>
               <input
                 type="number"
-                name="cargoWeight"
-                placeholder="Cargo weight in kilograms"
-                value={form.cargoWeight}
+                name="cargoQuantity"
+                min={selectedCargo?.pricingBasis === 'Per Kilo' ? '0.01' : '1'}
+                step={selectedCargo?.pricingBasis === 'Per Kilo' ? '0.01' : '1'}
+                placeholder={selectedCargo?.pricingBasis === 'Per Kilo' ? 'Enter weight in kg' : 'Enter quantity'}
+                value={form.cargoQuantity}
                 onChange={handleChange}
-                disabled={form.cargoType === 'None'}
+                disabled={!selectedCargo}
                 style={{
                   width: '100%',
                   padding: '12px 15px',
@@ -1243,14 +1730,20 @@ function BookingDetails(props) {
                   fontSize: isMobile ? '0.8rem' : '0.95rem',
                   fontFamily: 'inherit',
                   boxSizing: 'border-box',
-                  background: form.cargoType === 'None' ? '#f5f5f5' : 'white',
-                  cursor: form.cargoType === 'None' ? 'not-allowed' : 'text',
+                  background: !selectedCargo ? '#f5f5f5' : 'white',
+                  cursor: !selectedCargo ? 'not-allowed' : 'text',
                   transition: 'border-color 0.2s ease',
-                  color: form.cargoType === 'None' ? '#999' : '#333',
+                  color: !selectedCargo ? '#999' : '#333',
                 }}
                 onFocus={(e) => (e.target.style.borderColor = '#2196f3')}
                 onBlur={(e) => (e.target.style.borderColor = '#ddd')}
               />
+              {selectedCargo && (
+                <p style={{ color: '#555', margin: '8px 0 0', fontSize: isMobile ? '0.76rem' : '0.88rem' }}>
+                  ₱{Number(selectedCargo.price).toFixed(2)} {selectedCargo.pricingBasis}
+                  {' · Cargo total: '}₱{cargoPrice.toFixed(2)}
+                </p>
+              )}
             </div>
           </div>
           )}

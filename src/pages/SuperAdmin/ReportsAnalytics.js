@@ -66,17 +66,16 @@ function ReportsAnalytics() {
           id: boatDoc.id,
           ...boatDoc.data(),
         })));
-        const payments = paymentsSnapshot.docs.map((paymentDoc) => ({
-          id: paymentDoc.id,
-          ...paymentDoc.data(),
-        }));
         const bookingData = bookingsSnapshot.docs.map((bookingDoc) => ({
           id: bookingDoc.id,
           ...bookingDoc.data(),
         }));
         setBookings(attachPaymentStatuses(
           bookingData,
-          payments
+          paymentsSnapshot.docs.map((paymentDoc) => ({
+            id: paymentDoc.id,
+            ...paymentDoc.data(),
+          }))
         ));
       } catch (error) {
         console.error("Error fetching boat reports:", error);

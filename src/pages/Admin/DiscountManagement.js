@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { db } from "../../firebase";
-import { doc, setDoc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, query, where, getDocs, updateDoc } from "firebase/firestore";
 import AdminLayout from "./AdminLayout";
 import { useAuthReloadKey, useAuthUser } from "../../hooks/useAuthUser";
+import { isPromoExpired } from "../../utils/promotionHelpers";
 
 function DiscountManagement() {
   const [adminData, setAdminData] = useState(null);
@@ -29,6 +30,7 @@ function DiscountManagement() {
   const [loading, setLoading] = useState(true);
   const [showAddDiscountModal, setShowAddDiscountModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const [currentDate, setCurrentDate] = useState(() => new Date());
   const { user, authReady } = useAuthUser();
   const reloadKey = useAuthReloadKey();
 
@@ -125,7 +127,7 @@ function DiscountManagement() {
     }, { merge: true });
   };
 
-  const persistPromos = async (updatedPromos) => {
+  const persistPromos = useCallback(async (updatedPromos) => {
     if (!boat?.id || !boat?.boatName) {
       throw new Error("Promo record is missing the assigned boat.");
     }
@@ -134,7 +136,42 @@ function DiscountManagement() {
       boatName: boat.boatName,
       promos: updatedPromos,
     }, { merge: true });
-  };
+  }, [boat?.id, boat?.boatName]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setCurrentDate(new Date()), 60000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (!boat?.id || !boat?.boatName) return;
+
+    const updatedPromos = promos.map((promo) =>
+      promo.active && isPromoExpired(promo, currentDate)
+        ? { ...promo, active: false }
+        : promo
+    );
+    if (updatedPromos.every((promo, index) => promo === promos[index])) return;
+
+    let isActive = true;
+    persistPromos(updatedPromos)
+      .then(() => {
+        if (isActive) setPromos(updatedPromos);
+      })
+      .catch((error) => {
+        console.error("Error deactivating expired promos:", error);
+        if (isActive) {
+          setNotif("Could not save expired promos as inactive. They are unavailable for booking.");
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [boat?.id, boat?.boatName, currentDate, persistPromos, promos]);
+
+  const isPromoCurrentlyActive = (promo) =>
+    Boolean(promo.active) && !isPromoExpired(promo, currentDate);
 
   const openPromoModal = (promo = null) => {
     setEditingPromoId(promo?.id || null);
@@ -147,7 +184,7 @@ function DiscountManagement() {
         startDate: promo.startDate || "",
         endDate: promo.endDate || "",
         description: promo.description || "",
-        active: Boolean(promo.active),
+        active: isPromoCurrentlyActive(promo),
       }
       : {
         name: "",
@@ -191,7 +228,9 @@ function DiscountManagement() {
       startDate: promoForm.startDate,
       endDate: promoForm.endDate,
       description: promoForm.description.trim(),
-      active: promoForm.active,
+      active:
+        promoForm.active &&
+        !isPromoExpired({ endDate: promoForm.endDate }, currentDate),
     };
     const updatedPromos = [
       ...promos
@@ -261,7 +300,12 @@ function DiscountManagement() {
       try {
         const updatedDiscounts = { ...boat.discounts };
         delete updatedDiscounts[field];
-        await persistDiscounts(updatedDiscounts);
+        if (!boat.id || !boat.boatName) {
+          throw new Error("Discount record is missing the assigned boat.");
+        }
+        await updateDoc(doc(db, "discounts", boat.id), {
+          discounts: updatedDiscounts,
+        });
         setBoat({ ...boat, discounts: updatedDiscounts });
         setNotif(`"${field}" discount deleted successfully.`);
         setTimeout(() => setNotif(""), 3000);
@@ -710,11 +754,11 @@ function DiscountManagement() {
                               display: "inline-block",
                               padding: "5px 10px",
                               borderRadius: 7,
-                              background: promo.active ? "#c9f4d0" : "#edf0f4",
-                              color: promo.active ? "#16752c" : "#596579",
+                              background: isPromoCurrentlyActive(promo) ? "#c9f4d0" : "#edf0f4",
+                              color: isPromoCurrentlyActive(promo) ? "#16752c" : "#596579",
                               fontWeight: 800,
                               fontSize: isMobile ? "0.7rem" : "0.78rem",
-                            }}>{promo.active ? "Active" : "Inactive"}</span>
+                            }}>{isPromoCurrentlyActive(promo) ? "Active" : "Inactive"}</span>
                           </td>
                           <td style={{ padding: isMobile ? "8px" : "8px 12px", whiteSpace: "nowrap" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 6 : 8 }}>

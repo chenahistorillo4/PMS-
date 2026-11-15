@@ -22,8 +22,9 @@ module.exports = async (req, res) => {
 
       return res.status(200).json({
         ok: true,
+        cancelled: result.cancelled,
         remindersSent: result.reminders.length,
-        cancelled: result.cancelled.length,
+        cancelledCount: result.cancelled.length,
         reminders: result.reminders,
         cancelledBookings: result.cancelled,
       });

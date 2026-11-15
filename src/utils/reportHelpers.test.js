@@ -1,8 +1,39 @@
 import {
   attachPaymentStatuses,
+  getPeriodRange,
+  isGcashBooking,
   isReportableBooking,
+  isPayLaterBooking,
   summarizeBookings,
 } from './reportHelpers';
+
+describe('booking payment method classification', () => {
+  test('classifies GCash and PayLater bookings separately', () => {
+    expect(isGcashBooking({ payment: 'gcash', paymentMode: 'prepaid' })).toBe(true);
+    expect(isPayLaterBooking({ payment: 'Pay Later', paymentMode: 'pay_later' })).toBe(true);
+    expect(isGcashBooking({ payment: 'Pay Later', paymentMode: 'pay_later' })).toBe(false);
+    expect(isPayLaterBooking({ payment: 'gcash', paymentMode: 'prepaid' })).toBe(false);
+  });
+});
+
+describe('report date ranges', () => {
+  test('last month range includes the complete previous calendar month', () => {
+    const now = new Date();
+    const range = getPeriodRange('lastMonth');
+    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastDayOfPreviousMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+
+    expect(range.label).toBe('Last month');
+    expect(range.start.getFullYear()).toBe(previousMonth.getFullYear());
+    expect(range.start.getMonth()).toBe(previousMonth.getMonth());
+    expect(range.start.getDate()).toBe(1);
+    expect(range.end.getFullYear()).toBe(lastDayOfPreviousMonth.getFullYear());
+    expect(range.end.getMonth()).toBe(lastDayOfPreviousMonth.getMonth());
+    expect(range.end.getDate()).toBe(lastDayOfPreviousMonth.getDate());
+    expect(range.end.getHours()).toBe(23);
+    expect(range.end.getMilliseconds()).toBe(999);
+  });
+});
 
 describe('report booking scan eligibility', () => {
   test('includes a PayMongo-paid booking only after passenger QR scan', () => {

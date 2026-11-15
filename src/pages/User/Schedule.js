@@ -22,9 +22,11 @@ function getDateKey(value) {
 function Schedule() {
   const [selectedRoute, setSelectedRoute] = useState("All Routes");
   const [selectedDate, setSelectedDate] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [trips, setTrips] = useState([]);
   const [routes, setRoutes] = useState([]);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const tripsPerPage = 7;
 
   useEffect(() => {
     const contentElement = document.getElementById("schedule-page-content");
@@ -57,17 +59,29 @@ function Schedule() {
 
   const today = getDateKey(new Date());
 
-  const filteredTrips = trips.filter((trip) => {
-    const tripDate = getDateKey(trip.date);
-    const isCurrentOrFutureTrip = tripDate && tripDate >= today;
-    const routeMatch = selectedRoute === "All Routes" || trip.routeDirection === selectedRoute;
-    const dateMatch = !selectedDate || tripDate === selectedDate;
-    return isCurrentOrFutureTrip && routeMatch && dateMatch;
-  });
+  const filteredTrips = trips
+    .filter((trip) => {
+      const tripDate = getDateKey(trip.date);
+      const isCurrentOrFutureTrip = tripDate && tripDate >= today;
+      const routeMatch = selectedRoute === "All Routes" || trip.routeDirection === selectedRoute;
+      const dateMatch = !selectedDate || tripDate === selectedDate;
+      return isCurrentOrFutureTrip && routeMatch && dateMatch;
+    })
+    .sort((first, second) =>
+      getDateKey(first.date).localeCompare(getDateKey(second.date))
+    );
+  const totalPages = Math.ceil(filteredTrips.length / tripsPerPage);
+  const pageStartIndex = (currentPage - 1) * tripsPerPage;
+  const visibleTrips = filteredTrips.slice(pageStartIndex, pageStartIndex + tripsPerPage);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, Math.max(1, totalPages)));
+  }, [totalPages]);
 
   const handleReset = () => {
     setSelectedRoute("All Routes");
     setSelectedDate("");
+    setCurrentPage(1);
   };
 
   const getStatusBadgeColor = (status) => {
@@ -162,7 +176,10 @@ function Schedule() {
             </label>
             <select
               value={selectedRoute}
-              onChange={(e) => setSelectedRoute(e.target.value)}
+              onChange={(e) => {
+                setSelectedRoute(e.target.value);
+                setCurrentPage(1);
+              }}
               style={{
                 width: "100%",
                 padding: isMobile ? "9px 10px" : "10px 15px",
@@ -208,7 +225,10 @@ function Schedule() {
             <input
               type="date"
               value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
+              onChange={(e) => {
+                setSelectedDate(e.target.value);
+                setCurrentPage(1);
+              }}
               style={{
                 width: "100%",
                 padding: isMobile ? "9px 10px" : "10px 15px",
@@ -401,7 +421,7 @@ function Schedule() {
                 </tr>
               </thead>
               <tbody>
-                {filteredTrips.map((trip) => (
+                {visibleTrips.map((trip) => (
                   <tr
                     key={trip.id}
                     style={{
@@ -461,6 +481,61 @@ function Schedule() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {totalPages > 1 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: isMobile ? "10px" : "16px",
+              marginTop: isMobile ? "14px" : "22px"
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+              style={{
+                padding: isMobile ? "7px 10px" : "8px 14px",
+                border: "1px solid #cbd8e6",
+                borderRadius: "6px",
+                background: currentPage === 1 ? "#e0e0e0" : "#2196f3",
+                color: currentPage === 1 ? "#999" : "white",
+                cursor: currentPage === 1 ? "not-allowed" : "pointer",
+                fontWeight: 600
+              }}
+            >
+              Previous
+            </button>
+            <span
+              style={{
+                color: "#25476d",
+                fontSize: isMobile ? "0.72rem" : "0.85rem",
+                fontWeight: 700,
+                whiteSpace: "nowrap"
+              }}
+            >
+              {pageStartIndex + 1}–{Math.min(pageStartIndex + tripsPerPage, filteredTrips.length)} of {filteredTrips.length}
+              {" · "}Page {currentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={currentPage === totalPages}
+              style={{
+                padding: isMobile ? "7px 10px" : "8px 14px",
+                border: "1px solid #cbd8e6",
+                borderRadius: "6px",
+                background: currentPage === totalPages ? "#e0e0e0" : "#2196f3",
+                color: currentPage === totalPages ? "#999" : "white",
+                cursor: currentPage === totalPages ? "not-allowed" : "pointer",
+                fontWeight: 600
+              }}
+            >
+              Next
+            </button>
           </div>
         )}
       </div>

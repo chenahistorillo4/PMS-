@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { auth, db } from "../../firebase";
-import { collection, query, where, onSnapshot, updateDoc, doc, addDoc, deleteDoc } from "firebase/firestore";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  updateDoc,
+  doc,
+  deleteDoc,
+  getDoc,
+  getDocs,
+  writeBatch,
+} from "firebase/firestore";
 import { formatTime12Hour } from "../../utils/timeFormatter";
 import { useNavigate } from "react-router-dom";
 import { notifyRefundRequest } from "../../utils/notificationHelper";
@@ -16,6 +27,7 @@ function UserNotifications() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [processingAction, setProcessingAction] = useState({});
   const [deleteActions, setDeleteActions] = useState({});
+  const [refundForm, setRefundForm] = useState(null);
   const gesture = useRef(null);
   const suppressClick = useRef(false);
   const navigate = useNavigate();
@@ -112,6 +124,13 @@ function UserNotifications() {
 
   const handlePointerDown = (event, notificationId) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (
+      event.target instanceof Element
+      && event.target.closest("button, a, input, select, textarea, [role='button']")
+    ) {
+      gesture.current = null;
+      return;
+    }
 
     event.currentTarget.setPointerCapture?.(event.pointerId);
     gesture.current = {
@@ -161,64 +180,168 @@ function UserNotifications() {
     }
   }, [currentPage, totalPages]);
 
-  const handleRefundRequest = async (notif) => {
-    try {
-      setProcessingAction({ ...processingAction, [notif.id]: true });
-      
-      const user = auth.currentUser;
-      if (!user) return;
+  const openRefundForm = async (notif) => {
+    if (!notif.bookingId) {
+      alert("This notification is not linked to an existing booking.");
+      return;
+    }
 
-      // Create refund request in Firestore
+    setProcessingAction((current) => ({ ...current, [notif.id]: true }));
+    setRefundForm({
+      notification: notif,
+      loading: true,
+      submitting: false,
+      error: "",
+      passengerName: "",
+      bookingId: notif.bookingId,
+      amount: 0,
+      userPhone: "",
+      gcashAccountName: "",
+      gcashNumber: "",
+      reason: "Trip cancelled",
+    });
+
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("Please sign in again to request a refund.");
+
+      const [bookingSnapshot, userSnapshot, previousRequests] = await Promise.all([
+        getDoc(doc(db, "bookings", notif.bookingId)),
+        getDoc(doc(db, "users", currentUser.uid)),
+        getDocs(query(collection(db, "refund_requests"), where("userId", "==", currentUser.uid))),
+      ]);
+      if (!bookingSnapshot.exists()) throw new Error("The booking could not be found.");
+
+      const booking = bookingSnapshot.data();
+      if (booking.userId !== currentUser.uid) {
+        throw new Error("You can only request a refund for your own booking.");
+      }
+
+      const existingRequest = previousRequests.docs
+        .map((requestDoc) => requestDoc.data())
+        .find(
+          (request) =>
+            request.bookingId === notif.bookingId &&
+            ["pending", "approved", "refunded"].includes(request.status)
+        );
+      if (existingRequest) {
+        throw new Error("A refund request already exists for this booking.");
+      }
+
+      const profile = userSnapshot.exists() ? userSnapshot.data() : {};
+      const amount = Number(booking.finalPrice ?? booking.fare ?? notif.bookingAmount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("The refund amount could not be determined from the booking.");
+      }
+
+      setRefundForm((current) =>
+        current
+          ? {
+              ...current,
+              loading: false,
+              passengerName:
+                booking.customerName ||
+                profile.name ||
+                profile.fullName ||
+                booking.bookedByName ||
+                currentUser.displayName ||
+                "",
+              amount,
+              userPhone: booking.userPhone || profile.phone || "",
+              booking,
+            }
+          : current
+      );
+    } catch (error) {
+      console.error("Error preparing refund request:", error);
+      setRefundForm((current) =>
+        current ? { ...current, loading: false, error: error.message } : current
+      );
+    } finally {
+      setProcessingAction((current) => ({ ...current, [notif.id]: false }));
+    }
+  };
+
+  const handleRefundRequestSubmit = async (event) => {
+    event.preventDefault();
+    if (!refundForm || refundForm.loading || refundForm.submitting) return;
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setRefundForm((current) => ({ ...current, error: "Please sign in again to submit." }));
+      return;
+    }
+
+    const gcashAccountName = refundForm.gcashAccountName.trim();
+    const gcashNumber = refundForm.gcashNumber.trim();
+    const normalizedGcashNumber = gcashNumber.replace(/[\s-]/g, "");
+    if (!gcashAccountName || !/^09\d{9}$|^\+639\d{9}$/.test(normalizedGcashNumber)) {
+      setRefundForm((current) => ({
+        ...current,
+        error: "Enter the GCash account name and a valid Philippine GCash number.",
+      }));
+      return;
+    }
+    if (!refundForm.reason.trim()) {
+      setRefundForm((current) => ({ ...current, error: "Please provide a reason." }));
+      return;
+    }
+
+    setRefundForm((current) => ({ ...current, submitting: true, error: "" }));
+    try {
+      const booking = refundForm.booking;
       const refundData = {
-        userId: user.uid,
-        bookingId: notif.bookingId,
-        tripId: notif.tripId || notif.tripDetails?.id,
-        tripName: notif.tripDetails?.name,
-        boat: notif.tripDetails?.boat || null,
-        amount: notif.bookingAmount || 0,
-        reason: "Trip Cancelled",
+        userId: currentUser.uid,
+        userEmail: currentUser.email || null,
+        userPhone: refundForm.userPhone || null,
+        passengerName: refundForm.passengerName,
+        gcashAccountName,
+        gcashNumber: normalizedGcashNumber,
+        bookingId: refundForm.bookingId,
+        tripId: booking.tripId || refundForm.notification.tripId || null,
+        tripName: booking.tripName || refundForm.notification.tripDetails?.name || "",
+        boat: booking.boat || refundForm.notification.tripDetails?.boat || null,
+        amount: refundForm.amount,
+        reason: refundForm.reason.trim(),
         status: "pending",
-        notificationId: notif.id,
+        notificationId: refundForm.notification.id,
         createdAt: new Date(),
-        userEmail: user.email,
       };
 
-      const refundRequestRef = await addDoc(collection(db, "refund_requests"), refundData);
+      const requestRef = doc(collection(db, "refund_requests"));
+      const batch = writeBatch(db);
+      batch.set(requestRef, refundData);
+      batch.update(doc(db, "notifications", refundForm.notification.id), {
+        userAction: "refund_requested",
+        actionTimestamp: new Date(),
+      });
+      await batch.commit();
 
-      notifyRefundRequest({ ...refundData, id: refundRequestRef.id }, refundData.boat).catch((error) =>
+      notifyRefundRequest({ ...refundData, id: requestRef.id }, refundData.boat).catch((error) =>
         console.warn("Refund admin notification failed:", error)
       );
-
-      // Update notification to track the action
-      await updateDoc(doc(db, "notifications", notif.id), {
-        userAction: "refund_requested",
-        actionTimestamp: new Date()
-      });
-
+      setRefundForm(null);
       alert("Refund request submitted. We'll process it shortly!");
-      setProcessingAction({ ...processingAction, [notif.id]: false });
     } catch (error) {
       console.error("Error submitting refund request:", error);
-      alert("Error submitting refund request");
-      setProcessingAction({ ...processingAction, [notif.id]: false });
+      setRefundForm((current) =>
+        current ? { ...current, submitting: false, error: error.message } : current
+      );
     }
   };
 
   const handleBookAnother = async (notif) => {
-    try {
-      setProcessingAction({ ...processingAction, [notif.id]: true });
-      
-      // Update notification to track the action
-      await updateDoc(doc(db, "notifications", notif.id), {
-        userAction: "booking_another",
-        actionTimestamp: new Date()
-      });
-
-      navigate("/booking");
-    } catch (error) {
-      console.error("Error:", error);
-      navigate("/booking");
+    if (!notif.bookingId) {
+      alert("This notification is not linked to an existing booking.");
+      return;
     }
+
+    navigate("/booking", {
+      state: {
+        rescheduleBookingId: notif.bookingId,
+        rescheduleNotificationId: notif.id,
+      },
+    });
   };
 
   const getNotificationIcon = (type) => {
@@ -232,6 +355,8 @@ function UserNotifications() {
 
     switch(type) {
       case "trip_cancelled":
+      case "booking_cancelled":
+      case "payment_expired":
         return (
           <svg style={iconStyle} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" color="#f44336">
             <circle cx="12" cy="12" r="10"/>
@@ -423,7 +548,7 @@ function UserNotifications() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (!refundAlreadyRequested) {
-                              handleRefundRequest(notif);
+                              openRefundForm(notif);
                             }
                           }}
                           disabled={processingAction[notif.id] || refundAlreadyRequested}
@@ -508,10 +633,192 @@ function UserNotifications() {
             </button>
           </nav>
         )}
+        {refundForm && (
+          <div
+            role="presentation"
+            onClick={(event) => {
+              if (event.target === event.currentTarget && !refundForm.submitting) {
+                setRefundForm(null);
+              }
+            }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 10000,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "16px",
+              background: "rgba(12, 31, 48, 0.62)",
+            }}
+          >
+            <form
+              onSubmit={handleRefundRequestSubmit}
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: "min(100%, 520px)",
+                maxHeight: "90vh",
+                overflowY: "auto",
+                padding: isMobile ? "20px" : "26px",
+                borderRadius: "14px",
+                background: "#fff",
+                boxShadow: "0 18px 50px rgba(0,0,0,.24)",
+              }}
+            >
+              <h2 style={{ margin: "0 0 6px", color: "#18324b", fontSize: "1.25rem" }}>
+                Refund Request
+              </h2>
+              <p style={{ margin: "0 0 18px", color: "#66798b", fontSize: "0.9rem" }}>
+                Confirm your booking details and provide the GCash account for the refund.
+              </p>
+              {refundForm.loading ? (
+                <p role="status">Loading booking details…</p>
+              ) : refundForm.error && !refundForm.booking ? (
+                <>
+                  <p role="alert" style={{ color: "#b42318", fontSize: "0.88rem" }}>
+                    {refundForm.error}
+                  </p>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "18px" }}>
+                    <button
+                      type="button"
+                      onClick={() => setRefundForm(null)}
+                      style={refundSecondaryButtonStyle}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {[
+                    ["Passenger Name", "passengerName", refundForm.passengerName],
+                    ["Booking ID", "bookingId", refundForm.bookingId],
+                    ["Refund Amount", "amount", `₱${Number(refundForm.amount).toFixed(2)}`],
+                  ].map(([label, key, value]) => (
+                    <label key={key} style={refundFieldStyle}>
+                      <span style={refundLabelStyle}>{label}</span>
+                      <input
+                        type="text"
+                        value={value}
+                        readOnly
+                        style={refundInputStyle}
+                      />
+                    </label>
+                  ))}
+                  <label style={refundFieldStyle}>
+                    <span style={refundLabelStyle}>GCash Account Name</span>
+                    <input
+                      type="text"
+                      autoComplete="name"
+                      required
+                      value={refundForm.gcashAccountName}
+                      onChange={(event) =>
+                        setRefundForm((current) => ({ ...current, gcashAccountName: event.target.value }))
+                      }
+                      style={refundInputStyle}
+                    />
+                  </label>
+                  <label style={refundFieldStyle}>
+                    <span style={refundLabelStyle}>GCash Number</span>
+                    <input
+                      type="tel"
+                      autoComplete="tel"
+                      inputMode="tel"
+                      required
+                      placeholder="09XXXXXXXXX"
+                      value={refundForm.gcashNumber}
+                      onChange={(event) =>
+                        setRefundForm((current) => ({ ...current, gcashNumber: event.target.value }))
+                      }
+                      style={refundInputStyle}
+                    />
+                  </label>
+                  <label style={refundFieldStyle}>
+                    <span style={refundLabelStyle}>Reason</span>
+                    <textarea
+                      required
+                      rows={3}
+                      value={refundForm.reason}
+                      onChange={(event) =>
+                        setRefundForm((current) => ({ ...current, reason: event.target.value }))
+                      }
+                      style={{ ...refundInputStyle, resize: "vertical" }}
+                    />
+                  </label>
+                  {refundForm.error && (
+                    <p role="alert" style={{ color: "#b42318", fontSize: "0.88rem" }}>
+                      {refundForm.error}
+                    </p>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "9px", marginTop: "18px" }}>
+                    <button
+                      type="button"
+                      disabled={refundForm.submitting}
+                      onClick={() => setRefundForm(null)}
+                      style={refundSecondaryButtonStyle}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={refundForm.submitting}
+                      style={refundSubmitButtonStyle(refundForm.submitting)}
+                    >
+                      {refundForm.submitting ? "Submitting…" : "Submit Request"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
+          </div>
+        )}
       </div>
     </main>
   );
 }
+
+const refundFieldStyle = {
+  display: "grid",
+  gap: "6px",
+  marginBottom: "12px",
+};
+
+const refundLabelStyle = {
+  color: "#34495e",
+  fontSize: "0.86rem",
+  fontWeight: 700,
+};
+
+const refundInputStyle = {
+  boxSizing: "border-box",
+  width: "100%",
+  minHeight: "40px",
+  padding: "9px 11px",
+  border: "1px solid #cbd8e6",
+  borderRadius: "7px",
+  color: "#24384b",
+  font: "inherit",
+};
+
+const refundSecondaryButtonStyle = {
+  border: "1px solid #cbd8e6",
+  borderRadius: "7px",
+  padding: "9px 14px",
+  background: "#fff",
+  color: "#34495e",
+  fontWeight: 700,
+  cursor: "pointer",
+};
+
+const refundSubmitButtonStyle = (submitting) => ({
+  border: "none",
+  borderRadius: "7px",
+  padding: "9px 14px",
+  background: submitting ? "#9aa8b6" : "#218838",
+  color: "#fff",
+  fontWeight: 700,
+  cursor: submitting ? "wait" : "pointer",
+});
 
 function paginationButtonStyle(disabled) {
   return {

@@ -271,3 +271,10 @@
     width: 100%;
   }
 }
+.walk-in-cargo-price {
+  grid-column: 1 / -1;
+  margin: -4px 0 0;
+  color: #24577f;
+  font-size: 0.88rem;
+  font-weight: 650;
+}

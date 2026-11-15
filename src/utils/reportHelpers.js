@@ -51,6 +51,13 @@ export function getPeriodRange(period) {
     return { start, end, label: 'Monthly (this month)' };
   }
 
+  if (period === 'lastMonth') {
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    return { start, end, label: 'Last month' };
+  }
+
   return null;
 }
 
@@ -99,6 +106,24 @@ export function getBookingRouteLabel(booking) {
 
 export function getBookingTripNameLabel(booking) {
   return booking.tripName || 'N/A';
+}
+
+function normalizeBookingPaymentValue(value) {
+  return String(value || '').toLowerCase().replace(/[\s_-]/g, '');
+}
+
+export function isPayLaterBooking(booking) {
+  return [booking?.paymentMode, booking?.paymentMethod, booking?.payment]
+    .some((value) => normalizeBookingPaymentValue(value) === 'paylater');
+}
+
+export function isGcashBooking(booking) {
+  const paymentProvider = String(booking?.paymentProvider || '').toLowerCase();
+  return !isPayLaterBooking(booking) && (
+    [booking?.paymentMethod, booking?.payment, booking?.method]
+      .some((value) => normalizeBookingPaymentValue(value).includes('gcash')) ||
+    paymentProvider === 'paymongo'
+  );
 }
 
 export function normalizeBookingForReport(booking) {
@@ -153,27 +178,6 @@ export function getUniqueTripNamesFromBookings(bookings) {
 
 export function getBookingAmount(booking) {
   return Number(booking?.finalPrice ?? booking?.paymentAmount ?? booking?.amount ?? 0);
-}
-
-function normalizePaymentMode(value) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[\s_-]/g, '');
-}
-
-export function isPayLaterBooking(booking) {
-  const paymentMode = normalizePaymentMode(
-    booking?.paymentMode || booking?.paymentMethod || booking?.payment
-  );
-  return paymentMode === 'paylater';
-}
-
-export function isGcashBooking(booking) {
-  const payment = String(booking?.payment || '').toLowerCase();
-  const method = String(booking?.paymentMethod || booking?.method || '').toLowerCase();
-  const provider = String(booking?.paymentProvider || '').toLowerCase();
-
-  return payment.includes('gcash') || method.includes('gcash') || provider === 'paymongo';
 }
 
 export function attachPaymentStatuses(bookings = [], payments = []) {

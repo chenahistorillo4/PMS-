@@ -474,10 +474,12 @@ function Profile() {
             )}
 
           </div>
-          <button className="profile-logout-button" onClick={handleLogout}>
-            <FiLogOut aria-hidden="true" />
-            Log Out
-          </button>
+          {!isMobile && (
+            <button className="profile-logout-button" onClick={handleLogout}>
+              <FiLogOut aria-hidden="true" />
+              Log Out
+            </button>
+          )}
         </div>
 
         {showLogoutModal && (

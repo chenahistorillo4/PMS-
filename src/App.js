@@ -21,6 +21,7 @@ import BookingManagement from "./pages/Admin/BookingManagement";
 import ScheduleManagement from "./pages/Admin/ScheduleManagement";
 import PaymentManagement from "./pages/Admin/PaymentManagement";
 import DiscountManagement from "./pages/Admin/DiscountManagement";
+import CargoManagement from "./pages/Admin/CargoManagement";
 import AdminNotifications from "./pages/Admin/AdminNotifications";
 import PortStaffManagement from "./pages/PortStaff/PortStaffManagement";
 import PortStaffDashboard from "./pages/PortStaff/PortStaffDashboard";
@@ -47,6 +48,7 @@ const HIDDEN_NAVBAR_ROUTES = [
   "/schedule-management",
   "/payment-management",
   "/discount-management",
+  "/cargo-management",
   "/admin-notifications",
   "/port-staff-management",
   "/port-staff-dashboard",
@@ -61,7 +63,7 @@ const HIDDEN_NAVBAR_ROUTES = [
 ];
 
 function AppWrapper() {
-  const { user } = useAuth();
+  const { user, role, authReady } = useAuth();
   const location = useLocation();
 
   useEffect(() => {
@@ -76,12 +78,14 @@ function AppWrapper() {
     <>
       <SeoManager />
       {/* Show Navbar only if NOT in admin/superadmin routes */}
-      {!HIDDEN_NAVBAR_ROUTES.includes(location.pathname) && <Navbar user={user} />}
+      {!HIDDEN_NAVBAR_ROUTES.includes(location.pathname) && (
+        <Navbar user={user} role={role} authReady={authReady} />
+      )}
 
       <Routes>
         {/* User routes */}
         <Route path="/" element={<Navigate to="/home" />} />
-        <Route path="/home" element={<Home user={user} />} />
+        <Route path="/home" element={<Home user={user} role={role} authReady={authReady} />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/booking" element={<ProtectedRoute requiredRole="user"><Booking /></ProtectedRoute>} />
@@ -107,6 +111,7 @@ function AppWrapper() {
         <Route path="/schedule-management" element={<ProtectedRoute requiredRole={["admin", "portstaff"]}><ScheduleManagement /></ProtectedRoute>} />
         <Route path="/payment-management" element={<ProtectedRoute requiredRole={["admin", "portstaff"]}><PaymentManagement /></ProtectedRoute>} />
         <Route path="/discount-management" element={<ProtectedRoute requiredRole="admin"><DiscountManagement /></ProtectedRoute>} />
+        <Route path="/cargo-management" element={<ProtectedRoute requiredRole="admin"><CargoManagement /></ProtectedRoute>} />
         <Route path="/admin-notifications" element={<ProtectedRoute requiredRole="admin"><AdminNotifications /></ProtectedRoute>} />
         <Route path="/port-staff-management" element={<ProtectedRoute requiredRole="admin"><PortStaffManagement /></ProtectedRoute>} />
         <Route path="/port-staff-dashboard" element={<ProtectedRoute requiredRole="portstaff"><AdminLayout active="scan"><QRScanner user={user} embedded /></AdminLayout></ProtectedRoute>} />

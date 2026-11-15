@@ -73,14 +73,21 @@ function createApp() {
 
   app.post('/webhooks/paymongo', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
+      const { getPaymongoMode, verifyPaymongoSignature } = require('./paymongoWebhookSignature');
       const signature = req.get('Paymongo-Signature');
       const webhookSecret = process.env.PAYMONGO_WEBHOOK_SECRET;
+      const mode = getPaymongoMode(process.env.PAYMONGO_SECRET_KEY);
+      const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
 
-      if (webhookSecret && signature !== webhookSecret) {
+      if (!webhookSecret || !mode || !rawBody) {
+        return res.status(503).json({ error: 'PayMongo webhook verification is not configured' });
+      }
+
+      if (!verifyPaymongoSignature({ header: signature, rawBody, secret: webhookSecret, mode })) {
         return res.status(401).json({ error: 'Invalid webhook signature' });
       }
 
-      const event = JSON.parse(req.body.toString());
+      const event = JSON.parse(rawBody.toString('utf8'));
       const eventType = event?.data?.attributes?.type;
       const resource = event?.data?.attributes?.data;
 
